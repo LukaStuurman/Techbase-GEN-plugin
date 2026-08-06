@@ -1,0 +1,41 @@
+|LS Kabel [LS Kaart]|
+where |Ligging [kaart]| interacts trail
+plus
+|E Station [Ls Kaart]|
+where |Position [lv overview]| interacts trail
+plus
+|LS/OV Kabelmof [LS Kaart]|
+where |Positie [kabel]| interacts trail
+plus
+|LS Aansluiting|
+where |Overdrachtspunt| interacts trail
+plus
+|LS Aansluitkabel|
+where |Ligging [kaart]| interacts trail
+plus
+|LS/OV Kast|
+where |Ligging [Ls kaart]| interacts trail
+plus
+|LS Mantelbuis|
+where |Ligging [kaart]| interacts trail
+plus
+|OV Aansluiting|
+where |Overdrachtspunt| interacts trail
+plus
+[Gas] |LD Aansluiting|
+where |Overdrachtspunt [kaart]| interacts trail
+plus
+|LS Hoogbouwkoppelpunt| 
+where |Positie [kaart]| interacts trail
+plus
+|MS Kabel| 
+where |Ligging [kaart]| interacts trail
+plus
+|MS/LS Transformator| 
+where Station.|Ligging [Ls Kaart]|.Ligging interacts trail
+plus
+[Algemeen] |Plan Lijn Topografie| 
+where Lokatie interacts trail
+plus
+|E Station [Ls Kaart]| 
+where Ligging interacts trail

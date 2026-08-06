@@ -1,0 +1,14 @@
+[general]
+name=LS Netontwerp Wizard
+description=Begeleide GEN XML/Excel-import, ontwerpstroomberekening en kabelverbonden clustering.
+version=1.12.0
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
+author=HDB Tech
+email=
+about=TechBase LS-netontwerpwizard met GEN-import, volledige instelbare ontwerpstroomtabellen, controle van Hoogste Trafo/Hoogste Kabel, kabelverbonden clustering en handmatige clustercorrectie.
+category=Vector
+icon=assets/techbase-logo.png
+experimental=False
+deprecated=False
+hasProcessingProvider=True
