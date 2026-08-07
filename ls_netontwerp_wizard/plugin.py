@@ -91,12 +91,12 @@ class LSNetontwerpPlugin:
 
         self.cluster_editor_action = QAction(
             icon,
-            "Visuele clustereditor (lasso naar station)",
+            "Visuele handmatige clustereditor",
             self.iface.mainWindow(),
         )
         self.cluster_editor_action.setObjectName("lsNetontwerpVisualClusterEditorAction")
         self.cluster_editor_action.setToolTip(
-            "Teken rond aansluitingen, kies een doelstation en herbereken het cluster veilig"
+            "Clusterwissels, nieuwe clusters/stations en volledig handmatige voorbereiding met lasso"
         )
         self.cluster_editor_action.triggered.connect(self.open_cluster_editor)
         self.iface.addPluginToVectorMenu("LS Netontwerp", self.cluster_editor_action)
