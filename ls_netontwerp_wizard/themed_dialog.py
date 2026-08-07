@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qgis.PyQt.QtCore import QTimer
+from qgis.PyQt.QtCore import QTimer, Qt
 from qgis.PyQt.QtWidgets import (
     QDialogButtonBox,
     QFrame,
@@ -14,15 +14,49 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .dialog import LSNetontwerpDialog
+from .cluster_paint_dialog import VisueleClusterEditorDialog
 
 try:
     SIZE_EXPANDING = QSizePolicy.Policy.Expanding
     SIZE_FIXED = QSizePolicy.Policy.Fixed
     FRAME_NONE = QFrame.Shape.NoFrame
+    WIDGET_FLAG = Qt.WindowType.Widget
 except AttributeError:  # QGIS 3 / PyQt5
     SIZE_EXPANDING = QSizePolicy.Expanding
     SIZE_FIXED = QSizePolicy.Fixed
     FRAME_NONE = QFrame.NoFrame
+    WIDGET_FLAG = Qt.Widget
+
+
+class EmbeddedVisualClusterEditor(VisueleClusterEditorDialog):
+    """Visuele clustereditor als interne pagina van de hoofdwizard."""
+
+    def __init__(self, iface, host):
+        self._host = host
+        super().__init__(iface, host)
+        self.setWindowFlags(WIDGET_FLAG)
+        for button in self.findChildren(QPushButton):
+            if button.text() == "Sluiten":
+                button.setText("←  Home")
+
+    def showMinimized(self):
+        # Tijdens kaartselectie moet de QGIS-kaart volledig beschikbaar zijn.
+        self._host.hide()
+
+    def showNormal(self):
+        self._host.show()
+        self._host.raise_()
+        self._host.activateWindow()
+
+    def raise_(self):
+        self._host.raise_()
+
+    def activateWindow(self):
+        self._host.activateWindow()
+
+    def close(self):
+        self._host.show_home_page()
+        return True
 
 
 class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
@@ -71,15 +105,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
         )
 
-    def _dashboard_button(
-        self,
-        text,
-        step,
-        target=None,
-        callback=None,
-        secondary=False,
-        enabled_source=None,
-    ):
+    def _dashboard_button(self, text, step, target=None, callback=None, secondary=False, enabled_source=None):
         palette = self.STEP_PALETTES[step]
         button = QPushButton(text)
         button.setMinimumHeight(38)
@@ -108,9 +134,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         layout.setContentsMargins(12, 11, 12, 12)
         layout.setSpacing(7)
         header = QLabel(f"{step}. {title}")
-        header.setStyleSheet(
-            f"color:{palette['main']}; font-size:15px; font-weight:800; border:0;"
-        )
+        header.setStyleSheet(f"color:{palette['main']}; font-size:15px; font-weight:800; border:0;")
         layout.addWidget(header)
         note = QLabel(subtitle)
         note.setWordWrap(True)
@@ -126,7 +150,6 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         root = self.main_page.layout()
         if root is None:
             return
-
         old_button_box = self.run_button.parentWidget()
         if isinstance(old_button_box, QDialogButtonBox):
             old_button_box.setVisible(False)
@@ -154,103 +177,28 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         for col in range(3):
             grid.setColumnStretch(col, 1)
 
-        step1 = self._make_step_card(
-            1,
-            "Invoer & ontwerpstroom",
-            "GEN en Excel importeren en de controlelaag voor het ontwerp opbouwen.",
-            [
-                self._dashboard_button(
-                    "1. Ontwerpstroom maken",
-                    1,
-                    target=self.run_button,
-                )
-            ],
-        )
-        step2 = self._make_step_card(
-            2,
-            "Brondata controleren",
-            "Corrigeer waarden voordat de clustering wordt opgebouwd.",
-            [
-                self._dashboard_button(
-                    "2a. Stroom aanpassen",
-                    2,
-                    target=self.edit_values_button,
-                ),
-                self._dashboard_button(
-                    "2b. Woningtype aanpassen",
-                    2,
-                    target=self.edit_housing_button,
-                    secondary=True,
-                ),
-                self._dashboard_button(
-                    "2c. Stations aanpassen",
-                    2,
-                    target=self.edit_stations_button,
-                    secondary=True,
-                ),
-            ],
-        )
-        step3 = self._make_step_card(
-            3,
-            "Clustering maken",
-            "Kies automatisch clusteren of deel aansluitingen vooraf volledig handmatig in.",
-            [
-                self._dashboard_button(
-                    "3a. Automatische clustering maken",
-                    3,
-                    target=self.cluster_button,
-                ),
-                self._dashboard_button(
-                    "3b. Handmatige clustering voorbereiden",
-                    3,
-                    callback=lambda: self._open_visual_cluster_editor("prepare"),
-                    secondary=True,
-                    enabled_source=self.cluster_button,
-                ),
-            ],
-        )
-        step4 = self._make_step_card(
-            4,
-            "Clustering aanpassen",
-            "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.",
-            [
-                self._dashboard_button(
-                    "4a. Clustercorrectie",
-                    4,
-                    target=self.edit_cluster_button,
-                ),
-                self._dashboard_button(
-                    "4b. Visuele handmatige clustereditor",
-                    4,
-                    callback=lambda: self._open_visual_cluster_editor("result"),
-                    secondary=True,
-                ),
-            ],
-        )
-        step5 = self._make_step_card(
-            5,
-            "Sleuven & routes",
-            "Teken of node sleuven en vernieuw geselecteerde of alle clusterroutes.",
-            [
-                self._dashboard_button(
-                    "5. Sleuven/routes openen",
-                    5,
-                    target=self.network_button,
-                )
-            ],
-        )
-        step6 = self._make_step_card(
-            6,
-            "Clustergebieden",
-            "Maak de eindgebieden compacter en pas gedeelde grenzen visueel aan.",
-            [
-                self._dashboard_button(
-                    "6. Mooie clustergebieden",
-                    6,
-                    target=self.areas_button,
-                )
-            ],
-        )
+        step1 = self._make_step_card(1, "Invoer & ontwerpstroom", "GEN en Excel importeren en de controlelaag voor het ontwerp opbouwen.", [
+            self._dashboard_button("1. Ontwerpstroom maken", 1, target=self.run_button)
+        ])
+        step2 = self._make_step_card(2, "Brondata controleren", "Corrigeer waarden voordat de clustering wordt opgebouwd.", [
+            self._dashboard_button("2a. Stroom aanpassen", 2, target=self.edit_values_button),
+            self._dashboard_button("2b. Woningtype aanpassen", 2, target=self.edit_housing_button, secondary=True),
+            self._dashboard_button("2c. Stations aanpassen", 2, target=self.edit_stations_button, secondary=True),
+        ])
+        step3 = self._make_step_card(3, "Clustering maken", "Kies automatisch clusteren of deel aansluitingen vooraf volledig handmatig in.", [
+            self._dashboard_button("3a. Automatische clustering maken", 3, target=self.cluster_button),
+            self._dashboard_button("3b. Handmatige clustering voorbereiden", 3, callback=lambda: self._open_visual_cluster_editor("prepare"), secondary=True, enabled_source=self.cluster_button),
+        ])
+        step4 = self._make_step_card(4, "Clustering aanpassen", "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.", [
+            self._dashboard_button("4a. Clustercorrectie", 4, target=self.edit_cluster_button),
+            self._dashboard_button("4b. Visuele handmatige clustereditor", 4, callback=lambda: self._open_visual_cluster_editor("result"), secondary=True),
+        ])
+        step5 = self._make_step_card(5, "Sleuven & routes", "Teken of node sleuven en vernieuw geselecteerde of alle clusterroutes.", [
+            self._dashboard_button("5. Sleuven/routes openen", 5, target=self.network_button)
+        ])
+        step6 = self._make_step_card(6, "Clustergebieden", "Maak de eindgebieden compacter en pas gedeelde grenzen visueel aan.", [
+            self._dashboard_button("6. Mooie clustergebieden", 6, target=self.areas_button)
+        ])
 
         for index, card in enumerate((step1, step2, step3, step4, step5, step6)):
             grid.addWidget(card, index // 3, index % 3)
@@ -269,12 +217,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             mirror.setToolTip(source.toolTip())
 
     def _open_visual_cluster_editor(self, requested_mode):
-        from .cluster_paint_dialog import VisueleClusterEditorDialog
-
         if self._dashboard_visual_cluster_dialog is None:
-            self._dashboard_visual_cluster_dialog = VisueleClusterEditorDialog(
+            self._dashboard_visual_cluster_dialog = EmbeddedVisualClusterEditor(
                 self.iface, self
             )
+            self.page_stack.addWidget(self._dashboard_visual_cluster_dialog)
+
         palette = self.STEP_PALETTES[3 if requested_mode == "prepare" else 4]
         self._dashboard_visual_cluster_dialog.setStyleSheet(
             "QPushButton {"
@@ -284,12 +232,22 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "QPushButton:hover {"
             f"background:{palette['hover']}; border-color:{palette['hover']};"
             "}"
-            "QGroupBox { font-weight:700; }"
+            "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
+            "QGroupBox {"
+            f"border:1px solid {palette['border']}; border-radius:6px; margin-top:8px; "
+            "padding-top:7px; font-weight:700;"
+            "}"
+            "QGroupBox::title {"
+            f"color:{palette['main']}; subcontrol-origin:margin; left:8px; padding:0 4px;"
+            "}"
         )
         self._dashboard_visual_cluster_dialog.refresh_layers()
-        self._dashboard_visual_cluster_dialog.show()
-        self._dashboard_visual_cluster_dialog.raise_()
-        self._dashboard_visual_cluster_dialog.activateWindow()
+        self.page_stack.setCurrentWidget(self._dashboard_visual_cluster_dialog)
+        self.setWindowTitle(
+            "LS Netontwerp Wizard – "
+            + ("handmatige clustering voorbereiden" if requested_mode == "prepare" else "visuele clustereditor")
+        )
+        self.resize(max(self.width(), 1180), max(self.height(), 820))
 
     def _page_style(self, step):
         palette = self.STEP_PALETTES[step]
@@ -303,12 +261,10 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "}"
             "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
             "QPushButton#genInfoButton {"
-            f"background:{palette['soft']}; color:{palette['main']}; "
-            f"border:1px solid {palette['border']};"
+            f"background:{palette['soft']}; color:{palette['main']}; border:1px solid {palette['border']};"
             "}"
             "QGroupBox {"
-            f"border:1px solid {palette['border']}; border-radius:6px; margin-top:8px; "
-            "padding-top:7px; font-weight:700;"
+            f"border:1px solid {palette['border']}; border-radius:6px; margin-top:8px; padding-top:7px; font-weight:700;"
             "}"
             "QGroupBox::title {"
             f"color:{palette['main']}; subcontrol-origin:margin; left:8px; padding:0 4px;"
