@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from qgis.PyQt.QtCore import QTimer, Qt
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QDialogButtonBox,
     QFrame,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -14,7 +16,9 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .dialog import LSNetontwerpDialog
-from .cluster_paint_dialog import VisueleClusterEditorDialog
+from . import cluster_paint_dialog as _cluster_paint_dialog
+
+VisueleClusterEditorDialog = _cluster_paint_dialog.VisueleClusterEditorDialog
 
 try:
     SIZE_EXPANDING = QSizePolicy.Policy.Expanding
@@ -26,6 +30,19 @@ except AttributeError:  # QGIS 3 / PyQt5
     SIZE_FIXED = QSizePolicy.Fixed
     FRAME_NONE = QFrame.NoFrame
     WIDGET_FLAG = Qt.Widget
+
+
+# QGIS 4 / PyQt6 moved TextSelectableByMouse into Qt.TextInteractionFlag.
+# cluster_paint_dialog supports QGIS 3 as well, so provide a tiny runtime
+# compatibility proxy without changing the editor's other Qt lookups.
+if not hasattr(_cluster_paint_dialog.Qt, "TextSelectableByMouse"):
+    class _ClusterQtCompat:
+        def __getattr__(self, name):
+            if name == "TextSelectableByMouse":
+                return Qt.TextInteractionFlag.TextSelectableByMouse
+            return getattr(Qt, name)
+
+    _cluster_paint_dialog.Qt = _ClusterQtCompat()
 
 
 class EmbeddedVisualClusterEditor(VisueleClusterEditorDialog):
@@ -74,11 +91,85 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
     def __init__(self, iface, parent=None):
         self._dashboard_visual_cluster_dialog = None
         self._dashboard_mirrors = []
+        self._dashboard_widget = None
         super().__init__(iface, parent)
+        self._install_author_credit()
+        self._compact_input_section()
         self._install_dashboard()
+        self._compact_progress_area()
+        self._move_progress_to_bottom()
         self._apply_step_page_colors()
-        self.setMinimumSize(1180, 720)
+        self.setMinimumSize(1180, 740)
         self.resize(max(self.width(), 1180), max(self.height(), 760))
+
+    def _install_author_credit(self):
+        for label in self.main_page.findChildren(QLabel):
+            if label.objectName() == "techbaseSubtitle":
+                label.setText(
+                    "TechBase • van GEN-data naar controleerbaar laagspanningsontwerp "
+                    "• Gemaakt door Luka Stuurman"
+                )
+                break
+
+    def _compact_input_section(self):
+        for group in self.main_page.findChildren(QGroupBox):
+            if group.title() != "Benodigde invoer":
+                continue
+            group.setMaximumHeight(132)
+            layout = group.layout()
+            if layout is not None:
+                layout.setContentsMargins(8, 6, 8, 7)
+                layout.setVerticalSpacing(3)
+                layout.setHorizontalSpacing(7)
+            for edit in (
+                self.xml_edit,
+                self.excel_edit,
+                self.plan_edit,
+                self.output_edit,
+            ):
+                edit.setMaximumHeight(24)
+            for button in group.findChildren(QPushButton):
+                button.setMaximumHeight(26)
+            break
+
+    def _compact_progress_area(self):
+        self.progress_group.setTitle("")
+        self.progress_group.setMaximumHeight(56)
+        progress_layout = self.progress_group.layout()
+        if progress_layout is not None:
+            progress_layout.setContentsMargins(6, 3, 6, 4)
+            progress_layout.setSpacing(2)
+
+        self.progress_summary.setMaximumHeight(16)
+        self.progress_summary.setStyleSheet(
+            "font-size:11px; color:#555555; font-weight:600;"
+        )
+        self.progress_cancel_button.setText("Stop")
+        self.progress_cancel_button.setMaximumHeight(22)
+        self.progress_cancel_button.setMaximumWidth(58)
+        self.progress_bar.setMaximumHeight(12)
+        self.progress_bar.setTextVisible(False)
+        self.progress_details_toggle.setVisible(False)
+        self.progress_details.setVisible(False)
+
+        self.status_label.setMaximumHeight(17)
+        self.status_label.setStyleSheet("font-size:10px; color:#777777;")
+        self.status_label.setWordWrap(False)
+
+    def _move_progress_to_bottom(self):
+        root = self.main_page.layout()
+        if root is None:
+            return
+        root.removeWidget(self.status_label)
+        root.removeWidget(self.progress_group)
+
+        old_button_box = self.run_button.parentWidget()
+        insert_at = root.indexOf(old_button_box)
+        if insert_at < 0:
+            insert_at = root.count()
+
+        root.insertWidget(insert_at, self.status_label)
+        root.insertWidget(insert_at + 1, self.progress_group)
 
     @staticmethod
     def _button_style(palette, secondary=False):
@@ -105,7 +196,15 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
         )
 
-    def _dashboard_button(self, text, step, target=None, callback=None, secondary=False, enabled_source=None):
+    def _dashboard_button(
+        self,
+        text,
+        step,
+        target=None,
+        callback=None,
+        secondary=False,
+        enabled_source=None,
+    ):
         palette = self.STEP_PALETTES[step]
         button = QPushButton(text)
         button.setMinimumHeight(38)
@@ -125,6 +224,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         card = QFrame()
         card.setObjectName(f"stepCard{step}")
         card.setFrameShape(FRAME_NONE)
+        card.setMinimumHeight(166)
         card.setStyleSheet(
             f"QFrame#stepCard{step} {{"
             f"background:{palette['soft']}; border:1px solid {palette['border']}; "
@@ -134,7 +234,9 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         layout.setContentsMargins(12, 11, 12, 12)
         layout.setSpacing(7)
         header = QLabel(f"{step}. {title}")
-        header.setStyleSheet(f"color:{palette['main']}; font-size:15px; font-weight:800; border:0;")
+        header.setStyleSheet(
+            f"color:{palette['main']}; font-size:15px; font-weight:800; border:0;"
+        )
         layout.addWidget(header)
         note = QLabel(subtitle)
         note.setWordWrap(True)
@@ -150,12 +252,16 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         root = self.main_page.layout()
         if root is None:
             return
+
         old_button_box = self.run_button.parentWidget()
         if isinstance(old_button_box, QDialogButtonBox):
             old_button_box.setVisible(False)
 
         dashboard = QWidget(self.main_page)
+        self._dashboard_widget = dashboard
         dashboard.setObjectName("workflowDashboard")
+        dashboard.setMinimumHeight(360)
+        dashboard.setSizePolicy(SIZE_EXPANDING, SIZE_EXPANDING)
         dashboard_layout = QVBoxLayout(dashboard)
         dashboard_layout.setContentsMargins(0, 2, 0, 0)
         dashboard_layout.setSpacing(7)
@@ -176,34 +282,107 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         grid.setVerticalSpacing(9)
         for col in range(3):
             grid.setColumnStretch(col, 1)
+        for row in range(2):
+            grid.setRowStretch(row, 1)
 
-        step1 = self._make_step_card(1, "Invoer & ontwerpstroom", "GEN en Excel importeren en de controlelaag voor het ontwerp opbouwen.", [
-            self._dashboard_button("1. Ontwerpstroom maken", 1, target=self.run_button)
-        ])
-        step2 = self._make_step_card(2, "Brondata controleren", "Corrigeer waarden voordat de clustering wordt opgebouwd.", [
-            self._dashboard_button("2a. Stroom aanpassen", 2, target=self.edit_values_button),
-            self._dashboard_button("2b. Woningtype aanpassen", 2, target=self.edit_housing_button, secondary=True),
-            self._dashboard_button("2c. Stations aanpassen", 2, target=self.edit_stations_button, secondary=True),
-        ])
-        step3 = self._make_step_card(3, "Clustering maken", "Kies automatisch clusteren of deel aansluitingen vooraf volledig handmatig in.", [
-            self._dashboard_button("3a. Automatische clustering maken", 3, target=self.cluster_button),
-            self._dashboard_button("3b. Handmatige clustering voorbereiden", 3, callback=lambda: self._open_visual_cluster_editor("prepare"), secondary=True, enabled_source=self.cluster_button),
-        ])
-        step4 = self._make_step_card(4, "Clustering aanpassen", "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.", [
-            self._dashboard_button("4a. Clustercorrectie", 4, target=self.edit_cluster_button),
-            self._dashboard_button("4b. Visuele handmatige clustereditor", 4, callback=lambda: self._open_visual_cluster_editor("result"), secondary=True),
-        ])
-        step5 = self._make_step_card(5, "Sleuven & routes", "Teken of node sleuven en vernieuw geselecteerde of alle clusterroutes.", [
-            self._dashboard_button("5. Sleuven/routes openen", 5, target=self.network_button)
-        ])
-        step6 = self._make_step_card(6, "Clustergebieden", "Maak de eindgebieden compacter en pas gedeelde grenzen visueel aan.", [
-            self._dashboard_button("6. Mooie clustergebieden", 6, target=self.areas_button)
-        ])
+        step1 = self._make_step_card(
+            1,
+            "Invoer & ontwerpstroom",
+            "GEN en Excel importeren en de controlelaag voor het ontwerp opbouwen.",
+            [
+                self._dashboard_button(
+                    "1. Ontwerpstroom maken", 1, target=self.run_button
+                )
+            ],
+        )
+        step2 = self._make_step_card(
+            2,
+            "Brondata controleren",
+            "Corrigeer waarden voordat de clustering wordt opgebouwd.",
+            [
+                self._dashboard_button(
+                    "2a. Stroom aanpassen", 2, target=self.edit_values_button
+                ),
+                self._dashboard_button(
+                    "2b. Woningtype aanpassen",
+                    2,
+                    target=self.edit_housing_button,
+                    secondary=True,
+                ),
+                self._dashboard_button(
+                    "2c. Stations aanpassen",
+                    2,
+                    target=self.edit_stations_button,
+                    secondary=True,
+                ),
+            ],
+        )
+        step3 = self._make_step_card(
+            3,
+            "Clustering maken",
+            "Kies automatisch clusteren of deel aansluitingen vooraf volledig handmatig in.",
+            [
+                self._dashboard_button(
+                    "3a. Automatische clustering maken",
+                    3,
+                    target=self.cluster_button,
+                ),
+                self._dashboard_button(
+                    "3b. Handmatige clustering voorbereiden",
+                    3,
+                    callback=lambda: self._open_visual_cluster_editor("prepare"),
+                    secondary=True,
+                    enabled_source=self.cluster_button,
+                ),
+            ],
+        )
+        step4 = self._make_step_card(
+            4,
+            "Clustering aanpassen",
+            "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.",
+            [
+                self._dashboard_button(
+                    "4a. Clustercorrectie", 4, target=self.edit_cluster_button
+                ),
+                self._dashboard_button(
+                    "4b. Visuele handmatige clustereditor",
+                    4,
+                    callback=lambda: self._open_visual_cluster_editor("result"),
+                    secondary=True,
+                ),
+            ],
+        )
+        step5 = self._make_step_card(
+            5,
+            "Sleuven & routes",
+            "Teken of node sleuven en vernieuw geselecteerde of alle clusterroutes.",
+            [
+                self._dashboard_button(
+                    "5. Sleuven/routes openen", 5, target=self.network_button
+                )
+            ],
+        )
+        step6 = self._make_step_card(
+            6,
+            "Clustergebieden",
+            "Maak de eindgebieden compacter en pas gedeelde grenzen visueel aan.",
+            [
+                self._dashboard_button(
+                    "6. Mooie clustergebieden", 6, target=self.areas_button
+                )
+            ],
+        )
 
-        for index, card in enumerate((step1, step2, step3, step4, step5, step6)):
+        for index, card in enumerate(
+            (step1, step2, step3, step4, step5, step6)
+        ):
             grid.addWidget(card, index // 3, index % 3)
         dashboard_layout.addLayout(grid)
-        root.insertWidget(max(0, root.count() - 1), dashboard)
+
+        progress_index = root.indexOf(self.progress_group)
+        if progress_index < 0:
+            progress_index = max(0, root.count() - 1)
+        root.insertWidget(progress_index, dashboard)
 
         self._dashboard_sync_timer = QTimer(self)
         self._dashboard_sync_timer.setInterval(300)
@@ -245,7 +424,11 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         self.page_stack.setCurrentWidget(self._dashboard_visual_cluster_dialog)
         self.setWindowTitle(
             "LS Netontwerp Wizard – "
-            + ("handmatige clustering voorbereiden" if requested_mode == "prepare" else "visuele clustereditor")
+            + (
+                "handmatige clustering voorbereiden"
+                if requested_mode == "prepare"
+                else "visuele clustereditor"
+            )
         )
         self.resize(max(self.width(), 1180), max(self.height(), 820))
 
@@ -261,13 +444,16 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "}"
             "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
             "QPushButton#genInfoButton {"
-            f"background:{palette['soft']}; color:{palette['main']}; border:1px solid {palette['border']};"
+            f"background:{palette['soft']}; color:{palette['main']}; "
+            f"border:1px solid {palette['border']};"
             "}"
             "QGroupBox {"
-            f"border:1px solid {palette['border']}; border-radius:6px; margin-top:8px; padding-top:7px; font-weight:700;"
+            f"border:1px solid {palette['border']}; border-radius:6px; "
+            "margin-top:8px; padding-top:7px; font-weight:700;"
             "}"
             "QGroupBox::title {"
-            f"color:{palette['main']}; subcontrol-origin:margin; left:8px; padding:0 4px;"
+            f"color:{palette['main']}; subcontrol-origin:margin; "
+            "left:8px; padding:0 4px;"
             "}"
             "QProgressBar::chunk {"
             f"background:{palette['main']};"
@@ -281,6 +467,26 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         self.network_page.setStyleSheet(self._page_style(5))
         self.areas_page.setStyleSheet(self._page_style(6))
 
+    def _force_home_repaint(self):
+        if self.page_stack.currentWidget() is not self.main_page:
+            return
+        layout = self.main_page.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.main_page.updateGeometry()
+        self.page_stack.updateGeometry()
+        self.main_page.update()
+        self.page_stack.update()
+        self.update()
+        self.repaint()
+        QApplication.processEvents()
+
     def show_home_page(self):
-        super().show_home_page()
+        self.page_stack.setUpdatesEnabled(False)
+        try:
+            super().show_home_page()
+        finally:
+            self.page_stack.setUpdatesEnabled(True)
         self.resize(max(self.width(), 1180), max(self.height(), 760))
+        QTimer.singleShot(0, self._force_home_repaint)
