@@ -19,8 +19,10 @@ class LSNetontwerpPlugin:
         self.housing_action = None
         self.station_action = None
         self.manual_action = None
+        self.cluster_editor_action = None
         self.provider = None
         self.dialog = None
+        self.cluster_editor_dialog = None
 
     def initProcessing(self):
         if self.provider is None:
@@ -87,6 +89,18 @@ class LSNetontwerpPlugin:
         self.manual_action.triggered.connect(self.open_manual_tool)
         self.iface.addPluginToVectorMenu("LS Netontwerp", self.manual_action)
 
+        self.cluster_editor_action = QAction(
+            icon,
+            "Visuele clustereditor (lasso naar station)",
+            self.iface.mainWindow(),
+        )
+        self.cluster_editor_action.setObjectName("lsNetontwerpVisualClusterEditorAction")
+        self.cluster_editor_action.setToolTip(
+            "Teken rond aansluitingen, kies een doelstation en herbereken het cluster veilig"
+        )
+        self.cluster_editor_action.triggered.connect(self.open_cluster_editor)
+        self.iface.addPluginToVectorMenu("LS Netontwerp", self.cluster_editor_action)
+        self.iface.addToolBarIcon(self.cluster_editor_action)
 
     def unload(self):
         if self.action is not None:
@@ -98,6 +112,7 @@ class LSNetontwerpPlugin:
             self.housing_action,
             self.station_action,
             self.manual_action,
+            self.cluster_editor_action,
         ):
             if action is not None:
                 self.iface.removePluginVectorMenu("LS Netontwerp", action)
@@ -110,8 +125,10 @@ class LSNetontwerpPlugin:
         self.housing_action = None
         self.station_action = None
         self.manual_action = None
+        self.cluster_editor_action = None
         self.provider = None
         self.dialog = None
+        self.cluster_editor_dialog = None
 
     def open_dialog(self):
         if self.dialog is None:
@@ -152,3 +169,15 @@ class LSNetontwerpPlugin:
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
+
+    def open_cluster_editor(self):
+        from .cluster_paint_dialog import VisueleClusterEditorDialog
+
+        if self.cluster_editor_dialog is None:
+            self.cluster_editor_dialog = VisueleClusterEditorDialog(
+                self.iface, self.iface.mainWindow()
+            )
+        self.cluster_editor_dialog.refresh_layers()
+        self.cluster_editor_dialog.show()
+        self.cluster_editor_dialog.raise_()
+        self.cluster_editor_dialog.activateWindow()
