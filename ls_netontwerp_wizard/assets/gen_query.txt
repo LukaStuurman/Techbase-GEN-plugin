@@ -39,6 +39,3 @@ where Lokatie interacts trail
 plus
 |E Station [Ls Kaart]| 
 where Ligging interacts trail
-plus
-|LS Kabel Doorsnede Info| 
-where |E Lv Map Cable|.|Ligging [kaart]| interacts trail
