@@ -1,8 +1,25 @@
 """Laatste QGIS 3/4 UI-afwerking voor het centrale workflowdashboard."""
 
-from qgis.PyQt.QtWidgets import QApplication, QGroupBox, QHBoxLayout, QMessageBox, QPushButton
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from qgis.PyQt.QtWidgets import (
+    QApplication,
+    QGroupBox,
+    QHBoxLayout,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .themed_dialog import LSNetontwerpDashboardDialog as _ThemedDashboardDialog
+
+
+THREEDBAG_CAPABILITIES_URL = (
+    "https://data.3dbag.nl/api/BAG3D/wfs?"
+    "service=WFS&request=GetCapabilities&version=2.0.0"
+)
 
 
 class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
@@ -62,7 +79,16 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
         bar_row.setContentsMargins(0, 0, 0, 0)
         bar_row.setSpacing(6)
         bar_row.addWidget(self.progress_bar, 1)
-        bar_row.addWidget(self.progress_cancel_button, 0)
+
+        # QGIS 4 tekent de knop optisch een paar pixels lager dan de smalle balk.
+        # Een klein houdertje met ondermarge trekt de knop circa 2 px omhoog,
+        # zonder negatieve marges of platformafhankelijke geometrie-trucs.
+        cancel_holder = QWidget()
+        cancel_holder_layout = QVBoxLayout(cancel_holder)
+        cancel_holder_layout.setContentsMargins(0, 0, 0, 4)
+        cancel_holder_layout.setSpacing(0)
+        cancel_holder_layout.addWidget(self.progress_cancel_button)
+        bar_row.addWidget(cancel_holder, 0)
         progress_layout.insertLayout(1, bar_row)
 
         button = self.progress_cancel_button
@@ -80,8 +106,8 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             "QPushButton:disabled {background:#D7A3A3; color:#F5E4E4; border-color:#D7A3A3;}"
         )
 
-        # De balk zelf blijft dun. De rij krijgt zijn hoogte alleen van de 24 px
-        # stopknop, waardoor alles netjes binnen hetzelfde oranje kader blijft.
+        # De balk zelf blijft dun. De compacte groep houdt voldoende ruimte voor
+        # de 24 px stopknop zonder de werkstappen erboven samen te drukken.
         self.progress_group.setMaximumHeight(62)
         progress_layout.setContentsMargins(7, 4, 7, 5)
         progress_layout.setSpacing(3)
@@ -89,6 +115,81 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
         self.progress_summary.setMaximumHeight(17)
         self.progress_bar.setMinimumHeight(10)
         self.progress_bar.setMaximumHeight(10)
+
+    @staticmethod
+    def _three_d_bag_server_status():
+        """Voer een korte WFS-capabilitiescontrole uit vóór stap 1."""
+        request = Request(
+            THREEDBAG_CAPABILITIES_URL,
+            headers={
+                "Accept": "application/xml,text/xml,*/*",
+                "User-Agent": "LS-Netontwerp-Wizard/1.15",
+            },
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                # Lees slechts een klein deel: we willen bereikbaarheid toetsen,
+                # niet de volledige capabilities in het geheugen laden.
+                response.read(512)
+            if 200 <= status < 400:
+                return True, ""
+            return False, f"HTTP-status {status}"
+        except HTTPError as exc:
+            return False, f"HTTP {exc.code}"
+        except URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            return False, str(reason)
+        except (TimeoutError, OSError) as exc:
+            return False, str(exc)
+
+    def run_preparation(self):
+        """Start stap 1 met een expliciete 3DBAG-offlinekeuze."""
+        try:
+            values = self.values()
+        except Exception:
+            # Laat de bestaande validatie/foutafhandeling verantwoordelijk zijn
+            # als het uitlezen van de invoer zelf al mislukt.
+            return super().run_preparation()
+
+        if not bool(values.get("use_3dbag", False)):
+            return super().run_preparation()
+
+        reachable, reason = self._three_d_bag_server_status()
+        if reachable:
+            return super().run_preparation()
+
+        message = (
+            "3DBAG LoD 2.2 is aangevinkt, maar de 3DBAG-server kan momenteel "
+            "niet worden bereikt.\n\n"
+            "Wil je stap 1 direct verder uitvoeren zonder de 3DBAG LoD 2.2-"
+            "controle? De gewone BAG-woningtypen worden dan wel gewoon verwerkt."
+        )
+        if reason:
+            message += f"\n\nTechnische melding: {reason}"
+
+        reply = QMessageBox.question(
+            self,
+            "3DBAG LoD 2.2 niet bereikbaar",
+            message,
+        )
+        try:
+            yes_button = QMessageBox.StandardButton.Yes
+        except AttributeError:  # QGIS 3 / PyQt5
+            yes_button = QMessageBox.Yes
+        if reply != yes_button:
+            return
+
+        use_3dbag_widget = self.widgets.get("use_3dbag")
+        if use_3dbag_widget is not None and hasattr(use_3dbag_widget, "setChecked"):
+            use_3dbag_widget.setChecked(False)
+
+        self.progress_summary.setText("3DBAG overgeslagen; stap 1 start met BAG-data")
+        self.progress_summary.setToolTip(
+            "3DBAG LoD 2.2 was niet bereikbaar en is voor deze uitvoering uitgezet."
+        )
+        QApplication.processEvents()
+        return super().run_preparation()
 
     def _rename_manual_clustering_route(self):
         """Maak in het dashboard duidelijk dat 3b zelf de clustering afrondt."""
