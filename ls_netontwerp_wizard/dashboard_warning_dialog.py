@@ -8,6 +8,10 @@ from .dashboard_dialog import LSNetontwerpDashboardDialog as _DashboardDialog
 class LSNetontwerpDashboardDialog(_DashboardDialog):
     """Dashboard met expliciete kwaliteitswaarschuwing bij 3DBAG-uitval."""
 
+    def _run_base_preparation(self):
+        """Start de oorspronkelijke stap 1 zonder de oudere 3DBAG-precheck opnieuw te doen."""
+        return super(_DashboardDialog, self).run_preparation()
+
     def run_preparation(self):
         """Start stap 1 en waarschuw duidelijk voor classificatierisico zonder 3DBAG."""
         try:
@@ -15,14 +19,14 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         except Exception:
             # Sla de extra controle over en laat de bestaande invoervalidatie de
             # fout op de gebruikelijke manier afhandelen.
-            return super(_DashboardDialog, self).run_preparation()
+            return self._run_base_preparation()
 
         if not bool(values.get("use_3dbag", False)):
-            return super(_DashboardDialog, self).run_preparation()
+            return self._run_base_preparation()
 
         reachable, reason = self._three_d_bag_server_status()
         if reachable:
-            return super(_DashboardDialog, self).run_preparation()
+            return self._run_base_preparation()
 
         message = (
             "3DBAG LoD 2.2 is aangevinkt, maar de 3DBAG-server kan momenteel "
@@ -60,6 +64,5 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         )
         QApplication.processEvents()
 
-        # Omzeil de oudere 3DBAG-pop-up in dashboard_dialog.py: de keuze is hier
-        # al gemaakt en de checkbox staat inmiddels uit.
-        return super(_DashboardDialog, self).run_preparation()
+        # De keuze is al gemaakt en de checkbox staat inmiddels uit.
+        return self._run_base_preparation()
