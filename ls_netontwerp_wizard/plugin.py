@@ -4,7 +4,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsApplication
 
-from .dashboard_dialog import LSNetontwerpDashboardDialog as LSNetontwerpDialog
+from .dashboard_warning_dialog import LSNetontwerpDashboardDialog as LSNetontwerpDialog
 from .provider import LSNetontwerpProvider
 
 
