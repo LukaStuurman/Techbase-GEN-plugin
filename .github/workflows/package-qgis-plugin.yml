@@ -1,0 +1,24 @@
+name: Package QGIS plugin
+
+on:
+  push:
+    branches:
+      - agent/visuele-clustereditor
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build installable plugin zip
+        run: |
+          find ls_netontwerp_wizard -type d -name '__pycache__' -prune -exec rm -rf {} +
+          find ls_netontwerp_wizard -type f -name '*.pyc' -delete
+          rm -f ls_netontwerp_wizard/_attachments.zip
+          zip -r LS_Netontwerp_Wizard_1.15.2.zip ls_netontwerp_wizard
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: LS_Netontwerp_Wizard_1.15.2
+          path: LS_Netontwerp_Wizard_1.15.2.zip
+          if-no-files-found: error
