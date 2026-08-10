@@ -6,9 +6,16 @@ from qgis.core import QgsApplication
 
 from .dashboard_warning_dialog import LSNetontwerpDashboardDialog as LSNetontwerpDialog
 from .provider import LSNetontwerpProvider
+from .workflow import WorkflowRunner
+from .automatic_clustering_optimization import install_workflow_optimizations
 
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "techbase-logo.png"
+
+# Installeer de automatische-clusteringoptimalisaties één keer bij het laden van
+# de plugin. De patch raakt alleen de pure NumPy/SciPy-rekenkern van stap 3a en
+# respecteert het QGIS Processing-threadbudget.
+install_workflow_optimizations(WorkflowRunner)
 
 
 class LSNetontwerpPlugin:
