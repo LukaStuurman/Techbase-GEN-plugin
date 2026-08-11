@@ -1,6 +1,6 @@
-"""Laatste waarschuwingen en zichtbare kwaliteitskeuzes op het dashboard."""
+"""Laatste waarschuwingen, kaartselecties en consistente submenu-UX."""
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QTimer, Qt
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QComboBox,
@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -23,11 +24,15 @@ BAG3D_CRS_AUTHID = "EPSG:28992"
 
 
 class LSNetontwerpDashboardDialog(_DashboardDialog):
-    """Dashboard met 3DBAG-waarschuwing en expliciete gebiedsvormkeuze."""
+    """Dashboard met 3b-achtige kaartselectie en consistente subpagina's."""
 
     def __init__(self, iface, parent=None):
+        self._submenu_selection_layer = None
+        self._submenu_selection_handler = None
+        self._submenu_selection_page = None
         super().__init__(iface, parent)
         self._install_area_shape_mode()
+        self._install_submenu_consistency()
 
     def _fix_compact_progress(self):
         """Zet de rode stopknop bewust iets hoger dan de smalle voortgangsbalk."""
@@ -72,10 +77,8 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         bar_row.setSpacing(6)
         bar_row.addWidget(self.progress_bar, 1, align_vcenter)
 
-        # De rij is 32 px hoog. De 10 px progressbar wordt rond y=16
-        # gecentreerd; de 24 px knop staat tegen de bovenkant en heeft zijn
-        # midden daardoor op y=12. Het rode kruis staat dus bewust 4 px hoger
-        # dan de middellijn van de progressbar, passend bij QGIS 4.2.
+        # De 24 px knop staat bewust circa 4 px hoger dan het midden van de
+        # 10 px voortgangsbalk. Dit sluit visueel beter aan in QGIS 4.2.
         cancel_holder = QWidget(self.progress_group)
         cancel_holder.setFixedSize(24, 32)
         cancel_layout = QVBoxLayout(cancel_holder)
@@ -92,6 +95,466 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         self.progress_summary.setMaximumHeight(17)
         self.progress_bar.setMinimumHeight(10)
         self.progress_bar.setMaximumHeight(10)
+
+    # ------------------------------------------------------------------
+    # 3b als UX-patroon voor de andere subpagina's
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _group_by_title(page, title):
+        if page is None:
+            return None
+        for group in page.findChildren(QGroupBox):
+            if group.title() == title:
+                return group
+        return None
+
+    def _replace_close_with_home(self, page):
+        """Gebruik net als 3b één Home-knop rechtsonder in plaats van Sluiten."""
+        if page is None:
+            return
+        for button in page.findChildren(QPushButton):
+            if button.text().strip() != "Sluiten":
+                continue
+            try:
+                button.clicked.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            button.setText("←  Home")
+            button.setToolTip("Terug naar het hoofdscherm")
+            button.clicked.connect(self.show_home_page)
+
+    def _hide_header_home_buttons(self):
+        """3b heeft Home onderaan; gebruik die positie voortaan overal."""
+        for attribute in (
+            "value_home_button",
+            "housing_home_button",
+            "station_home_button",
+            "manual_home_button",
+            "network_home_button",
+            "areas_home_button",
+        ):
+            button = getattr(self, attribute, None)
+            if button is not None:
+                button.setVisible(False)
+                button.setMaximumWidth(0)
+
+    def _insert_lasso_button(self, group, text, callback, tooltip):
+        if group is None or group.layout() is None:
+            return None
+        button = QPushButton(text)
+        button.setToolTip(tooltip)
+        button.clicked.connect(callback)
+        layout = group.layout()
+        # De statuslabel blijft links staan; de kaartactie komt vóór de oude
+        # vernieuwknop zodat dezelfde volgorde als in 3b ontstaat.
+        insert_at = max(1, layout.count() - 1)
+        try:
+            layout.insertWidget(insert_at, button)
+        except AttributeError:
+            layout.addWidget(button)
+        return button
+
+    def _install_submenu_consistency(self):
+        """Maak 2a/2b/2c/4a/5/6 visueel en functioneel gelijk aan 3b."""
+        self._hide_header_home_buttons()
+        for page in (
+            self.value_page,
+            self.housing_page,
+            self.station_page,
+            self.manual_page,
+            self.network_page,
+            self.areas_page,
+        ):
+            self._replace_close_with_home(page)
+
+        # Nummering en compacte taakvolgorde volgens 3b: eerst selecteren,
+        # daarna de bewerking/instelling uitvoeren.
+        value_selection = self._group_by_title(self.value_page, "Kaartselectie")
+        housing_selection = self._group_by_title(self.housing_page, "Kaartselectie")
+        station_selection = self._group_by_title(self.station_page, "Kaartselectie")
+        manual_selection = self._group_by_title(self.manual_page, "Kaartselectie")
+        value_values = self._group_by_title(self.value_page, "Nieuwe waarden")
+        housing_choice = self._group_by_title(self.housing_page, "Nieuw woningtype")
+        station_value = self._group_by_title(self.station_page, "Nieuwe stationswaarde")
+        manual_options = self._group_by_title(self.manual_page, "Normale modus")
+
+        if value_selection is not None:
+            value_selection.setTitle("1. Aansluitingen selecteren")
+        if housing_selection is not None:
+            housing_selection.setTitle("1. BAG-panden selecteren")
+        if station_selection is not None:
+            station_selection.setTitle("1. Stations selecteren")
+        if manual_selection is not None:
+            manual_selection.setTitle("1. Aansluitingen en doelstation selecteren")
+        if value_values is not None:
+            value_values.setTitle("2. Nieuwe ontwerpstroomwaarden")
+        if housing_choice is not None:
+            housing_choice.setTitle("2. Nieuw woningtype")
+        if station_value is not None:
+            station_value.setTitle("2. Nieuwe stationswaarde")
+        if manual_options is not None:
+            manual_options.setTitle("2. Correctie-opties")
+        if hasattr(self, "areas_shape_group"):
+            self.areas_shape_group.setTitle("2. Gebiedsvorm")
+
+        self.value_lasso_button = self._insert_lasso_button(
+            value_selection,
+            "Aansluitingen met lasso selecteren",
+            self._lasso_value_connections,
+            "Verberg de wizard tijdelijk en teken vrij rond de gewenste aansluitingen",
+        )
+        self.housing_lasso_button = self._insert_lasso_button(
+            housing_selection,
+            "Panden met lasso selecteren",
+            self._lasso_housing,
+            "Verberg de wizard tijdelijk en teken vrij rond de BAG-panden die je wilt aanpassen",
+        )
+        self.station_lasso_button = self._insert_lasso_button(
+            station_selection,
+            "Stations met lasso selecteren",
+            self._lasso_stations,
+            "Verberg de wizard tijdelijk en teken vrij rond één of meer bestaande stations",
+        )
+        self.manual_lasso_button = self._insert_lasso_button(
+            manual_selection,
+            "Aansluitingen met lasso selecteren",
+            self._lasso_manual_connections,
+            "Gebruik dezelfde vrije-handselectie als in 3b",
+        )
+        self.manual_station_pick_button = self._insert_lasso_button(
+            manual_selection,
+            "Doelstation aanklikken",
+            self._pick_manual_station,
+            "Verberg de wizard en klik precies één doelstation aan, zoals in 3b",
+        )
+
+        self._install_network_lasso()
+        self._install_area_lasso()
+
+    def _install_network_lasso(self):
+        root = self.network_page.layout()
+        if root is None or hasattr(self, "network_lasso_button"):
+            return
+        group = QGroupBox("1. Routes selecteren")
+        row = QHBoxLayout(group)
+        self.network_selection_label = QLabel(
+            "Selecteer met de lasso routes wanneer je alleen geselecteerde clusters wilt verversen."
+        )
+        self.network_selection_label.setWordWrap(True)
+        self.network_lasso_button = QPushButton("Routes met lasso selecteren")
+        self.network_lasso_button.clicked.connect(self._lasso_network_routes)
+        row.addWidget(self.network_selection_label, 1)
+        row.addWidget(self.network_lasso_button)
+        insert_at = root.indexOf(self.network_advanced_toggle)
+        if insert_at < 0:
+            insert_at = 2
+        root.insertWidget(insert_at, group)
+        self.network_selection_group = group
+
+    def _install_area_lasso(self):
+        root = self.areas_page.layout()
+        if root is None or hasattr(self, "areas_lasso_button"):
+            return
+        label = self.areas_selection_label
+        insert_at = root.indexOf(label)
+        if insert_at < 0:
+            insert_at = 2
+        root.removeWidget(label)
+        group = QGroupBox("1. Gebieden selecteren")
+        row = QHBoxLayout(group)
+        self.areas_lasso_button = QPushButton("Gebieden met lasso selecteren")
+        self.areas_lasso_button.setToolTip(
+            "Selecteer vrij twee aangrenzende clustergebieden voor het verleggen van hun grens"
+        )
+        self.areas_lasso_button.clicked.connect(self._lasso_areas)
+        row.addWidget(label, 1)
+        row.addWidget(self.areas_lasso_button)
+        root.insertWidget(insert_at, group)
+        self.areas_selection_group = group
+
+    def _disconnect_submenu_selection(self):
+        layer = self._submenu_selection_layer
+        handler = self._submenu_selection_handler
+        if layer is not None and handler is not None:
+            try:
+                layer.selectionChanged.disconnect(handler)
+            except (TypeError, RuntimeError):
+                pass
+        self._submenu_selection_layer = None
+        self._submenu_selection_handler = None
+        self._submenu_selection_page = None
+
+    def _restore_submenu_after_selection(self, page, refresh_callback=None):
+        self._disconnect_submenu_selection()
+        if page is not None:
+            page.show()
+            self.page_stack.setCurrentWidget(page)
+        if refresh_callback is not None:
+            try:
+                refresh_callback()
+            except TypeError:
+                refresh_callback(False)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.page_stack.update()
+        if page is not None:
+            page.update()
+            page.repaint()
+        QApplication.processEvents()
+
+    def _start_submenu_map_selection(
+        self,
+        page,
+        layer,
+        refresh_callback,
+        status_label,
+        status_text,
+        single_click=False,
+    ):
+        """Zelfde selectieflow als 3b: kaart vrijgeven en automatisch terugkomen."""
+        if self.iface is None:
+            QMessageBox.warning(
+                self,
+                "Kaartselectie niet beschikbaar",
+                "Deze selectie vereist QGIS Desktop.",
+            )
+            return
+        if layer is None or not layer.isValid():
+            QMessageBox.warning(
+                self,
+                "Laag ontbreekt",
+                "De laag voor deze kaartselectie kon niet worden gevonden.",
+            )
+            return
+
+        self._disconnect_submenu_selection()
+        self.iface.setActiveLayer(layer)
+        layer.removeSelection()
+        action = self.iface.actionSelect() if single_click else self.iface.actionSelectFreehand()
+        if action is None:
+            QMessageBox.warning(
+                self,
+                "Selectietool niet beschikbaar",
+                "De benodigde QGIS-selectietool is in deze QGIS-versie niet beschikbaar.",
+            )
+            return
+
+        def selection_finished(*_args):
+            # Een QGIS-selectiesignaal kan meer dan één keer worden uitgezonden.
+            # Ontkoppel direct en herstel de submenu-pagina één keer.
+            try:
+                layer.selectionChanged.disconnect(selection_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._submenu_selection_layer = None
+            self._submenu_selection_handler = None
+            QTimer.singleShot(
+                0,
+                lambda: self._restore_submenu_after_selection(
+                    page, refresh_callback
+                ),
+            )
+
+        self._submenu_selection_layer = layer
+        self._submenu_selection_handler = selection_finished
+        self._submenu_selection_page = page
+        layer.selectionChanged.connect(selection_finished)
+        if status_label is not None:
+            status_label.setText(status_text)
+        action.trigger()
+        self.hide()
+
+    def _lasso_value_connections(self):
+        layer = self._layer_from_combo(self.value_layer_combo)
+        self._start_submenu_map_selection(
+            self.value_page,
+            layer,
+            lambda: self._refresh_value_selection_status(True),
+            self.value_status_label,
+            "Teken nu in de kaart rond de aansluitingen die je wilt aanpassen.",
+        )
+
+    def _lasso_housing(self):
+        layer = self._layer_from_combo(self.housing_layer_combo)
+        self._start_submenu_map_selection(
+            self.housing_page,
+            layer,
+            lambda: self._refresh_housing_selection_status(True),
+            self.housing_status_label,
+            "Teken nu in de kaart rond de BAG-panden die je wilt aanpassen.",
+        )
+
+    def _lasso_stations(self):
+        layer = self._layer_from_combo(self.station_layer_combo)
+        self._start_submenu_map_selection(
+            self.station_page,
+            layer,
+            lambda: self._refresh_station_selection_status(True),
+            self.station_status_label,
+            "Teken nu in de kaart rond de bestaande stations die je wilt aanpassen.",
+        )
+
+    def _lasso_manual_connections(self):
+        layer = self._manual_selected_layer("AANSLUITINGEN")
+        self._start_submenu_map_selection(
+            self.manual_page,
+            layer,
+            self._refresh_manual_selection_status,
+            self.manual_status_label,
+            "Teken nu in de kaart rond de aansluitingen die je naar een ander cluster wilt verplaatsen.",
+        )
+
+    def _pick_manual_station(self):
+        layer = self._manual_selected_layer("STATIONS")
+        self._start_submenu_map_selection(
+            self.manual_page,
+            layer,
+            self._refresh_manual_selection_status,
+            self.manual_status_label,
+            "Klik nu precies één doelstation aan.",
+            single_click=True,
+        )
+
+    def _lasso_network_routes(self):
+        layer = self._network_selected_layer("KABELROUTES")
+
+        def refresh():
+            count = len(layer.selectedFeatureIds()) if layer is not None else 0
+            self.network_selection_label.setText(
+                f"Geselecteerde kabelroutes: {count}. Gebruik daarna 'Geselecteerde routes verversen'."
+            )
+
+        self._start_submenu_map_selection(
+            self.network_page,
+            layer,
+            refresh,
+            self.network_status_label,
+            "Teken nu in de kaart rond de kabelroutes/clusters die je wilt verversen.",
+        )
+
+    def _lasso_areas(self):
+        layer = self._areas_selected_layer()
+        self._start_submenu_map_selection(
+            self.areas_page,
+            layer,
+            self._refresh_areas_selection_status,
+            self.areas_status_label,
+            "Teken nu in de kaart rond precies twee aangrenzende gebieden.",
+        )
+
+    def _prepare_fixed_subpage(self, page):
+        if page is not None:
+            page.show()
+            page.setUpdatesEnabled(True)
+
+    def show_value_page(self):
+        self._prepare_fixed_subpage(self.value_page)
+        return super().show_value_page()
+
+    def show_housing_page(self):
+        self._prepare_fixed_subpage(self.housing_page)
+        return super().show_housing_page()
+
+    def show_station_page(self):
+        self._prepare_fixed_subpage(self.station_page)
+        return super().show_station_page()
+
+    def show_manual_page(self, unrestricted=False):
+        self._prepare_fixed_subpage(self.manual_page)
+        return super().show_manual_page(unrestricted)
+
+    def show_network_page(self):
+        self._prepare_fixed_subpage(self.network_page)
+        result = super().show_network_page()
+        if hasattr(self, "network_selection_label"):
+            layer = self._network_selected_layer("KABELROUTES")
+            count = len(layer.selectedFeatureIds()) if layer is not None else 0
+            self.network_selection_label.setText(
+                f"Geselecteerde kabelroutes: {count}. Lasso selecteren is beschikbaar."
+            )
+        return result
+
+    def show_areas_page(self):
+        self._prepare_fixed_subpage(self.areas_page)
+        return super().show_areas_page()
+
+    def _open_visual_cluster_editor(self, requested_mode):
+        """Heropen 3b/4b altijd als schone zichtbare stacked-widgetpagina."""
+        result = super()._open_visual_cluster_editor(requested_mode)
+        editor = self._dashboard_visual_cluster_dialog
+        if editor is not None:
+            editor.setUpdatesEnabled(True)
+            editor.show()
+            self.page_stack.setCurrentWidget(editor)
+            editor.updateGeometry()
+            editor.update()
+            editor.repaint()
+            QApplication.processEvents()
+        return result
+
+    def _hard_home_repaint(self):
+        if self.page_stack.currentWidget() is not self.main_page:
+            return
+        layout = self.main_page.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.main_page.updateGeometry()
+        self.page_stack.updateGeometry()
+        self.main_page.update()
+        self.page_stack.update()
+        self.main_page.repaint()
+        self.page_stack.repaint()
+        self.update()
+        self.repaint()
+        QApplication.processEvents()
+
+    def show_home_page(self):
+        """Wis de vorige subpagina echt uit de backing store vóór Home verschijnt."""
+        self._disconnect_submenu_selection()
+        current = self.page_stack.currentWidget()
+        editor = getattr(self, "_dashboard_visual_cluster_dialog", None)
+
+        self.page_stack.setUpdatesEnabled(False)
+        try:
+            if current is not None and current is not self.main_page:
+                current.setUpdatesEnabled(False)
+                current.hide()
+
+            # 3b/4b is een ingebedde QDialog en gaf in QGIS 4 het sterkste
+            # ghosting-effect. Verwijder die instantie volledig op Home; bij de
+            # volgende opening wordt hij schoon opnieuw opgebouwd.
+            if editor is not None:
+                try:
+                    editor._disconnect_signals()
+                except (AttributeError, TypeError, RuntimeError):
+                    pass
+                self.page_stack.removeWidget(editor)
+                editor.hide()
+                editor.setParent(None)
+                editor.deleteLater()
+                self._dashboard_visual_cluster_dialog = None
+
+            super().show_home_page()
+            self.main_page.show()
+            self.main_page.setUpdatesEnabled(True)
+        finally:
+            self.page_stack.setUpdatesEnabled(True)
+            if current is not None and current is not self.main_page and current is not editor:
+                current.setUpdatesEnabled(True)
+
+        # Eén repaint is op QGIS 4/Windows soms onvoldoende. Doe direct en na
+        # twee event-loopmomenten nogmaals zodat oude submenu-pixels verdwijnen.
+        self._hard_home_repaint()
+        QTimer.singleShot(0, self._hard_home_repaint)
+        QTimer.singleShot(35, self._hard_home_repaint)
+        QTimer.singleShot(100, self._hard_home_repaint)
+
+    # ------------------------------------------------------------------
+    # 3DBAG
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _three_d_bag_server_status():
@@ -122,8 +585,6 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             if provider is None or not provider.isValid():
                 return False, "De QGIS WFS-provider voor 3DBAG is niet geldig."
 
-            # Het uitlezen van de velden forceert dezelfde providerinitialisatie
-            # als de woningtypeberekening, zonder al een groot gebied op te halen.
             fields = layer.fields()
             field_names = {field.name().casefold() for field in fields}
             if "identificatie" not in field_names:
@@ -134,6 +595,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             return True, ""
         except Exception as exc:
             return False, str(exc)
+
+    # ------------------------------------------------------------------
+    # Stap 6 – minimale vertices
+    # ------------------------------------------------------------------
 
     def _install_area_shape_mode(self):
         """Toon minimale vertices als normale stap-6-keuze, niet alleen in Advanced."""
@@ -227,6 +692,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             "hoekpunten bespaart; alle aansluitingen zijn binnen hun eigen "
             "clustergebied gecontroleerd."
         )
+
+    # ------------------------------------------------------------------
+    # Stap 1 – 3DBAG-fallback
+    # ------------------------------------------------------------------
 
     def _run_base_preparation(self):
         """Start de oorspronkelijke stap 1 zonder de oudere 3DBAG-precheck opnieuw te doen."""
