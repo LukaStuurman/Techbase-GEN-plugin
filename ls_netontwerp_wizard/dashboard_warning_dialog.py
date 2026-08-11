@@ -9,9 +9,17 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
+from qgis.core import QgsVectorLayer
 
 from .dashboard_dialog import LSNetontwerpDashboardDialog as _DashboardDialog
+
+
+BAG3D_WFS_URL = "https://data.3dbag.nl/api/BAG3D/wfs"
+BAG3D_LOD22_TYPENAME = "BAG3D:lod22"
+BAG3D_CRS_AUTHID = "EPSG:28992"
 
 
 class LSNetontwerpDashboardDialog(_DashboardDialog):
@@ -22,7 +30,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         self._install_area_shape_mode()
 
     def _fix_compact_progress(self):
-        """Centreer voortgangsbalk en rode stopknop exact op dezelfde middenlijn."""
+        """Zet de rode stopknop bewust iets hoger dan de smalle voortgangsbalk."""
         self.status_label.setVisible(False)
         self.status_label.setMaximumHeight(0)
 
@@ -39,15 +47,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
 
         try:
             align_vcenter = Qt.AlignmentFlag.AlignVCenter
+            align_top = Qt.AlignmentFlag.AlignTop
         except AttributeError:  # QGIS 3 / PyQt5
             align_vcenter = Qt.AlignVCenter
-
-        bar_row = QHBoxLayout()
-        bar_row.setContentsMargins(0, 0, 0, 0)
-        bar_row.setSpacing(6)
-        bar_row.addWidget(self.progress_bar, 1, align_vcenter)
-        bar_row.addWidget(self.progress_cancel_button, 0, align_vcenter)
-        progress_layout.insertLayout(1, bar_row)
+            align_top = Qt.AlignTop
 
         button = self.progress_cancel_button
         button.setText("✕")
@@ -64,16 +67,73 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             "QPushButton:disabled {background:#D7A3A3; color:#F5E4E4; border-color:#D7A3A3;}"
         )
 
-        # Geen houder, ondermarge of pixel-offset meer: beide widgets worden
-        # door exact dezelfde horizontale layout rond dezelfde verticale as
-        # gecentreerd. Dit voorkomt de te lage stopknop in QGIS 4.
+        bar_row = QHBoxLayout()
+        bar_row.setContentsMargins(0, 0, 0, 0)
+        bar_row.setSpacing(6)
+        bar_row.addWidget(self.progress_bar, 1, align_vcenter)
+
+        # De rij is 32 px hoog. De 10 px progressbar wordt rond y=16
+        # gecentreerd; de 24 px knop staat tegen de bovenkant en heeft zijn
+        # midden daardoor op y=12. Het rode kruis staat dus bewust 4 px hoger
+        # dan de middellijn van de progressbar, passend bij QGIS 4.2.
+        cancel_holder = QWidget(self.progress_group)
+        cancel_holder.setFixedSize(24, 32)
+        cancel_layout = QVBoxLayout(cancel_holder)
+        cancel_layout.setContentsMargins(0, 0, 0, 8)
+        cancel_layout.setSpacing(0)
+        cancel_layout.addWidget(button, 0, align_top)
+        bar_row.addWidget(cancel_holder, 0, align_vcenter)
+        progress_layout.insertLayout(1, bar_row)
+
         self.progress_group.setMaximumHeight(62)
-        progress_layout.setContentsMargins(7, 4, 7, 5)
-        progress_layout.setSpacing(3)
+        progress_layout.setContentsMargins(7, 3, 7, 3)
+        progress_layout.setSpacing(2)
         self.progress_summary.setMinimumHeight(17)
         self.progress_summary.setMaximumHeight(17)
         self.progress_bar.setMinimumHeight(10)
         self.progress_bar.setMaximumHeight(10)
+
+    @staticmethod
+    def _three_d_bag_server_status():
+        """Test exact dezelfde QGIS WFS-laag die stap 1 zelf gebruikt."""
+        uri = (
+            "pagingEnabled='true' "
+            "pageSize='10000' "
+            "restrictToRequestBBOX='1' "
+            f"srsname='{BAG3D_CRS_AUTHID}' "
+            f"typename='{BAG3D_LOD22_TYPENAME}' "
+            f"url='{BAG3D_WFS_URL}' "
+            "version='2.0.0'"
+        )
+        try:
+            layer = QgsVectorLayer(uri, "3DBAG LoD 2.2 bereikbaarheidstest", "WFS")
+            if not layer.isValid():
+                try:
+                    provider_error = str(layer.error().message()).strip()
+                except Exception:
+                    provider_error = ""
+                reason = provider_error or (
+                    f"QGIS kan {BAG3D_LOD22_TYPENAME} niet openen via "
+                    f"{BAG3D_WFS_URL}"
+                )
+                return False, reason
+
+            provider = layer.dataProvider()
+            if provider is None or not provider.isValid():
+                return False, "De QGIS WFS-provider voor 3DBAG is niet geldig."
+
+            # Het uitlezen van de velden forceert dezelfde providerinitialisatie
+            # als de woningtypeberekening, zonder al een groot gebied op te halen.
+            fields = layer.fields()
+            field_names = {field.name().casefold() for field in fields}
+            if "identificatie" not in field_names:
+                return False, (
+                    "De 3DBAG WFS opent wel, maar het verwachte veld "
+                    "'identificatie' ontbreekt."
+                )
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
 
     def _install_area_shape_mode(self):
         """Toon minimale vertices als normale stap-6-keuze, niet alleen in Advanced."""
@@ -112,8 +172,6 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         root.insertWidget(insert_index, group)
         self.areas_shape_group = group
 
-        # De oude Advanced-checkbox blijft als intern compatibiliteitsobject
-        # bestaan; de zichtbare combobox bestuurt voortaan dezelfde parameter.
         self.areas_right_angles.setVisible(False)
         self.areas_shape_mode.currentIndexChanged.connect(
             self._sync_area_shape_mode
@@ -175,12 +233,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         return super(_DashboardDialog, self).run_preparation()
 
     def run_preparation(self):
-        """Start stap 1 en waarschuw duidelijk voor classificatierisico zonder 3DBAG."""
+        """Start stap 1 en bied bij een onbruikbare 3DBAG WFS direct een BAG-fallback."""
         try:
             values = self.values()
         except Exception:
-            # Sla de extra controle over en laat de bestaande invoervalidatie de
-            # fout op de gebruikelijke manier afhandelen.
             return self._run_base_preparation()
 
         if not bool(values.get("use_3dbag", False)):
@@ -191,8 +247,8 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             return self._run_base_preparation()
 
         message = (
-            "3DBAG LoD 2.2 is aangevinkt, maar de 3DBAG-server kan momenteel "
-            "niet worden bereikt.\n\n"
+            "3DBAG LoD 2.2 is aangevinkt, maar QGIS kan de 3DBAG LoD 2.2 WFS "
+            "momenteel niet openen.\n\n"
             "Wil je stap 1 direct verder uitvoeren zonder de 3DBAG LoD 2.2-"
             "controle? De gewone BAG-woningtypen worden dan wel gewoon verwerkt.\n\n"
             "LET OP – twee-onder-een-kapwoningen:\n"
@@ -233,6 +289,4 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             "Woningtype aanpassen."
         )
         QApplication.processEvents()
-
-        # De keuze is al gemaakt en de checkbox staat inmiddels uit.
         return self._run_base_preparation()
