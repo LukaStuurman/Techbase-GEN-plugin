@@ -1,12 +1,12 @@
 [general]
 name=LS Netontwerp Wizard
 description=Begeleide GEN XML/Excel-import, ontwerpstroomberekening en kabelverbonden clustering.
-version=1.15.12
+version=1.15.13
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 author=HDB Tech
 email=
-about=TechBase LS-netontwerpwizard met centraal gekleurd workflowdashboard, GEN-import, instelbare ontwerpstroomtabellen, versnelde automatische kabelverbonden clustering met QGIS-threadbudget en compacte netwerkafstandscache, 3DBAG-offlinefallback via dezelfde QGIS WFS-provider als de woningtypeberekening, consistente 3b-achtige submenu's met lasso-kaartselectie en robuuste Home-repaint, automatische versiegebonden GitHub-release-ZIP, minimale-vertex clustergebieden met schuine veilige grenzen en een volledige visuele handmatige clusteringroute voor eigen H-xx-clusters en stations.
+about=TechBase LS-netontwerpwizard met centraal gekleurd workflowdashboard, GEN-import, instelbare ontwerpstroomtabellen, versnelde automatische kabelverbonden clustering met QGIS-threadbudget en compacte netwerkafstandscache, 3DBAG-offlinefallback via dezelfde QGIS WFS-provider als de woningtypeberekening, consistente 3b-achtige submenu's met lasso-kaartselectie en robuuste Home-repaint, verse doelstationselectie per handmatige correctieronde, automatische versiegebonden GitHub-release-ZIP, minimale-vertex clustergebieden met schuine veilige grenzen en een volledige visuele handmatige clusteringroute voor eigen H-xx-clusters en stations.
 category=Vector
 icon=assets/techbase-logo.png
 experimental=False
