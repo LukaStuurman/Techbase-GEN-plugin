@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - agent/visuele-clustereditor
+      - 'agent/**'
     paths:
       - ls_netontwerp_wizard/metadata.txt
   workflow_dispatch:
