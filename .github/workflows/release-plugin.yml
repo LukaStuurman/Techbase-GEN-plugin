@@ -1,0 +1,136 @@
+name: Release LS Netontwerp Wizard
+
+on:
+  push:
+    branches:
+      - main
+      - agent/visuele-clustereditor
+    paths:
+      - ls_netontwerp_wizard/metadata.txt
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-ls-netontwerp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Bouw en publiceer plugin ZIP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository ophalen
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pluginversie uitlezen
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(awk -F= '$1 == "version" { gsub(/[[:space:]\r]/, "", $2); print $2; exit }' ls_netontwerp_wizard/metadata.txt)"
+          if [[ -z "$VERSION" ]]; then
+            echo "Geen version= gevonden in metadata.txt" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Ongeldig versienummer: $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip=ls_netontwerp_wizard-$VERSION.zip" >> "$GITHUB_OUTPUT"
+          echo "Pluginversie: $VERSION"
+
+      - name: ZIP bouwen
+        shell: bash
+        env:
+          ZIP_NAME: ${{ steps.version.outputs.zip }}
+        run: |
+          set -euo pipefail
+          rm -f "$ZIP_NAME"
+          git archive \
+            --format=zip \
+            --prefix=ls_netontwerp_wizard/ \
+            --output="$ZIP_NAME" \
+            HEAD:ls_netontwerp_wizard
+
+      - name: ZIP-structuur controleren
+        shell: bash
+        env:
+          ZIP_NAME: ${{ steps.version.outputs.zip }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import sys
+          import zipfile
+
+          zip_name = os.environ["ZIP_NAME"]
+          with zipfile.ZipFile(zip_name) as archive:
+              names = archive.namelist()
+
+          if not names:
+              raise SystemExit("De release-ZIP is leeg.")
+
+          outside = [name for name in names if not name.startswith("ls_netontwerp_wizard/")]
+          if outside:
+              print("Bestanden buiten ls_netontwerp_wizard/:", file=sys.stderr)
+              for name in outside[:20]:
+                  print(f" - {name}", file=sys.stderr)
+              raise SystemExit(1)
+
+          required = "ls_netontwerp_wizard/metadata.txt"
+          if required not in names:
+              raise SystemExit(f"{required} ontbreekt in de release-ZIP.")
+
+          print(f"ZIP gecontroleerd: {len(names)} entries, alles onder ls_netontwerp_wizard/.")
+          PY
+
+      - name: Release aanmaken of ZIP vervangen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP_NAME: ${{ steps.version.outputs.zip }}
+        run: |
+          set -euo pipefail
+
+          NOTES="Automatisch gebouwde QGIS-pluginrelease van LS Netontwerp Wizard versie ${VERSION}. De ZIP bevat aan de root alleen de map ls_netontwerp_wizard/."
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG bestaat al; asset wordt veilig vervangen."
+            gh release upload "$TAG" "$ZIP_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "LS Netontwerp Wizard $TAG" \
+              --notes "$NOTES"
+          else
+            echo "Nieuwe release $TAG wordt aangemaakt."
+            gh release create "$TAG" "$ZIP_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "LS Netontwerp Wizard $TAG" \
+              --notes "$NOTES"
+          fi
+
+      - name: Samenvatting
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP_NAME: ${{ steps.version.outputs.zip }}
+        run: |
+          {
+            echo "## LS Netontwerp Wizard release"
+            echo
+            echo "- Versie: **$VERSION**"
+            echo "- ZIP: **$ZIP_NAME**"
+            echo "- ZIP-root: **ls_netontwerp_wizard/**"
+          } >> "$GITHUB_STEP_SUMMARY"
