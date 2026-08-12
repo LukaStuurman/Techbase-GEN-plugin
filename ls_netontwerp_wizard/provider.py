@@ -11,7 +11,7 @@ from .algorithms.hoogste_waarden_selectie_tool import (
 )
 from .algorithms.stations_selectie_tool import StationsSelectieAlgorithm
 from .algorithms.sleuf_route_tool import SleufRouteToevoegenAlgorithm
-from .algorithms.clustergebieden_vereenvoudigen_tool import (
+from .algorithms.clustergebieden_vertex_optimalisatie import (
     ClustergebiedenVereenvoudigenAlgorithm,
 )
 from .algorithms.woningtype_selectie_herberekenen_tool import (
