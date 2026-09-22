@@ -340,21 +340,25 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     limit_fase = config['DEFAULTS'].get('limit_fase', 3)
     limit_amp = config['DEFAULTS'].get('limit_amp', 40)
     
-    # 0 regels
+    is_heavy_woon = (fases >= limit_fase and el_amp > limit_amp)
+    if use_1fase_exc and fases < limit_fase:
+        is_heavy_woon = False
+    
+    # Eea-0205.K 3.2: zware woon/appartement-aansluitingen worden via de
+    # ampere-/zakelijke tabel berekend. Opwek volgt daar dezelfde waarde als
+    # verbruik en mag niet eerst door de appartement/hoogbouw-nulregel vallen.
+    if g_type in [1, 4] and is_heavy_woon:
+        return normal_val
+    
+    # 0-regels gelden alleen voor reguliere categorieen waarvoor het kader
+    # expliciet geen opwek-ontwerpstroom voorschrijft.
     if g_type in zero_ids: 
         return 0.0
     if zero_text and zero_text in clean_text(type_woning) and g_type == 1: 
         return 0.0
     
-    is_heavy_woon = (fases >= limit_fase and el_amp > limit_amp)
-    if use_1fase_exc and fases < limit_fase:
-        is_heavy_woon = False
-    
     # Specifieke Woonhuis Opwek Logica
     if g_type == 1:
-        if is_heavy_woon:
-            return normal_val
-            
         val_opwek = woonhuis_ontwerp(type_woning, opwek_table)
         
         # Gas correctie berekenen voor opwek
@@ -745,7 +749,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             res_kabel = calculate_ontwerpstroom(val_door, val_gebr, val_woning, val_bouwjaar, val_gas, full_config_kabel, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
             
             res_opwek_std = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek, full_config_std, res_std, use_1fase_exc)
-            res_opwek_kabel = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel, full_config_std, res_kabel, use_1fase_exc)
+            res_opwek_kabel = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel, full_config_kabel, res_kabel, use_1fase_exc)
             
             new_feat = QgsFeature(feat)
             new_attrs = list(attrs)
