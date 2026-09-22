@@ -4,11 +4,18 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsApplication
 
-from .dialog import LSNetontwerpDialog
+from .dashboard_warning_dialog import LSNetontwerpDashboardDialog as LSNetontwerpDialog
 from .provider import LSNetontwerpProvider
+from .workflow import WorkflowRunner
+from .automatic_clustering_optimization import install_workflow_optimizations
 
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "techbase-logo.png"
+
+# Installeer de automatische-clusteringoptimalisaties één keer bij het laden van
+# de plugin. De patch raakt alleen de pure NumPy/SciPy-rekenkern van stap 3a en
+# respecteert het QGIS Processing-threadbudget.
+install_workflow_optimizations(WorkflowRunner)
 
 
 class LSNetontwerpPlugin:
@@ -19,8 +26,10 @@ class LSNetontwerpPlugin:
         self.housing_action = None
         self.station_action = None
         self.manual_action = None
+        self.cluster_editor_action = None
         self.provider = None
         self.dialog = None
+        self.cluster_editor_dialog = None
 
     def initProcessing(self):
         if self.provider is None:
@@ -32,61 +41,12 @@ class LSNetontwerpPlugin:
         icon = QIcon(str(ICON_PATH))
         self.action = QAction(icon, "LS-netontwerp wizard", self.iface.mainWindow())
         self.action.setObjectName("lsNetontwerpWizardAction")
-        self.action.setToolTip("XML + Excel naar ontwerpstroom en kabelclusters")
+        self.action.setToolTip(
+            "Open het centrale TechBase-dashboard met alle ontwerp-, controle- en clusterstappen"
+        )
         self.action.triggered.connect(self.open_dialog)
         self.iface.addPluginToVectorMenu("LS Netontwerp", self.action)
         self.iface.addToolBarIcon(self.action)
-        self.value_action = QAction(
-            icon,
-            "Hoogste trafo/kabel aanpassen (selectie)",
-            self.iface.mainWindow(),
-        )
-        self.value_action.setObjectName("lsNetontwerpHighestValuesAction")
-        self.value_action.setToolTip(
-            "Hoogste Trafo en Hoogste Kabel voor geselecteerde aansluitingen aanpassen"
-        )
-        self.value_action.triggered.connect(self.open_value_tool)
-        self.iface.addPluginToVectorMenu("LS Netontwerp", self.value_action)
-        self.iface.addToolBarIcon(self.value_action)
-
-        self.housing_action = QAction(
-            icon,
-            "Woningtype aanpassen en ontwerpstroom herberekenen (selectie)",
-            self.iface.mainWindow(),
-        )
-        self.housing_action.setObjectName("lsNetontwerpHousingTypeAction")
-        self.housing_action.setToolTip(
-            "Wijzig geselecteerde BAG-woningen en bereken bijbehorende aansluitingen opnieuw"
-        )
-        self.housing_action.triggered.connect(self.open_housing_tool)
-        self.iface.addPluginToVectorMenu("LS Netontwerp", self.housing_action)
-        self.iface.addToolBarIcon(self.housing_action)
-
-        self.station_action = QAction(
-            icon,
-            "Bestaande stations aanpassen/verwijderen (selectie)",
-            self.iface.mainWindow(),
-        )
-        self.station_action.setObjectName("lsNetontwerpStationEditAction")
-        self.station_action.setToolTip(
-            "Wijzig de trafocapaciteit of verwijder geselecteerde bestaande stations"
-        )
-        self.station_action.triggered.connect(self.open_station_tool)
-        self.iface.addPluginToVectorMenu("LS Netontwerp", self.station_action)
-        self.iface.addToolBarIcon(self.station_action)
-
-        self.manual_action = QAction(
-            icon,
-            "Handmatige clustercorrectie (selectie naar station)",
-            self.iface.mainWindow(),
-        )
-        self.manual_action.setObjectName("lsNetontwerpManualClusterAction")
-        self.manual_action.setToolTip(
-            "Geselecteerde aansluitingen naar een ander station verplaatsen"
-        )
-        self.manual_action.triggered.connect(self.open_manual_tool)
-        self.iface.addPluginToVectorMenu("LS Netontwerp", self.manual_action)
-
 
     def unload(self):
         if self.action is not None:
@@ -98,6 +58,7 @@ class LSNetontwerpPlugin:
             self.housing_action,
             self.station_action,
             self.manual_action,
+            self.cluster_editor_action,
         ):
             if action is not None:
                 self.iface.removePluginVectorMenu("LS Netontwerp", action)
@@ -110,8 +71,10 @@ class LSNetontwerpPlugin:
         self.housing_action = None
         self.station_action = None
         self.manual_action = None
+        self.cluster_editor_action = None
         self.provider = None
         self.dialog = None
+        self.cluster_editor_dialog = None
 
     def open_dialog(self):
         if self.dialog is None:
@@ -152,3 +115,15 @@ class LSNetontwerpPlugin:
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
+
+    def open_cluster_editor(self):
+        from .cluster_paint_dialog import VisueleClusterEditorDialog
+
+        if self.cluster_editor_dialog is None:
+            self.cluster_editor_dialog = VisueleClusterEditorDialog(
+                self.iface, self.iface.mainWindow()
+            )
+        self.cluster_editor_dialog.refresh_layers()
+        self.cluster_editor_dialog.show()
+        self.cluster_editor_dialog.raise_()
+        self.cluster_editor_dialog.activateWindow()
