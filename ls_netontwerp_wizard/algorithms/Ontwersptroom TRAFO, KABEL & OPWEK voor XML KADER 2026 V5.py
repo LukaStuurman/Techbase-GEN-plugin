@@ -344,16 +344,14 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     if use_1fase_exc and fases < limit_fase:
         is_heavy_woon = False
     
-    # Eea-0205.K 3.2: zodra een woon/appartement-aansluiting boven de
-    # woonhuisgrens valt, wordt hij via de ampere-/zakelijke tabel berekend.
-    # Voor die Type 8/9-gevallen is opwek gelijk aan verbruik. Dit moet voor
-    # de nulregels gebeuren; anders werd o.a. een zware appartementaansluiting
-    # ten onrechte 0 A voor opwek terwijl de verbruiksberekening wel > 0 A was.
+    # Eea-0205.K 3.2: zware woon/appartement-aansluitingen worden via de
+    # ampere-/zakelijke tabel berekend. Opwek volgt daar dezelfde waarde als
+    # verbruik en mag niet eerst door de appartement/hoogbouw-nulregel vallen.
     if g_type in [1, 4] and is_heavy_woon:
         return normal_val
     
-    # Nulregels gelden alleen voor de categorieen waarvoor het kader geen
-    # opwek-ontwerpstroom opgeeft (zoals reguliere hoogbouw, laden en straat).
+    # 0-regels gelden alleen voor reguliere categorieen waarvoor het kader
+    # expliciet geen opwek-ontwerpstroom voorschrijft.
     if g_type in zero_ids: 
         return 0.0
     if zero_text and zero_text in clean_text(type_woning) and g_type == 1: 
