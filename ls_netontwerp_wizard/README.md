@@ -1,5 +1,7 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.15.14 herstelt de opwekberekening volgens Eea-0205.K 3.2. Zware woon-/appartementaansluitingen die via de ampère-/zakelijke tabel worden berekend krijgen voor opwek dezelfde waarde als voor verbruik en vallen niet meer onterecht terug naar 0 A. De kabel-opwekberekening gebruikt daarnaast weer de aparte kabelconfiguratie in plaats van de trafoconfiguratie. Er is een regressietest toegevoegd voor onder andere 3x100 A, 3x125 A en zware appartementaansluitingen.
+
 Versie 1.12.0 vereenvoudigt de uiteindelijke gedeelde grenzen als één volledige
 topologische dekking. Daardoor mogen ook lange rechte schuine grenzen worden
 gebruikt wanneer die een reeks kleine horizontale/verticale verspringingen
