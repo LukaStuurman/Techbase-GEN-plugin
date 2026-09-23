@@ -70,6 +70,17 @@ def main():
         assert dialog.advanced_container.isHidden()
         dialog.advanced_toggle.setChecked(True)
         assert not dialog.advanced_container.isHidden()
+        dialog.no_plan.setChecked(False)
+        dialog.plan_edit.setText("C:/test/plangebied.gpkg")
+        assert dialog.values()["plan"] == "C:/test/plangebied.gpkg"
+        dialog.no_plan.setChecked(True)
+        assert not dialog.plan_edit.isEnabled()
+        assert not dialog.plan_button.isEnabled()
+        assert dialog.values()["plan"] == ""
+        assert dialog.values()["only_plan"] is False
+        dialog.no_plan.setChecked(False)
+        assert dialog.plan_edit.isEnabled()
+        assert dialog.values()["plan"] == "C:/test/plangebied.gpkg"
         values = dialog.values()
         assert values["field_design_current"] == "Hoogste Trafo"
         assert values["default_apartment"] is True
@@ -90,6 +101,19 @@ def main():
         ]
         assert values["opwek_zero_ids"] == "4, 8, 9"
         assert values["fallback_laad"] == 3.7
+        matrix = dialog.widgets["matrix_woonhuis"]
+        original_rows = matrix.rowCount()
+        matrix.selectRow(0)
+        dialog._duplicate_matrix_row(matrix)
+        assert matrix.rowCount() == original_rows + 1
+        assert matrix.item(1, 0).text() == matrix.item(0, 0).text()
+        dialog._move_matrix_row(matrix, 1)
+        assert dialog._selected_matrix_row(matrix) == 2
+        dialog._copy_matrix(matrix)
+        dialog._remove_matrix_rows(matrix)
+        assert matrix.rowCount() == original_rows
+        dialog._paste_matrix(matrix)
+        assert matrix.rowCount() == original_rows + 1
         runner = WorkflowRunner(values, lambda _percent, _message: None)
         plan_layer = QgsVectorLayer("Polygon?crs=EPSG:28992", "Plangebied", "memory")
         runner._style_plan_area(plan_layer)
