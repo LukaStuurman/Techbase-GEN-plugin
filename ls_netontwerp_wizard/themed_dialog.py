@@ -211,7 +211,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         button.setSizePolicy(SIZE_EXPANDING, SIZE_FIXED)
         button.setStyleSheet(self._button_style(palette, secondary=secondary))
         if target is not None:
-            button.clicked.connect(target.click)
+            # De dashboardknop is de primaire ingang. Zend het clicked-signaal
+            # rechtstreeks uit, zodat een verborgen bronknop de werkstap niet
+            # onbruikbaar kan maken wanneer die bronknop disabled is.
+            button.clicked.connect(
+                lambda checked=False, source=target: source.clicked.emit(checked)
+            )
             self._dashboard_mirrors.append((button, target))
         elif callback is not None:
             button.clicked.connect(callback)
@@ -253,9 +258,18 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         if root is None:
             return
 
-        old_button_box = self.run_button.parentWidget()
-        if isinstance(old_button_box, QDialogButtonBox):
-            old_button_box.setVisible(False)
+        # De basisdialoog bevat sinds de nieuwe interface zelf al een groep
+        # 'Stappen in het ontwerp'. Het gekleurde Werkstappen-dashboard vervangt
+        # die groep in deze dashboardvariant, dus toon beide nooit tegelijk.
+        old_actions = getattr(self, "actions_group", None)
+        if old_actions is not None:
+            old_actions.setVisible(False)
+        else:
+            # Compatibiliteit met oudere versies waarin de acties nog in een
+            # QDialogButtonBox stonden.
+            old_button_box = self.run_button.parentWidget()
+            if isinstance(old_button_box, QDialogButtonBox):
+                old_button_box.setVisible(False)
 
         dashboard = QWidget(self.main_page)
         self._dashboard_widget = dashboard
@@ -392,8 +406,19 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
 
     def _sync_dashboard_buttons(self):
         for mirror, source in self._dashboard_mirrors:
-            mirror.setEnabled(source.isEnabled())
+            # Werkstappen blijven altijd aanklikbaar. De achterliggende actie
+            # valideert zelf of de benodigde lagen/voorbereiding beschikbaar zijn.
+            mirror.setEnabled(True)
             mirror.setToolTip(source.toolTip())
+
+    def _toggle_advanced(self, enabled):
+        super()._toggle_advanced(enabled)
+        # De dubbele basisgroep mag ook na het openen/sluiten van Advanced niet
+        # opnieuw zichtbaar worden.
+        if hasattr(self, "actions_group"):
+            self.actions_group.setVisible(False)
+        if self._dashboard_widget is not None:
+            self._dashboard_widget.setVisible(not enabled)
 
     def _open_visual_cluster_editor(self, requested_mode):
         if self._dashboard_visual_cluster_dialog is None:
