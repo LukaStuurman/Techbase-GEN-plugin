@@ -289,7 +289,7 @@ in- en uitzoomen even groot op het scherm.
 Deze plugin voert de volledige workflow uit:
 
 1. GEN XML en kabelgegevens uit Excel importeren;
-2. plangebied naar RD New en GeoPackage omzetten;
+2. optioneel plangebied naar RD New en GeoPackage omzetten;
 3. BAG/3DBAG-panden ophalen en woningtypen bepalen;
 4. ontwerpstroom per LS-aansluiting berekenen;
 5. kabels gezamenlijk knippen/noden;
@@ -303,8 +303,14 @@ werkbalkknop. Kies alleen:
 
 - GEN XML;
 - kabelgegevens Excel;
-- plangebied;
 - uitvoermap.
+
+Een plangebied is optioneel. Vink `Zonder plangebied werken` aan om een eerder
+gekozen bestand tijdelijk uit te schakelen. De BAG-opvraag gebruikt dan de
+omvang van de geïmporteerde LS-aansluitingen met 25 meter marge. Clustering
+gebruikt in dat geval geen plangebiedfilter. Als de aansluitingen meer dan
+100 km uiteen liggen, stopt de voorbereiding met een melding zodat de BAG-opvraag
+niet onverwacht een zeer groot gebied bestrijkt.
 
 De bekende GEN-laagnamen en kolommen zijn al ingevuld. Iedere uitvoering krijgt
 een eigen blijvende resultaatmap, zodat een eerder resultaat niet wordt
@@ -330,7 +336,10 @@ Zet `Advanced` aan om vijf tabbladen te tonen:
   90%, 850 meter en shapefile-optie.
 - `Ontwerpstroomtabellen`: alle woonhuis-, kabel-, opwek-, ampère-, type-,
   straat-, laad-, gas- en classificatietabellen, plus de opwekfilters en
-  fallbackwaarde voor laadpunten.
+  fallbackwaarde voor laadpunten. Regels kunnen worden toegevoegd,
+  gedupliceerd, verplaatst en verwijderd. Een volledige tabel is als
+  tabgescheiden tekst te kopiëren en terug te plakken vanuit een spreadsheet;
+  de standaardwaarden blijven per tabel herstelbaar.
 
 De Advanced-instellingen wijzigen alleen de huidige uitvoering. De eenvoudige
 standaarden blijven beschikbaar wanneer Advanced weer wordt uitgezet.

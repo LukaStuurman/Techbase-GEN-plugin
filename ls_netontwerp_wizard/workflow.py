@@ -681,12 +681,15 @@ class WorkflowRunner:
         )
         QgsProject.instance().write()
 
-        self.progress(18, "Plangebied naar GeoPackage omzetten")
-        plan_layer, plan_uri = self._write_plan(self.v["plan"], plan_gpkg)
-        plan_project_layer = self._add_project_layer(plan_uri, "Plangebied", True)
-        self._style_plan_area(plan_project_layer)
-        plan_extent = QgsReferencedRectangle(plan_layer.extent(), plan_layer.crs())
-        self.progress(22, "Plangebied gereed")
+        plan_layer = plan_project_layer = None
+        if self.v.get("plan"):
+            self.progress(18, "Plangebied naar GeoPackage omzetten")
+            plan_layer, plan_uri = self._write_plan(self.v["plan"], plan_gpkg)
+            plan_project_layer = self._add_project_layer(plan_uri, "Plangebied", True)
+            self._style_plan_area(plan_project_layer)
+            self.progress(22, "Plangebied gereed")
+        else:
+            self.progress(22, "Geen plangebied: aansluitingen bepalen de BAG-omvang")
 
         point_source = self._validate_layer(
             self._layer(import_gpkg, self.v["layer_points"]),
@@ -695,8 +698,30 @@ class WorkflowRunner:
         point_extent_layer = QgsVectorLayer(
             point_source, "LS-aansluitingen voor BAG-omvang", "ogr"
         )
-        housing_rectangle = QgsRectangle(plan_layer.extent())
-        if point_extent_layer.isValid() and point_extent_layer.featureCount() > 0:
+        if not point_extent_layer.isValid() or point_extent_layer.featureCount() == 0:
+            raise QgsProcessingException(
+                "Geen LS-aansluitingen gevonden; de BAG-omvang kan niet worden bepaald"
+            )
+        target_crs = (
+            plan_layer.crs() if plan_layer is not None
+            else QgsCoordinateReferenceSystem("EPSG:28992")
+        )
+        if not point_extent_layer.crs().isValid():
+            raise QgsProcessingException("De LS-aansluitingenlaag heeft geen geldig CRS")
+        if plan_layer is None:
+            housing_rectangle = QgsRectangle(point_extent_layer.extent())
+            if point_extent_layer.crs() != target_crs:
+                to_target = QgsCoordinateTransform(
+                    point_extent_layer.crs(), target_crs, QgsProject.instance()
+                )
+                housing_rectangle = to_target.transformBoundingBox(housing_rectangle)
+            if max(housing_rectangle.width(), housing_rectangle.height()) > 100000:
+                raise QgsProcessingException(
+                    "De aansluitingen liggen meer dan 100 km uiteen. "
+                    "Controleer de coördinaten of kies een plangebied om de BAG-opvraag te begrenzen."
+                )
+        else:
+            housing_rectangle = QgsRectangle(plan_layer.extent())
             # Gebruik niet rechtstreeks layer.extent(): één corrupte of verkeerd
             # geprojecteerde aansluiting kan anders een BAG-opvraag van heel
             # Europa veroorzaken. Neem alleen aansluitingen uit de ruime,
@@ -738,9 +763,7 @@ class WorkflowRunner:
         # Neem ook volledige pandcontouren mee wanneer een aansluiting of de
         # plangrens vlak langs de gevel ligt.
         housing_rectangle.grow(25.0)
-        housing_extent = QgsReferencedRectangle(
-            housing_rectangle, plan_layer.crs()
-        )
+        housing_extent = QgsReferencedRectangle(housing_rectangle, target_crs)
 
         housing_layer_name = housing_gpkg.stem
         housing_uri = self._layer(housing_gpkg, housing_layer_name)
@@ -871,7 +894,7 @@ class WorkflowRunner:
             "result_dir": str(result_dir),
             "work_project": str(work_project),
             "import_gpkg": str(import_gpkg),
-            "plan_gpkg": str(plan_gpkg),
+            "plan_gpkg": str(plan_gpkg) if plan_layer is not None else "",
             "housing_gpkg": str(housing_gpkg),
             "points_gpkg": str(points_gpkg),
             "points_layer": points_layer_name,
@@ -890,11 +913,11 @@ class WorkflowRunner:
         cpu_threads = self._configure_cpu_threads()
         result_dir = Path(state["result_dir"])
         import_gpkg = Path(state["import_gpkg"])
-        plan_gpkg = Path(state["plan_gpkg"])
+        plan_gpkg = state.get("plan_gpkg", "")
         points_gpkg = Path(state["points_gpkg"])
         points_layer_name = state.get("points_layer", points_gpkg.stem)
         points_uri = self._layer(points_gpkg, points_layer_name)
-        plan_uri = self._layer(plan_gpkg, "plangebied")
+        plan_uri = self._layer(plan_gpkg, "plangebied") if plan_gpkg else None
         clustering_dir = Path(state["clustering_dir"])
 
         review_layer = self._project_layer_by_source(points_uri)
@@ -944,7 +967,7 @@ class WorkflowRunner:
                     self.v["layer_distribution_cabinets"], "verdeelkasten"
                 ),
                 "PLANGEBIED": plan_uri,
-                "ALLEEN_BINNEN_PLANGEBIED": self.v["only_plan"],
+                "ALLEEN_BINNEN_PLANGEBIED": bool(plan_uri) and self.v["only_plan"],
                 "AUTOMATISCH_AANTAL": self.v["automatic_stations"],
                 "AANTAL_NIEUWE": self.v["manual_station_count"],
                 "NIEUW_KVA": self.v["new_station_kva"],

@@ -16,6 +16,7 @@ from qgis.PyQt.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
@@ -273,53 +274,54 @@ class LSNetontwerpDialog(QDialog):
                 )
             )
         )
-        self.resize(1120, 480)
+        self.resize(1120, 640)
         self.settings = QSettings()
         self.widgets = {}
         self._active_feedback = None
         self.setStyleSheet(
             """
-            QDialog { background: #ffffff; color: #262626; }
-            QLabel#techbaseTitle { color: #f47700; font-size: 22px; font-weight: 700; }
-            QLabel#techbaseSubtitle { color: #555555; font-size: 11px; }
+            QDialog { background: #f5f7fa; color: #243246; }
+            QLabel#techbaseTitle { color: #17263a; font-size: 23px; font-weight: 700; }
+            QLabel#techbaseSubtitle { color: #64748b; font-size: 11px; }
             QGroupBox {
-                border: 1px solid #f47700; border-radius: 7px;
-                margin-top: 10px; padding-top: 10px; font-weight: 600;
+                background: #ffffff; border: 1px solid #dfe5ec; border-radius: 9px;
+                margin-top: 13px; padding: 12px; font-weight: 600;
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 12px; padding: 0 5px;
-                color: #e66700; background: #ffffff;
+                subcontrol-origin: margin; left: 14px; padding: 0 6px;
+                color: #243246; background: #ffffff;
             }
             QPushButton {
-                background: #f47700; color: white; border: 0;
-                border-radius: 5px; padding: 7px 12px; font-weight: 600;
+                background: #e86c12; color: white; border: 1px solid #e86c12;
+                border-radius: 6px; padding: 8px 12px; font-weight: 600;
             }
-            QPushButton:hover { background: #ff8b1a; }
-            QPushButton:pressed { background: #d85f00; }
-            QPushButton:disabled { background: #d8d8d8; color: #777777; }
-            QPushButton#genInfoButton {
-                background: #ffffff; color: #e66700;
-                border: 1px solid #f47700; padding: 7px 12px;
+            QPushButton:hover { background: #f47a20; }
+            QPushButton:pressed { background: #c7580b; }
+            QPushButton:disabled { background: #e8ecf0; border-color: #e8ecf0; color: #8995a3; }
+            QPushButton#secondaryButton, QPushButton#genInfoButton {
+                background: #ffffff; color: #b7500b;
+                border: 1px solid #e3a276;
             }
-            QPushButton#genInfoButton:hover { background: #fff1e5; }
+            QPushButton#secondaryButton:hover, QPushButton#genInfoButton:hover { background: #fff3e9; }
             QPushButton#dangerButton { background: #c62828; }
             QPushButton#dangerButton:hover { background: #e53935; }
-            QLineEdit, QSpinBox, QDoubleSpinBox, QTableWidget {
-                border: 1px solid #cfcfcf; border-radius: 4px;
-                background: white; selection-background-color: #f47700;
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTableWidget {
+                border: 1px solid #ccd5df; border-radius: 5px; padding: 4px;
+                background: white; selection-background-color: #f9d8bd;
             }
             QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTableWidget:focus {
-                border: 1px solid #f47700;
+                border: 1px solid #e86c12;
             }
-            QTabWidget::pane { border: 1px solid #e1e1e1; border-radius: 4px; }
-            QTabBar::tab { background: #f3f3f3; padding: 7px 11px; margin-right: 1px; }
-            QTabBar::tab:selected { background: #f47700; color: white; }
+            QTabWidget::pane { border: 1px solid #dfe5ec; border-radius: 6px; background: #ffffff; }
+            QTabBar::tab { background: #edf1f5; color: #42546b; padding: 9px 13px; margin-right: 3px; border-radius: 5px; }
+            QTabBar::tab:hover { background: #ffe8d5; }
+            QTabBar::tab:selected { background: #e86c12; color: white; }
             QHeaderView::section {
-                background: #fff1e5; color: #8b3d00; padding: 5px;
-                border: 0; border-bottom: 1px solid #f3b37b; font-weight: 600;
+                background: #fff0e3; color: #814012; padding: 6px;
+                border: 0; border-bottom: 1px solid #e9c3a7; font-weight: 600;
             }
-            QProgressBar { border: 1px solid #d0d0d0; border-radius: 4px; text-align: center; }
-            QProgressBar::chunk { background: #f47700; }
+            QProgressBar { border: 1px solid #ccd5df; border-radius: 4px; text-align: center; }
+            QProgressBar::chunk { background: #e86c12; }
             """
         )
         self._build_ui()
@@ -333,7 +335,8 @@ class LSNetontwerpDialog(QDialog):
         outer.addWidget(self.page_stack)
         self.main_page = QWidget()
         root = QVBoxLayout(self.main_page)
-        root.setContentsMargins(10, 8, 10, 8)
+        root.setContentsMargins(20, 14, 20, 16)
+        root.setSpacing(10)
         header_widget = QWidget()
         header_widget.setFixedHeight(84)
         header = QHBoxLayout(header_widget)
@@ -370,6 +373,7 @@ class LSNetontwerpDialog(QDialog):
         self.info_button.clicked.connect(self._show_gen_information)
         header.addWidget(self.info_button)
         root.addWidget(header_widget)
+        self.header_widget = header_widget
         intro = QLabel(
             "Van GEN XML + Excel via BAG-woningtypen en ontwerpstroom naar "
             "kabelverbonden stationsclusters. In de standaardmodus zijn de "
@@ -377,14 +381,24 @@ class LSNetontwerpDialog(QDialog):
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
+        self.intro_label = intro
 
         basic = QGroupBox("Benodigde invoer")
         form = QFormLayout(basic)
+        form.setSpacing(9)
         self.xml_edit = self._path_row(form, "GEN XML", "xml")
         self.excel_edit = self._path_row(form, "Kabelgegevens Excel", "excel")
-        self.plan_edit = self._path_row(form, "Plangebied", "plan")
+        self.plan_edit = self._path_row(form, "Plangebied (optioneel)", "plan")
+        self.no_plan = QCheckBox("Zonder plangebied werken")
+        self.no_plan.setToolTip(
+            "Gebruik de omvang van de geïmporteerde LS-aansluitingen voor de BAG-opvraag. "
+            "De clustering wordt niet op een plangebied begrensd."
+        )
+        self.no_plan.toggled.connect(self._toggle_plan)
+        form.addRow("", self.no_plan)
         self.output_edit = self._path_row(form, "Uitvoermap", "output")
         root.addWidget(basic)
+        self.basic_group = basic
 
         option_row = QHBoxLayout()
         self.advanced_toggle = QCheckBox("Advanced")
@@ -398,6 +412,11 @@ class LSNetontwerpDialog(QDialog):
         option_row.addStretch(1)
         option_row.addWidget(self.open_project)
         root.addLayout(option_row)
+        self.advanced_hint = QLabel(
+            "Geavanceerde instellingen · schakel Advanced uit om de ontwerpstappen te starten."
+        )
+        self.advanced_hint.setVisible(False)
+        root.addWidget(self.advanced_hint)
 
         self.advanced_container = self._build_advanced()
         self.advanced_container.setVisible(False)
@@ -437,57 +456,46 @@ class LSNetontwerpDialog(QDialog):
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
 
-        buttons = QDialogButtonBox(CLOSE_BUTTON)
-        self.run_button = buttons.addButton(
-            "1. Ontwerpstroom maken", ACCEPT_ROLE
-        )
+        actions = QGroupBox("Stappen in het ontwerp")
+        action_grid = QGridLayout(actions)
+        action_grid.setHorizontalSpacing(8)
+        action_grid.setVerticalSpacing(8)
+        self.run_button = QPushButton("1. Ontwerpstroom maken")
         self.run_button.setToolTip(
             "Maak het werkproject, importeer de invoer en bereken de ontwerpstroom"
         )
         self.run_button.clicked.connect(self.run_preparation)
-        self.edit_values_button = buttons.addButton(
-            "2a. Stroom aanpassen", ACCEPT_ROLE
-        )
+        self.edit_values_button = QPushButton("2a. Stroom aanpassen")
         self.edit_values_button.setToolTip(
             "Pas Hoogste Trafo en Hoogste Kabel voor geselecteerde aansluitingen aan"
         )
         self.edit_values_button.setEnabled(False)
         self.edit_values_button.clicked.connect(self.open_value_editor)
-        self.edit_housing_button = buttons.addButton(
-            "2b. Woningtype aanpassen", ACCEPT_ROLE
-        )
+        self.edit_housing_button = QPushButton("2b. Woningtype aanpassen")
         self.edit_housing_button.setToolTip(
             "Wijzig geselecteerde BAG-woningen en bereken de aansluitingen opnieuw"
         )
         self.edit_housing_button.setEnabled(False)
         self.edit_housing_button.clicked.connect(self.open_housing_editor)
-        self.edit_stations_button = buttons.addButton(
-            "2c. Stations aanpassen", ACCEPT_ROLE
-        )
+        self.edit_stations_button = QPushButton("2c. Stations aanpassen")
         self.edit_stations_button.setToolTip(
             "Wijzig de trafocapaciteit of verwijder geselecteerde bestaande stations"
         )
         self.edit_stations_button.setEnabled(False)
         self.edit_stations_button.clicked.connect(self.open_station_editor)
-        self.cluster_button = buttons.addButton(
-            "3. Clustering maken", ACCEPT_ROLE
-        )
+        self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
         )
         self.cluster_button.setEnabled(False)
         self.cluster_button.clicked.connect(self.run_clustering)
-        self.edit_cluster_button = buttons.addButton(
-            "4. Clustering aanpassen", ACCEPT_ROLE
-        )
+        self.edit_cluster_button = QPushButton("4. Clustering aanpassen")
         self.edit_cluster_button.setToolTip(
             "Verplaats geselecteerde aansluitingen naar het geselecteerde station "
             "en werk gebieden en statistieken bij"
         )
         self.edit_cluster_button.clicked.connect(self.open_cluster_editor)
-        self.free_cluster_button = buttons.addButton(
-            "4b. Vrij aanpassen", ACCEPT_ROLE
-        )
+        self.free_cluster_button = QPushButton("4b. Vrij aanpassen")
         self.free_cluster_button.setToolTip(
             "Open clustercorrectie met alle vier veiligheidscontroles uitgeschakeld"
         )
@@ -496,23 +504,40 @@ class LSNetontwerpDialog(QDialog):
         # correctiepagina. Houd het object voor compatibiliteit met bestaande
         # projecten/tests, maar voorkom twee concurrerende ingangen in de UI.
         self.free_cluster_button.setVisible(False)
-        self.network_button = buttons.addButton(
-            "5. Sleuven/routes", ACCEPT_ROLE
-        )
+        self.network_button = QPushButton("5. Sleuven/routes")
         self.network_button.setToolTip(
             "Teken een nieuwe sleuf, node het kabelnet en ververs kortste clusterroutes"
         )
         self.network_button.clicked.connect(self.show_network_page)
-        self.areas_button = buttons.addButton(
-            "6. Mooie clustergebieden", ACCEPT_ROLE
-        )
+        self.areas_button = QPushButton("6. Mooie clustergebieden")
         self.areas_button.setToolTip(
             "Maak topologisch vereenvoudigde gebieden en verleg daarna eenvoudig "
             "de grens tussen twee geselecteerde buurclusters"
         )
         self.areas_button.clicked.connect(self.show_areas_page)
-        buttons.rejected.connect(self.close)
-        root.addWidget(buttons)
+        for button in (
+            self.edit_values_button, self.edit_housing_button,
+            self.edit_stations_button, self.edit_cluster_button,
+            self.network_button, self.areas_button,
+        ):
+            button.setObjectName("secondaryButton")
+        action_grid.addWidget(self.run_button, 0, 0)
+        action_grid.addWidget(self.edit_values_button, 0, 1)
+        action_grid.addWidget(self.edit_housing_button, 0, 2)
+        action_grid.addWidget(self.edit_stations_button, 0, 3)
+        action_grid.addWidget(self.cluster_button, 1, 0)
+        action_grid.addWidget(self.edit_cluster_button, 1, 1)
+        action_grid.addWidget(self.network_button, 1, 2)
+        action_grid.addWidget(self.areas_button, 1, 3)
+        root.addWidget(actions)
+        self.actions_group = actions
+        close_button = QPushButton("Sluiten")
+        close_button.setObjectName("secondaryButton")
+        close_button.clicked.connect(self.close)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_row.addWidget(close_button)
+        root.addLayout(close_row)
         self.page_stack.addWidget(self.main_page)
         self.manual_page = self._build_manual_page()
         self.page_stack.addWidget(self.manual_page)
@@ -731,9 +756,9 @@ class LSNetontwerpDialog(QDialog):
         self.page_stack.setCurrentWidget(self.main_page)
         self.setWindowTitle("LS Netontwerp Wizard")
         if self.advanced_toggle.isChecked():
-            self.resize(max(self.width(), 1120), max(self.height(), 820))
+            self.resize(max(self.width(), 1120), max(self.height(), 900))
         else:
-            self.resize(1120, 480)
+            self.resize(1120, 640)
 
     def _build_network_page(self):
         page = QWidget()
@@ -2469,11 +2494,18 @@ class LSNetontwerpDialog(QDialog):
         row = QHBoxLayout()
         edit = QLineEdit()
         button = QPushButton("Kiezen…")
+        if kind == "plan":
+            self.plan_button = button
         button.clicked.connect(lambda: self._browse(edit, kind))
         row.addWidget(edit, 1)
         row.addWidget(button)
         form.addRow(label, row)
         return edit
+
+    def _toggle_plan(self, without_plan):
+        self.plan_edit.setEnabled(not without_plan)
+        self.plan_button.setEnabled(not without_plan)
+        self.widgets["only_plan"].setEnabled(not without_plan)
 
     def _browse(self, edit, kind):
         start = edit.text().strip() or str(Path.home())
@@ -2587,10 +2619,9 @@ class LSNetontwerpDialog(QDialog):
         container = QWidget()
         layout = QVBoxLayout(container)
         note = QLabel(
-            "Deze tabellen zijn dezelfde invoermatrices als in de losse "
-            "ontwerpstroom-processingtool. Waarden worden afzonderlijk voor "
-            "trafo, kabel en opwek doorgegeven. Voeg/verwijder regels alleen "
-            "wanneer je de rekenstaffels bewust wilt aanpassen."
+            "Pas de rekenwaarden per categorie aan. Trafo, kabel en opwek hebben "
+            "eigen tabellen. Selecteer een regel om die te kopiëren of te verplaatsen; "
+            "met kopiëren en plakken kun je waarden ook in een spreadsheet bewerken."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -2646,12 +2677,25 @@ class LSNetontwerpDialog(QDialog):
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(260)
+        table.setToolTip("Dubbelklik op een cel om de waarde te wijzigen.")
         self._set_matrix_values(table, default)
         self.widgets[key] = table
         layout.addWidget(table, 1)
         row = QHBoxLayout()
         add_button = QPushButton("Regel toevoegen")
         add_button.clicked.connect(lambda _checked=False, t=table: self._add_matrix_row(t))
+        duplicate_button = QPushButton("Regel dupliceren")
+        duplicate_button.clicked.connect(
+            lambda _checked=False, t=table: self._duplicate_matrix_row(t)
+        )
+        up_button = QPushButton("Omhoog")
+        up_button.clicked.connect(
+            lambda _checked=False, t=table: self._move_matrix_row(t, -1)
+        )
+        down_button = QPushButton("Omlaag")
+        down_button.clicked.connect(
+            lambda _checked=False, t=table: self._move_matrix_row(t, 1)
+        )
         remove_button = QPushButton("Geselecteerde regel verwijderen")
         remove_button.clicked.connect(
             lambda _checked=False, t=table: self._remove_matrix_rows(t)
@@ -2663,10 +2707,28 @@ class LSNetontwerpDialog(QDialog):
             )
         )
         row.addWidget(add_button)
+        row.addWidget(duplicate_button)
+        row.addWidget(up_button)
+        row.addWidget(down_button)
         row.addWidget(remove_button)
         row.addStretch(1)
-        row.addWidget(reset_button)
         layout.addLayout(row)
+        transfer = QHBoxLayout()
+        copy_button = QPushButton("Tabel kopiëren")
+        copy_button.clicked.connect(
+            lambda _checked=False, t=table: self._copy_matrix(t)
+        )
+        paste_button = QPushButton("Tabel plakken")
+        paste_button.clicked.connect(
+            lambda _checked=False, t=table: self._paste_matrix(t)
+        )
+        for button in (copy_button, paste_button, reset_button):
+            button.setObjectName("secondaryButton")
+        transfer.addWidget(copy_button)
+        transfer.addWidget(paste_button)
+        transfer.addStretch(1)
+        transfer.addWidget(reset_button)
+        layout.addLayout(transfer)
         return container
 
     @staticmethod
@@ -2684,16 +2746,71 @@ class LSNetontwerpDialog(QDialog):
         table.insertRow(table.rowCount())
         for column in range(table.columnCount()):
             table.setItem(table.rowCount() - 1, column, QTableWidgetItem(""))
+        table.selectRow(table.rowCount() - 1)
+
+    @staticmethod
+    def _selected_matrix_row(table):
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        return rows[0] if rows else None
+
+    @classmethod
+    def _duplicate_matrix_row(cls, table):
+        source = cls._selected_matrix_row(table)
+        if source is None:
+            return
+        target = source + 1
+        values = [
+            table.item(source, column).text() if table.item(source, column) else ""
+            for column in range(table.columnCount())
+        ]
+        table.insertRow(target)
+        for column, value in enumerate(values):
+            table.setItem(target, column, QTableWidgetItem(value))
+        table.selectRow(target)
+
+    @classmethod
+    def _move_matrix_row(cls, table, direction):
+        source = cls._selected_matrix_row(table)
+        if source is None:
+            return
+        target = source + direction
+        if target < 0 or target >= table.rowCount():
+            return
+        for column in range(table.columnCount()):
+            first = table.takeItem(source, column)
+            second = table.takeItem(target, column)
+            table.setItem(source, column, second or QTableWidgetItem(""))
+            table.setItem(target, column, first or QTableWidgetItem(""))
+        table.selectRow(target)
 
     @staticmethod
     def _remove_matrix_rows(table):
         selected_rows = sorted(
             {index.row() for index in table.selectedIndexes()}, reverse=True
         )
-        if not selected_rows and table.rowCount():
-            selected_rows = [table.rowCount() - 1]
         for row in selected_rows:
             table.removeRow(row)
+
+    @staticmethod
+    def _copy_matrix(table):
+        lines = []
+        for row in range(table.rowCount()):
+            lines.append("\t".join(
+                table.item(row, column).text() if table.item(row, column) else ""
+                for column in range(table.columnCount())
+            ))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _paste_matrix(self, table):
+        rows = [line.split("\t") for line in QApplication.clipboard().text().splitlines()
+                if line.strip()]
+        if not rows or any(len(row) != table.columnCount() for row in rows):
+            QMessageBox.warning(
+                self, "Tabel plakken",
+                f"Plak regels met precies {table.columnCount()} kolommen, gescheiden door tabs.",
+            )
+            return
+        self._set_matrix_values(table, [value.strip() for row in rows for value in row])
 
     @staticmethod
     def _matrix_values(table):
@@ -2734,16 +2851,22 @@ class LSNetontwerpDialog(QDialog):
 
     def _toggle_advanced(self, enabled):
         self.advanced_container.setVisible(enabled)
+        for widget in (
+            self.header_widget, self.intro_label, self.basic_group,
+            self.status_label, self.actions_group,
+        ):
+            widget.setVisible(not enabled)
+        self.advanced_hint.setVisible(enabled)
         if enabled:
-            self.resize(max(self.width(), 1120), max(self.height(), 820))
+            self.resize(max(self.width(), 1120), max(self.height(), 900))
         else:
-            self.resize(1120, 480)
+            self.resize(1120, 640)
 
     def values(self):
         values = {
             "xml": self.xml_edit.text().strip(),
             "excel": self.excel_edit.text().strip(),
-            "plan": self.plan_edit.text().strip(),
+            "plan": "" if self.no_plan.isChecked() else self.plan_edit.text().strip(),
             "output": self.output_edit.text().strip(),
             "open_project": self.open_project.isChecked(),
         }
@@ -2756,17 +2879,25 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = self._matrix_values(widget)
             else:
                 values[key] = widget.value()
+        if not values["plan"]:
+            values["only_plan"] = False
         return values
 
     def _restore_settings(self):
         self.xml_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "xml", ""))
         self.excel_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "excel", ""))
         self.plan_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "plan", ""))
+        self.no_plan.setChecked(
+            str(self.settings.value(self.SETTINGS_PREFIX + "no_plan", "false")).lower()
+            in ("true", "1")
+        )
         self.output_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "output", ""))
 
     def _save_settings(self, values):
         for key in ("xml", "excel", "plan", "output"):
-            self.settings.setValue(self.SETTINGS_PREFIX + key, values[key])
+            stored = self.plan_edit.text().strip() if key == "plan" else values[key]
+            self.settings.setValue(self.SETTINGS_PREFIX + key, stored)
+        self.settings.setValue(self.SETTINGS_PREFIX + "no_plan", self.no_plan.isChecked())
 
     def _restore_prepared_state(self):
         state_file = str(
@@ -3348,7 +3479,6 @@ class LSNetontwerpDialog(QDialog):
             for key, label in (
                 ("xml", "GEN XML"),
                 ("excel", "Excel"),
-                ("plan", "Plangebied"),
                 ("output", "Uitvoermap"),
             )
             if not values[key]
@@ -3358,7 +3488,7 @@ class LSNetontwerpDialog(QDialog):
                 self, "Invoer ontbreekt", "Kies eerst: " + ", ".join(missing)
             )
             return
-        for key in ("xml", "excel", "plan"):
+        for key in ("xml", "excel") + (("plan",) if values["plan"] else ()):
             if not Path(values[key]).exists():
                 QMessageBox.warning(
                     self, "Bestand ontbreekt", f"Niet gevonden: {values[key]}"
