@@ -32,22 +32,36 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
         self._rename_manual_clustering_route()
 
     def _fix_input_browse_buttons(self):
-        """Houd 'Kiezen…' leesbaar, maar visueel in balans met de invoervelden."""
+        """Geef invoervelden en Kiezen-knoppen genoeg hoogte en breedte."""
         for group in self.main_page.findChildren(QGroupBox):
             if group.title() != "Benodigde invoer":
                 continue
 
-            # De invoervelden zijn ongeveer 24 px hoog. Met een eigen kleine
-            # verticale padding kan de knop 27–28 px blijven zonder dat QGIS 4
-            # de onderkant van 'Kiezen…' afsnijdt.
-            group.setMaximumHeight(140)
+            group.setMinimumHeight(188)
+            group.setMaximumHeight(198)
+            layout = group.layout()
+            if layout is not None:
+                layout.setContentsMargins(8, 8, 8, 9)
+                layout.setVerticalSpacing(6)
+                layout.setHorizontalSpacing(9)
+
+            for edit in (
+                self.xml_edit,
+                self.excel_edit,
+                self.plan_edit,
+                self.output_edit,
+            ):
+                edit.setMinimumHeight(31)
+                edit.setMaximumHeight(33)
+
             for button in group.findChildren(QPushButton):
-                button.setMinimumHeight(27)
-                button.setMaximumHeight(28)
+                button.setMinimumHeight(31)
+                button.setMaximumHeight(33)
+                button.setMinimumWidth(96)
                 button.setStyleSheet(
                     "QPushButton {"
                     "background:#f47700; color:white; border:0; border-radius:5px; "
-                    "padding:2px 10px; font-weight:600;"
+                    "padding:4px 12px; font-weight:600;"
                     "}"
                     "QPushButton:hover {background:#ff8b1a;}"
                     "QPushButton:pressed {background:#d85f00;}"
