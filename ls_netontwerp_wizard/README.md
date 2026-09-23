@@ -1,6 +1,6 @@
 # LS Netontwerp Wizard voor QGIS
 
-Versie 1.15.15 bouwt rechtstreeks voort op de volledige 1.15.13-codebasis en herstelt de opwekberekening volgens Eea-0205.K 3.2. Zware woon-/appartementaansluitingen die via de ampère-/zakelijke tabel worden berekend krijgen voor opwek dezelfde waarde als voor verbruik en vallen niet meer onterecht terug naar 0 A. De kabel-opwekberekening gebruikt bovendien de kabelconfiguratie in plaats van de trafoconfiguratie. Een regressietest dekt onder andere 3x100 A, 3x125 A en zware appartementaansluitingen.
+Versie 1.15.16 maakt plangebied optioneel en verbetert de wizardinterface. Zonder plangebied gebruikt de BAG-opvraag de omvang van de geïmporteerde LS-aansluitingen. De ontwerpstroomtabellen ondersteunen regels dupliceren/verplaatsen en kopiëren/plakken met spreadsheets.
 
 Versie 1.12.0 vereenvoudigt de uiteindelijke gedeelde grenzen als één volledige
 topologische dekking. Daardoor mogen ook lange rechte schuine grenzen worden
