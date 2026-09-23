@@ -115,21 +115,30 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         for group in self.main_page.findChildren(QGroupBox):
             if group.title() != "Benodigde invoer":
                 continue
-            group.setMaximumHeight(132)
+
+            # Vier padvelden plus de optie 'Zonder plangebied' hebben bewust
+            # voldoende verticale ruimte. Een te lage maximumhoogte liet Qt de
+            # rijen samenpersen, waardoor velden dun werden en Kiezen-knoppen
+            # visueel over elkaar heen konden vallen.
+            group.setMinimumHeight(188)
+            group.setMaximumHeight(198)
             layout = group.layout()
             if layout is not None:
-                layout.setContentsMargins(8, 6, 8, 7)
-                layout.setVerticalSpacing(3)
-                layout.setHorizontalSpacing(7)
+                layout.setContentsMargins(8, 8, 8, 9)
+                layout.setVerticalSpacing(6)
+                layout.setHorizontalSpacing(9)
             for edit in (
                 self.xml_edit,
                 self.excel_edit,
                 self.plan_edit,
                 self.output_edit,
             ):
-                edit.setMaximumHeight(24)
+                edit.setMinimumHeight(31)
+                edit.setMaximumHeight(33)
             for button in group.findChildren(QPushButton):
-                button.setMaximumHeight(26)
+                button.setMinimumHeight(31)
+                button.setMaximumHeight(33)
+                button.setMinimumWidth(96)
             break
 
     def _compact_progress_area(self):
