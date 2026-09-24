@@ -1,5 +1,7 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.15.22 voegt de optionele stationsnaamkoppeling na stap 1 toe. De wizard leest de `SourceFile`-kolom en koppelt deze via `Master Asset ID` aan de ontwerpstroomlaag.
+
 Versie 1.15.16 maakt plangebied optioneel en verbetert de wizardinterface. Zonder plangebied gebruikt de BAG-opvraag de omvang van de geïmporteerde LS-aansluitingen. De ontwerpstroomtabellen ondersteunen regels dupliceren/verplaatsen en kopiëren/plakken met spreadsheets.
 
 Na stap 1 kan optioneel `2e. Stationsnamen koppelen` worden gebruikt om een CSV
