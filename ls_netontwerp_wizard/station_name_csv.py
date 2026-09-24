@@ -1,4 +1,4 @@
-"""Read the station-name lookup CSV used by the first workflow step."""
+"""Read the optional station-name lookup CSV."""
 
 from __future__ import annotations
 

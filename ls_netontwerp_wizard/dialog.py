@@ -2691,7 +2691,7 @@ class LSNetontwerpDialog(QDialog):
     def _path_row(self, form, label, kind):
         row = QHBoxLayout()
         edit = QLineEdit()
-        button = QPushButton("CSV kiezen…" if kind == "station_csv" else "Kiezen…")
+        button = QPushButton("Kiezen…")
         if kind == "plan":
             self.plan_button = button
         button.clicked.connect(lambda: self._browse(edit, kind))
