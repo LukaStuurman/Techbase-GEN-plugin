@@ -20,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -48,6 +49,12 @@ from qgis.core import (
 from qgis import processing
 
 from .zero_current_page import ZeroCurrentPage
+from .station_name_csv import (
+    find_master_asset_id_column,
+    guess_station_name_column,
+    load_station_name_lookup,
+    read_station_csv,
+)
 
 
 TEXT_OPTIONS = {
@@ -276,7 +283,7 @@ class LSNetontwerpDialog(QDialog):
                 )
             )
         )
-        self.resize(1120, 640)
+        self.resize(1120, 700)
         self.settings = QSettings()
         self.widgets = {}
         self._active_feedback = None
@@ -494,6 +501,14 @@ class LSNetontwerpDialog(QDialog):
         self.edit_zero_current_button.setObjectName("secondaryButton")
         self.edit_zero_current_button.setEnabled(False)
         self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
+        self.station_names_button = QPushButton("2e. Stationsnamen koppelen")
+        self.station_names_button.setToolTip(
+            "Voeg na de ontwerpstroomberekening stationsnamen toe via een CSV, "
+            "gekoppeld op Master Asset ID"
+        )
+        self.station_names_button.setObjectName("secondaryButton")
+        self.station_names_button.setEnabled(False)
+        self.station_names_button.clicked.connect(self.open_station_names_csv)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -529,7 +544,8 @@ class LSNetontwerpDialog(QDialog):
         for button in (
             self.edit_values_button, self.edit_housing_button,
             self.edit_stations_button, self.edit_cluster_button,
-            self.edit_zero_current_button, self.network_button, self.areas_button,
+            self.edit_zero_current_button, self.station_names_button,
+            self.network_button, self.areas_button,
         ):
             button.setObjectName("secondaryButton")
         action_grid.addWidget(self.run_button, 0, 0)
@@ -541,6 +557,7 @@ class LSNetontwerpDialog(QDialog):
         action_grid.addWidget(self.network_button, 1, 2)
         action_grid.addWidget(self.areas_button, 1, 3)
         action_grid.addWidget(self.edit_zero_current_button, 2, 0, 1, 4)
+        action_grid.addWidget(self.station_names_button, 3, 0, 1, 4)
         root.addWidget(actions)
         self.actions_group = actions
         close_button = QPushButton("Sluiten")
@@ -2674,7 +2691,7 @@ class LSNetontwerpDialog(QDialog):
     def _path_row(self, form, label, kind):
         row = QHBoxLayout()
         edit = QLineEdit()
-        button = QPushButton("Kiezen…")
+        button = QPushButton("CSV kiezen…" if kind == "station_csv" else "Kiezen…")
         if kind == "plan":
             self.plan_button = button
         button.clicked.connect(lambda: self._browse(edit, kind))
@@ -3041,7 +3058,7 @@ class LSNetontwerpDialog(QDialog):
         if enabled:
             self.resize(max(self.width(), 1120), max(self.height(), 900))
         else:
-            self.resize(1120, 640)
+            self.resize(1120, 700)
 
     def values(self):
         values = {
@@ -3102,6 +3119,7 @@ class LSNetontwerpDialog(QDialog):
         self.edit_values_button.setEnabled(True)
         self.edit_housing_button.setEnabled(True)
         self.edit_stations_button.setEnabled(True)
+        self.station_names_button.setEnabled(True)
         self.cluster_button.setEnabled(True)
         self._refresh_zero_current_count()
         self.status_label.setText(
@@ -3210,6 +3228,112 @@ class LSNetontwerpDialog(QDialog):
 
     def open_station_editor(self):
         self.show_station_page()
+
+    def open_station_names_csv(self):
+        if not self.prepared_state:
+            QMessageBox.warning(
+                self,
+                "Ontwerpstroom ontbreekt",
+                "Maak eerst de ontwerpstroomlaag met stap 1.",
+            )
+            return
+        start = str(
+            self.settings.value(self.SETTINGS_PREFIX + "station_names_csv", "")
+        ).strip() or str(Path.home())
+        csv_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Kies CSV met stationsnamen",
+            start,
+            "CSV (*.csv);;Alle bestanden (*.*)",
+        )
+        if not csv_path:
+            return
+
+        try:
+            headers, _rows = read_station_csv(csv_path)
+            key_column = find_master_asset_id_column(headers)
+            if key_column is None:
+                raise ValueError(
+                    "De CSV bevat geen kolom 'Master Asset ID'."
+                )
+            name_column = guess_station_name_column(headers)
+            if name_column is None:
+                initial_index = 0
+                name_column, accepted = QInputDialog.getItem(
+                    self,
+                    "Stationsnaamkolom kiezen",
+                    "Welke CSV-kolom bevat de stationsnaam?",
+                    headers,
+                    initial_index,
+                    False,
+                )
+                if not accepted:
+                    return
+            load_station_name_lookup(csv_path, name_column)
+
+            review_layer = next(
+                (
+                    layer
+                    for layer in QgsProject.instance().mapLayers().values()
+                    if bool(
+                        layer.customProperty(
+                            "LSNetontwerp/review_current_layer", False
+                        )
+                    )
+                ),
+                None,
+            )
+            if review_layer is None:
+                review_layer = next(
+                    (
+                        layer
+                        for layer in QgsProject.instance().mapLayers().values()
+                        if layer.name() == "LS-aansluitingen ontwerpstroom"
+                    ),
+                    None,
+                )
+            if review_layer is None or not review_layer.isValid():
+                raise ValueError(
+                    "De laag 'LS-aansluitingen ontwerpstroom' is niet beschikbaar."
+                )
+
+            from .workflow import WorkflowRunner
+
+            summary = WorkflowRunner._apply_station_names_from_csv(
+                review_layer,
+                {
+                    "station_names_csv": csv_path,
+                    "station_name_csv_field": name_column,
+                },
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Stationsnamen niet gekoppeld",
+                str(exc),
+            )
+            return
+
+        self.settings.setValue(
+            self.SETTINGS_PREFIX + "station_names_csv", csv_path
+        )
+        self.settings.setValue(
+            self.SETTINGS_PREFIX + "station_name_csv_field", name_column
+        )
+        QgsProject.instance().write()
+        if self.iface is not None:
+            self.iface.mapCanvas().refresh()
+        self.status_label.setText(
+            f"Stationsnamen gekoppeld: {summary['matched']} van "
+            f"{summary['layer_features']} aansluitingen."
+        )
+        QMessageBox.information(
+            self,
+            "Stationsnamen gekoppeld",
+            f"Kolom '{name_column}' gekoppeld via '{key_column}'.\n\n"
+            f"Gekoppeld: {summary['matched']} aansluitingen.\n"
+            f"Niet gekoppeld: {summary['unmatched']} aansluitingen.",
+        )
 
     @staticmethod
     def _append_unique_progress(details, message):
@@ -3685,7 +3809,6 @@ class LSNetontwerpDialog(QDialog):
                     self, "Bestand ontbreekt", f"Niet gevonden: {values[key]}"
                 )
                 return
-
         self._save_settings(values)
         if self.iface is not None:
             try:
@@ -3696,6 +3819,7 @@ class LSNetontwerpDialog(QDialog):
                 return
         update = self._make_progress("Workflow voorbereiden…")
         self.run_button.setEnabled(False)
+        self.station_names_button.setEnabled(False)
 
         try:
             from .workflow import WorkflowRunner
@@ -3711,6 +3835,7 @@ class LSNetontwerpDialog(QDialog):
             self.edit_values_button.setEnabled(True)
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
+            self.station_names_button.setEnabled(True)
             self.cluster_button.setEnabled(True)
             review_layer = next(
                 (
@@ -3761,6 +3886,8 @@ class LSNetontwerpDialog(QDialog):
                 )
             info_message = (
                 "Het QGIS-werkproject en de ontwerpstroomlaag zijn gereed.\n\n"
+                "Stationsnamen toevoegen is optioneel: gebruik daarvoor "
+                "'2e. Stationsnamen koppelen'.\n\n"
                 "Stroomwaarde handmatig wijzigen:\n"
                 "1. Selecteer één of meer aansluitingen.\n"
                 "2. Gebruik '2a. Stroom aanpassen'.\n\n"
@@ -3811,6 +3938,7 @@ class LSNetontwerpDialog(QDialog):
         self.edit_values_button.setEnabled(False)
         self.edit_housing_button.setEnabled(False)
         self.edit_stations_button.setEnabled(False)
+        self.station_names_button.setEnabled(False)
         self.cluster_button.setEnabled(False)
         try:
             from .workflow import WorkflowRunner
@@ -3825,11 +3953,13 @@ class LSNetontwerpDialog(QDialog):
             self.edit_values_button.setEnabled(True)
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
+            self.station_names_button.setEnabled(True)
             self.cluster_button.setEnabled(True)
         else:
             self._finish_progress(100)
             self.status_label.setText(f"Gereed: {result['result_dir']}")
             self.prepared_state = None
+            self.station_names_button.setEnabled(False)
             QMessageBox.information(
                 self,
                 "LS-netontwerp gereed",

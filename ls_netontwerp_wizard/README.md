@@ -2,6 +2,13 @@
 
 Versie 1.15.16 maakt plangebied optioneel en verbetert de wizardinterface. Zonder plangebied gebruikt de BAG-opvraag de omvang van de geïmporteerde LS-aansluitingen. De ontwerpstroomtabellen ondersteunen regels dupliceren/verplaatsen en kopiëren/plakken met spreadsheets.
 
+Na stap 1 kan optioneel `2e. Stationsnamen koppelen` worden gebruikt om een CSV
+met `Master Asset ID` en stationsnamen te laden. `SourceFile` wordt als
+stationsnaam gebruikt; bij een ander CSV-formaat kan de kolom gekozen worden.
+De wizard schrijft de namen in `Station` van `LS-aansluitingen ontwerpstroom`.
+Aansluitingen zonder overeenkomst blijven leeg en de wizard meldt hoeveel
+aansluitingen zijn gekoppeld.
+
 Versie 1.12.0 vereenvoudigt de uiteindelijke gedeelde grenzen als één volledige
 topologische dekking. Daardoor mogen ook lange rechte schuine grenzen worden
 gebruikt wanneer die een reeks kleine horizontale/verticale verspringingen

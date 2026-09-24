@@ -39,6 +39,8 @@ from qgis.core import (
     QgsTextFormat,
 )
 
+from .station_name_csv import load_station_name_lookup, normalize_asset_id
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parent
 ALGORITHM_ROOT = PLUGIN_ROOT / "algorithms"
@@ -217,6 +219,90 @@ class WorkflowRunner:
                 f"Laag '{label}' is niet gevonden. Controleer Advanced > Lagen.\n{uri}"
             )
         return uri
+
+    @staticmethod
+    def _apply_station_names_from_csv(layer, values):
+        csv_path = str(values.get("station_names_csv", "") or "").strip()
+        if not csv_path:
+            return None
+        lookup, csv_summary = load_station_name_lookup(
+            csv_path, values.get("station_name_csv_field", "")
+        )
+
+        def compact(value):
+            return "".join(
+                character.casefold()
+                for character in str(value)
+                if character.isalnum()
+            )
+
+        key_index = next(
+            (
+                index
+                for index, field in enumerate(layer.fields())
+                if compact(field.name()) in {"masterassetid", "masterassetidentifier"}
+            ),
+            -1,
+        )
+        if key_index < 0:
+            raise QgsProcessingException(
+                "De laag 'LS-aansluitingen ontwerpstroom' bevat geen "
+                "Master Asset ID-kolom om de CSV aan te koppelen."
+            )
+
+        station_index = layer.fields().lookupField("Station")
+        if not layer.startEditing():
+            raise QgsProcessingException(
+                "De ontwerpstroomlaag kon niet worden bewerkt om de "
+                "stationsnaamkolom toe te voegen."
+            )
+        if station_index < 0:
+            if not layer.addAttribute(QgsField("Station", QVariant.String)):
+                layer.rollBack()
+                raise QgsProcessingException(
+                    "De kolom 'Station' kon niet aan de ontwerpstroomlaag worden toegevoegd."
+                )
+            layer.updateFields()
+            station_index = layer.fields().lookupField("Station")
+
+        changes = {}
+        matched_count = 0
+        layer_feature_count = 0
+        for feature in layer.getFeatures():
+            layer_feature_count += 1
+            asset_id = normalize_asset_id(feature[key_index])
+            station_name = lookup.get(asset_id, "")
+            if station_name:
+                matched_count += 1
+            changes[feature.id()] = {station_index: station_name}
+
+        if not matched_count:
+            layer.rollBack()
+            raise QgsProcessingException(
+                "Geen aansluitingen konden via Master Asset ID aan de CSV worden "
+                "gekoppeld. Controleer of de CSV en de GEN-export bij elkaar horen."
+            )
+        for feature_id, attributes in changes.items():
+            if not layer.changeAttributeValues(feature_id, attributes):
+                layer.rollBack()
+                raise QgsProcessingException(
+                    f"Stationsnaam bij aansluiting {feature_id} kon niet worden opgeslagen."
+                )
+        if not layer.commitChanges():
+            errors = "; ".join(layer.commitErrors())
+            layer.rollBack()
+            raise QgsProcessingException(
+                "De stationsnamen konden niet naar de ontwerpstroomlaag worden "
+                f"geschreven{': ' + errors if errors else '.'}"
+            )
+        layer.triggerRepaint()
+        return {
+            **csv_summary,
+            "matched": matched_count,
+            "unmatched": max(0, layer_feature_count - matched_count),
+            "layer_features": layer_feature_count,
+            "target_name_field": "Station",
+        }
 
     @staticmethod
     def _project_layer_by_source(uri):
