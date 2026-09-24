@@ -148,12 +148,15 @@ OpenStreetMap tot zoomniveau 19 met HiDPI-tegels.
 Versie 1.5.9 integreert ook `2a. Stroom aanpassen` en `2b. Woningtype
 aanpassen` volledig in het TechBase-wizardvenster. Beide pagina's hebben een
 Home-knop, automatische laag- en kolomkeuze, kaartselectiestatus, interne
-voortgang en een resultaatmelding. Bij stroom aanpassen worden Hoogste Trafo
-en/of Hoogste Kabel voor de geselecteerde aansluitingen opgeslagen; Advanced
-maakt de aansluitingenlaag instelbaar. Bij woningtype aanpassen wordt het
-gekozen BAG-woningtype opgeslagen en worden gekoppelde aansluitingen opnieuw
-berekend; Advanced toont beide lagen en alle vijf gebruikte kolommen. Ook de
-aparte plugin-menukeuzes openen voortaan deze interne pagina's.
+voortgang en een resultaatmelding. Bij stroom aanpassen kies je huishoudelijk,
+zakelijk, laadpunt of straatmeubilair. Trafo- en kabelverbruik en trafo- en
+kabelopwek worden opgeslagen; Hoogste Trafo en Hoogste Kabel worden daaruit
+opnieuw berekend. Advanced maakt de aansluitingenlaag instelbaar. Bij
+woningtype aanpassen wordt het gekozen BAG-woningtype opgeslagen en worden
+gekoppelde aansluitingen opnieuw berekend; Advanced toont beide lagen en alle vijf gebruikte kolommen. De
+nulwaardenpagina 2d toont en schrijft verbruik en opwek voor trafo en kabel,
+plus de opnieuw berekende hoogste waarden. Ook de aparte plugin-menukeuzes
+openen voortaan deze interne pagina's.
 
 Versie 1.5.8 brengt de volledige handmatige clustercorrectie onder in een eigen
 TechBase-pagina binnen het wizardvenster. Met `Home` ga je zonder een nieuw

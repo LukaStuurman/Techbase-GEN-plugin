@@ -69,7 +69,7 @@ def main():
     points.dataProvider().addAttributes(fields)
     points.updateFields()
     connection = QgsFeature(points.fields())
-    connection.setAttributes(["3 x 25 A", "woonhuis", ""] + [1.0] * 6 + ["", ""])
+    connection.setAttributes(["3 x 25 A", "woonhuis", ""] + [0.0] * 6 + ["", ""])
     connection.setGeometry(QgsGeometry.fromWkt("POINT(10 10)"))
     points.dataProvider().addFeature(connection)
     points.selectAll()
@@ -134,13 +134,68 @@ def main():
     dialog.show_value_page()
     assert dialog.page_stack.currentWidget() is dialog.value_page
     assert "1" in dialog.value_selection_label.text()
+    assert dialog.value_category_combo.currentData() == "Huishoudelijk"
+    assert dialog.zero_current_page.refresh() == 1
+    assert dialog.zero_current_page.table.columnCount() == 12
+    table_headers = [
+        dialog.zero_current_page.table.horizontalHeaderItem(index).text()
+        for index in range(dialog.zero_current_page.table.columnCount())
+    ]
+    assert {
+        "Trafo verbruik (A)",
+        "Kabel verbruik (A)",
+        "Trafo opwek (A)",
+        "Kabel opwek (A)",
+        "Hoogste Trafo (A)",
+        "Hoogste Kabel (A)",
+    }.issubset(table_headers)
+    dialog.value_category_combo.setCurrentIndex(
+        dialog.value_category_combo.findData("Zakelijk")
+    )
     dialog.value_trafo.setValue(12.3)
     dialog.value_cable.setValue(14.5)
+    dialog.value_generation_trafo.setValue(16.7)
+    dialog.value_generation_cable.setValue(18.9)
     dialog.run_value_edit()
     changed = next(points.getFeatures())
-    assert abs(float(changed["Hoogste Trafo"]) - 12.3) < 1e-9
-    assert abs(float(changed["Hoogste Kabel"]) - 14.5) < 1e-9
+    assert abs(float(changed["Ontwerpstroom"]) - 12.3) < 1e-9
+    assert abs(float(changed["Ontwerpstroom kabel"]) - 14.5) < 1e-9
+    assert abs(float(changed["Opwek ontwerpstroom"]) - 16.7) < 1e-9
+    assert abs(float(changed["Kabel opwek ontwerpstroom"]) - 18.9) < 1e-9
+    assert abs(float(changed["Hoogste Trafo"]) - 16.7) < 1e-9
+    assert abs(float(changed["Hoogste Kabel"]) - 18.9) < 1e-9
+    assert changed["HerstelCat"] == "Zakelijk"
     assert dialog.value_status_label.text().startswith("Gereed:")
+
+    zero_fields = {
+        points.fields().lookupField(name): 0.0
+        for name in (
+            "Ontwerpstroom",
+            "Ontwerpstroom kabel",
+            "Opwek ontwerpstroom",
+            "Kabel opwek ontwerpstroom",
+            "Hoogste Trafo",
+            "Hoogste Kabel",
+        )
+    }
+    assert points.dataProvider().changeAttributeValues({changed.id(): zero_fields})
+    zero_page = dialog.zero_current_page
+    assert zero_page.refresh() == 1
+    zero_page.table.selectRow(0)
+    zero_page.category_combo.setCurrentIndex(
+        zero_page.category_combo.findData("Oplaadpunt")
+    )
+    zero_page.generation_trafo_spin.setValue(1.1)
+    zero_page.generation_cable_spin.setValue(0.7)
+    zero_page.apply_category()
+    repaired = next(points.getFeatures())
+    assert abs(float(repaired["Ontwerpstroom"]) - 3.7) < 1e-9
+    assert abs(float(repaired["Ontwerpstroom kabel"]) - 4.8) < 1e-9
+    assert abs(float(repaired["Opwek ontwerpstroom"]) - 1.1) < 1e-9
+    assert abs(float(repaired["Kabel opwek ontwerpstroom"]) - 0.7) < 1e-9
+    assert abs(float(repaired["Hoogste Trafo"]) - 3.7) < 1e-9
+    assert abs(float(repaired["Hoogste Kabel"]) - 4.8) < 1e-9
+    assert zero_page.refresh() == 0
 
     dialog.show_home_page()
     assert dialog.page_stack.currentWidget() is dialog.main_page
@@ -189,6 +244,19 @@ def main():
     assert changed_point["Gevonden_Woningtype"] == "appartement"
     assert abs(float(changed_point["Hoogste Trafo"]) - 4.5) < 1e-9
     assert dialog.housing_status_label.text().startswith("Gereed:")
+
+    points.selectAll()
+    dialog.show_value_page()
+    assert dialog.value_category_combo.currentData() == "Huishoudelijk"
+    assert dialog.value_housing_combo.currentData() == "appartement"
+    dialog.run_value_edit()
+    household_point = next(points.getFeatures())
+    assert abs(float(household_point["Ontwerpstroom"]) - 4.5) < 1e-9
+    assert abs(float(household_point["Ontwerpstroom kabel"]) - 5.4) < 1e-9
+    assert float(household_point["Opwek ontwerpstroom"]) == 0.0
+    assert float(household_point["Kabel opwek ontwerpstroom"]) == 0.0
+    assert abs(float(household_point["Hoogste Trafo"]) - 4.5) < 1e-9
+    assert abs(float(household_point["Hoogste Kabel"]) - 5.4) < 1e-9
     dialog.show_home_page()
     assert dialog.page_stack.currentWidget() is dialog.main_page
 

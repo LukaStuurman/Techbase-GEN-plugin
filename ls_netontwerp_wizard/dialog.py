@@ -469,7 +469,8 @@ class LSNetontwerpDialog(QDialog):
         self.run_button.clicked.connect(self.run_preparation)
         self.edit_values_button = QPushButton("2a. Stroom aanpassen")
         self.edit_values_button.setToolTip(
-            "Pas Hoogste Trafo en Hoogste Kabel voor geselecteerde aansluitingen aan"
+            "Kies huishoudelijk, zakelijk, laadpunt of straatmeubilair en pas "
+            "verbruik en opwek aan"
         )
         self.edit_values_button.setEnabled(False)
         self.edit_values_button.clicked.connect(self.open_value_editor)
@@ -1886,15 +1887,43 @@ class LSNetontwerpDialog(QDialog):
         self.value_home_button = self._add_subpage_header(
             root,
             "Ontwerpstroom aanpassen",
-            "TechBase • Hoogste Trafo en Hoogste Kabel voor kaartselecties",
+            "TechBase • verbruik en opwek voor kaartselecties",
         )
         note = QLabel(
             "Selecteer een of meer punten in <b>LS-aansluitingen "
-            "ontwerpstroom</b>. Kies hieronder welke hoogste waarden voor alle "
-            "geselecteerde punten moeten worden opgeslagen."
+            "ontwerpstroom</b> en vul voor alle geselecteerde punten de "
+            "trafo- en kabelstromen voor verbruik en opwek in. Hoogste Trafo en "
+            "Hoogste Kabel worden daarna automatisch uit die waarden berekend."
         )
         note.setWordWrap(True)
         root.addWidget(note)
+
+        category_group = QGroupBox("Categorie")
+        category_form = QFormLayout(category_group)
+        self.value_category_combo = QComboBox()
+        for label, stored in ZeroCurrentPage.CATEGORY_CHOICES:
+            self.value_category_combo.addItem(label, stored)
+        self.value_category_combo.currentIndexChanged.connect(
+            self._value_category_changed
+        )
+        category_form.addRow("Aansluittype", self.value_category_combo)
+        root.addWidget(category_group)
+
+        from .algorithms.woningtype_selectie_herberekenen_tool import HOUSING_CHOICES
+
+        self.value_housing_group = QGroupBox("Woningtype voor huishoudelijk")
+        housing_layout = QVBoxLayout(self.value_housing_group)
+        self.value_housing_combo = QComboBox()
+        for label, stored in HOUSING_CHOICES:
+            self.value_housing_combo.addItem(label, stored)
+        housing_layout.addWidget(self.value_housing_combo)
+        self.value_housing_note = QLabel(
+            "Oude of nieuwbouwtabellen worden per aansluiting gekozen op basis "
+            "van bouwjaar."
+        )
+        self.value_housing_note.setWordWrap(True)
+        housing_layout.addWidget(self.value_housing_note)
+        root.addWidget(self.value_housing_group)
 
         selection_group = QGroupBox("Kaartselectie")
         selection_row = QHBoxLayout(selection_group)
@@ -1905,23 +1934,36 @@ class LSNetontwerpDialog(QDialog):
         selection_row.addWidget(refresh)
         root.addWidget(selection_group)
 
-        values_group = QGroupBox("Nieuwe waarden")
+        values_group = QGroupBox("Verbruik en opwek")
+        self.value_manual_group = values_group
         values_form = QFormLayout(values_group)
-        self.value_change_trafo = QCheckBox("Hoogste Trafo aanpassen")
-        self.value_change_trafo.setChecked(True)
         self.value_trafo = QDoubleSpinBox()
         self.value_trafo.setRange(0.0, 1000000.0)
         self.value_trafo.setDecimals(3)
-        self.value_change_cable = QCheckBox("Hoogste Kabel aanpassen")
-        self.value_change_cable.setChecked(True)
         self.value_cable = QDoubleSpinBox()
         self.value_cable.setRange(0.0, 1000000.0)
         self.value_cable.setDecimals(3)
-        values_form.addRow(self.value_change_trafo)
-        values_form.addRow("Nieuwe Hoogste Trafo (A)", self.value_trafo)
-        values_form.addRow(self.value_change_cable)
-        values_form.addRow("Nieuwe Hoogste Kabel (A)", self.value_cable)
+        self.value_generation_trafo = QDoubleSpinBox()
+        self.value_generation_trafo.setRange(0.0, 1000000.0)
+        self.value_generation_trafo.setDecimals(3)
+        self.value_generation_cable = QDoubleSpinBox()
+        self.value_generation_cable.setRange(0.0, 1000000.0)
+        self.value_generation_cable.setDecimals(3)
+        values_form.addRow("Trafo verbruik (A)", self.value_trafo)
+        values_form.addRow("Kabel verbruik (A)", self.value_cable)
+        values_form.addRow("Trafo opwek (A)", self.value_generation_trafo)
+        values_form.addRow("Kabel opwek (A)", self.value_generation_cable)
         root.addWidget(values_group)
+        self.value_highest_preview = QLabel()
+        self.value_highest_preview.setWordWrap(True)
+        root.addWidget(self.value_highest_preview)
+        for spin in (
+            self.value_trafo,
+            self.value_cable,
+            self.value_generation_trafo,
+            self.value_generation_cable,
+        ):
+            spin.valueChanged.connect(self._update_value_highest_preview)
 
         self.value_advanced_toggle = QCheckBox("Advanced")
         root.addWidget(self.value_advanced_toggle)
@@ -1966,6 +2008,8 @@ class LSNetontwerpDialog(QDialog):
         button_row.addWidget(self.value_run_button)
         button_row.addWidget(close_button)
         root.addLayout(button_row)
+        self._value_category_changed()
+        self._update_value_highest_preview()
         return page
 
     def _build_station_page(self):
@@ -2211,12 +2255,118 @@ class LSNetontwerpDialog(QDialog):
             self.value_layer_combo, self._vector_project_layers(), preferred
         )
         self.value_advanced_toggle.setChecked(False)
-        self.value_change_trafo.setChecked(True)
-        self.value_change_cable.setChecked(True)
+        layer = self._layer_from_combo(self.value_layer_combo)
+        self._choose_value_category_from_selection(layer)
+        self._value_category_changed()
         self._refresh_value_selection_status(True)
         self.page_stack.setCurrentWidget(self.value_page)
         self.setWindowTitle("LS Netontwerp Wizard – ontwerpstroom aanpassen")
         self.resize(920, 620)
+
+    def _choose_value_category_from_selection(self, layer):
+        selected = list(layer.selectedFeatures()) if layer is not None else []
+        if not selected:
+            return
+        known_categories = {
+            self.value_category_combo.itemData(index): index
+            for index in range(self.value_category_combo.count())
+        }
+
+        def text_value(feature, field_name):
+            index = layer.fields().lookupField(field_name)
+            if index < 0:
+                return ""
+            value = feature[index]
+            return "" if value is None else str(value).strip().casefold()
+
+        sample = selected[0]
+        use = " ".join(
+            text_value(sample, field_name)
+            for field_name in ("Gebruiksdoel", "Gevonden_Woningtype", "G_Type")
+        )
+        type_code = text_value(sample, "G_Type")
+        if "laad" in use or "oplaad" in use or type_code == "8":
+            category = "Oplaadpunt"
+        elif "straat" in use or any(
+            token in use
+            for token in ("abri", "bushalte", "reclamezuil", "verlichting", "lantaarn")
+        ) or type_code == "9":
+            category = "Straatmeubilair"
+        elif any(
+            token in use
+            for token in (
+                "woon",
+                "appartement",
+                "woning",
+                "huishoud",
+                "hoekwoning",
+                "tussen/geschakeld",
+                "vrijstaand",
+                "onder-een-kap",
+            )
+        ) or type_code in ("1", "4"):
+            category = "Huishoudelijk"
+        else:
+            category = "Zakelijk"
+        if category in known_categories:
+            self.value_category_combo.setCurrentIndex(known_categories[category])
+        house_type = text_value(sample, "Gevonden_Woningtype")
+        if house_type:
+            index = self.value_housing_combo.findData(house_type)
+            if index < 0:
+                index = self.value_housing_combo.findText(house_type)
+            if index >= 0:
+                self.value_housing_combo.setCurrentIndex(index)
+
+    def _value_matrix_current(self, key, fallback):
+        items = self._workflow_field_defaults().get(key)
+        try:
+            for index in range(0, len(items or []), 3):
+                minimum = float(items[index])
+                maximum = float(items[index + 1])
+                current = float(items[index + 2])
+                if minimum <= 25 <= maximum:
+                    return current
+        except (IndexError, TypeError, ValueError):
+            pass
+        return float(fallback)
+
+    def _value_category_changed(self, *_args):
+        if not hasattr(self, "value_category_combo"):
+            return
+        category = self.value_category_combo.currentData()
+        household = category == "Huishoudelijk"
+        self.value_housing_group.setVisible(household)
+        self.value_manual_group.setVisible(not household)
+        if category == "Straatmeubilair":
+            trafo = self._value_matrix_current("matrix_straat", 5.8)
+            cable = trafo
+        elif category == "Oplaadpunt":
+            trafo = self._value_matrix_current("matrix_laad", 3.7)
+            cable = self._value_matrix_current("matrix_laad_kabel", 4.8)
+        else:
+            trafo = cable = 0.0
+        self.value_trafo.setValue(trafo)
+        self.value_cable.setValue(cable)
+        self.value_generation_trafo.setValue(0.0)
+        self.value_generation_cable.setValue(0.0)
+        self._update_value_highest_preview()
+
+    def _update_value_highest_preview(self, *_args):
+        if not hasattr(self, "value_highest_preview"):
+            return
+        if self.value_category_combo.currentData() == "Huishoudelijk":
+            self.value_highest_preview.setText(
+                "Hoogste Trafo en Hoogste Kabel worden per aansluiting berekend "
+                "op basis van het gekozen woningtype en bouwjaar."
+            )
+            return
+        highest_trafo = max(self.value_trafo.value(), self.value_generation_trafo.value())
+        highest_cable = max(self.value_cable.value(), self.value_generation_cable.value())
+        self.value_highest_preview.setText(
+            f"Wordt opgeslagen als: Hoogste Trafo {highest_trafo:.3f} A · "
+            f"Hoogste Kabel {highest_cable:.3f} A"
+        )
 
     def _refresh_value_selection_status(self, update_values=True):
         layer = self._layer_from_combo(self.value_layer_combo)
@@ -2230,8 +2380,10 @@ class LSNetontwerpDialog(QDialog):
         )
         if update_values and selected:
             for field_name, spin in (
-                ("Hoogste Trafo", self.value_trafo),
-                ("Hoogste Kabel", self.value_cable),
+                ("Ontwerpstroom", self.value_trafo),
+                ("Ontwerpstroom kabel", self.value_cable),
+                ("Opwek ontwerpstroom", self.value_generation_trafo),
+                ("Kabel opwek ontwerpstroom", self.value_generation_cable),
             ):
                 values = []
                 for feature in selected:
@@ -3204,10 +3356,19 @@ class LSNetontwerpDialog(QDialog):
                 True,
             )
             return
-        if not self.value_change_trafo.isChecked() and not self.value_change_cable.isChecked():
+        category = self.value_category_combo.currentData()
+        house_type = self.value_housing_combo.currentData()
+        if category == "Huishoudelijk" and not house_type:
+            self._set_page_status(
+                self.value_status_label, "Kies een woningtype.", True
+            )
+            return
+        if category != "Huishoudelijk" and max(
+            self.value_trafo.value(), self.value_generation_trafo.value()
+        ) <= 0:
             self._set_page_status(
                 self.value_status_label,
-                "Kies Hoogste Trafo en/of Hoogste Kabel om aan te passen.",
+                "Vul voor trafoverbruik of trafo-opwek een waarde groter dan 0 A in.",
                 True,
             )
             return
@@ -3216,19 +3377,18 @@ class LSNetontwerpDialog(QDialog):
         self.value_run_button.setEnabled(False)
         self.value_home_button.setEnabled(False)
         self._value_progress_update(10, "Geselecteerde ontwerpstroomwaarden opslaan…")
-        feedback = InlineProcessingFeedback(self._value_progress_update)
-        self._active_feedback = feedback
         try:
-            result = processing.run(
-                "lsnetontwerp:hoogste_trafo_kabel_selectie",
+            count = self.zero_current_page.apply_values_to_layer(
+                layer,
+                layer.selectedFeatureIds(),
+                category,
                 {
-                    "AANSLUITINGEN": layer,
-                    "WIJZIG_TRAFO": self.value_change_trafo.isChecked(),
-                    "HOOGSTE_TRAFO": self.value_trafo.value(),
-                    "WIJZIG_KABEL": self.value_change_cable.isChecked(),
-                    "HOOGSTE_KABEL": self.value_cable.value(),
+                    "consumption_trafo": self.value_trafo.value(),
+                    "consumption_cable": self.value_cable.value(),
+                    "generation_trafo": self.value_generation_trafo.value(),
+                    "generation_cable": self.value_generation_cable.value(),
                 },
-                feedback=feedback,
+                house_type,
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")
@@ -3237,16 +3397,15 @@ class LSNetontwerpDialog(QDialog):
             )
         else:
             self._value_progress_update(100, "Ontwerpstroomwaarden opgeslagen.")
-            count = int(result.get("AANTAL", 0))
             self._set_page_status(
                 self.value_status_label,
-                f"Gereed: {count} aansluiting(en) blijvend aangepast.",
+                f"Gereed: {count} aansluiting(en) blijvend aangepast als {category}; "
+                "verbruik, opwek en hoogste stromen zijn opgeslagen.",
             )
             if self.iface is not None:
                 self.iface.mapCanvas().refresh()
             self._refresh_zero_current_count()
         finally:
-            self._active_feedback = None
             self.value_run_button.setEnabled(True)
             self.value_home_button.setEnabled(True)
             self._refresh_value_selection_status(False)

@@ -72,8 +72,10 @@ class ZeroCurrentPage(QWidget):
             "De lijst toont aansluitingen met een ontbrekende of nulwaarde in "
             "<b>Hoogste Trafo</b>. Selecteer één of meerdere aansluitingen, "
             "gebruik Ctrl of Shift voor meerdere regels, zoom naar de "
-            "kaartselectie en kies daarna de juiste categorie. "
-            "De categorie en bijbehorende stroomwaarden worden blijvend op de laag opgeslagen."
+            "kaartselectie en kies daarna de juiste categorie. Voor zakelijke, "
+            "straat- en laadpuntcategorieën kun je trafo- en kabelverbruik en "
+            "trafo- en kabelopwek apart instellen. Alle zes ontwerpstroomvelden "
+            "worden opgeslagen; de hoogste waarden worden uit verbruik en opwek berekend."
         )
         note.setWordWrap(True)
         root.addWidget(note)
@@ -93,7 +95,7 @@ class ZeroCurrentPage(QWidget):
         selection_top.addWidget(self.refresh_button)
         selection_layout.addLayout(selection_top)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels(
             (
                 "FID",
@@ -102,7 +104,12 @@ class ZeroCurrentPage(QWidget):
                 "Doorlaatwaarde",
                 "Woningtype",
                 "Bouwjaar",
+                "Trafo verbruik (A)",
+                "Kabel verbruik (A)",
+                "Trafo opwek (A)",
+                "Kabel opwek (A)",
                 "Hoogste Trafo (A)",
+                "Hoogste Kabel (A)",
             )
         )
         try:
@@ -159,8 +166,18 @@ class ZeroCurrentPage(QWidget):
         current_form = QFormLayout(self.current_values_group)
         self.trafo_spin = self._current_spin()
         self.cable_spin = self._current_spin()
-        current_form.addRow("Hoogste Trafo (A)", self.trafo_spin)
-        current_form.addRow("Hoogste Kabel (A)", self.cable_spin)
+        self.generation_trafo_spin = self._current_spin()
+        self.generation_cable_spin = self._current_spin()
+        current_form.addRow("Trafo verbruik (A)", self.trafo_spin)
+        current_form.addRow("Kabel verbruik (A)", self.cable_spin)
+        current_form.addRow("Trafo opwek (A)", self.generation_trafo_spin)
+        current_form.addRow("Kabel opwek (A)", self.generation_cable_spin)
+        self.current_values_note = QLabel(
+            "Hoogste Trafo en Hoogste Kabel worden automatisch berekend als de "
+            "hoogste waarde van verbruik en opwek."
+        )
+        self.current_values_note.setWordWrap(True)
+        current_form.addRow("", self.current_values_note)
         category_form.addRow(self.current_values_group)
         root.addWidget(category_group)
 
@@ -300,7 +317,12 @@ class ZeroCurrentPage(QWidget):
                 self._field_value(feature, pass_field),
                 self._field_value(feature, house_field),
                 self._field_value(feature, year_field),
+                self._field_value(feature, "Ontwerpstroom", "—"),
+                self._field_value(feature, "Ontwerpstroom kabel", "—"),
+                self._field_value(feature, "Opwek ontwerpstroom", "—"),
+                self._field_value(feature, "Kabel opwek ontwerpstroom", "—"),
                 self._field_value(feature, "Hoogste Trafo", "0"),
+                self._field_value(feature, "Hoogste Kabel", "—"),
             )
             for column, text in enumerate(values_to_show):
                 item = QTableWidgetItem(text)
@@ -342,16 +364,25 @@ class ZeroCurrentPage(QWidget):
         if code == "Straatmeubilair":
             default_trafo = self._matrix_value("matrix_straat", 5.8)
             default_cable = default_trafo
+            default_generation_trafo = 0.0
+            default_generation_cable = 0.0
         elif code == "Oplaadpunt":
             default_trafo = self._matrix_value("matrix_laad", 3.7)
             default_cable = self._matrix_value("matrix_laad_kabel", 4.8)
+            default_generation_trafo = 0.0
+            default_generation_cable = 0.0
         elif code == "Zakelijk":
             default_trafo = 0.0
             default_cable = 0.0
+            default_generation_trafo = 0.0
+            default_generation_cable = 0.0
         else:
             default_trafo = default_cable = 0.0
+            default_generation_trafo = default_generation_cable = 0.0
         self.trafo_spin.setValue(default_trafo)
         self.cable_spin.setValue(default_cable)
+        self.generation_trafo_spin.setValue(default_generation_trafo)
+        self.generation_cable_spin.setValue(default_generation_cable)
 
     def _matrix_value(self, key, fallback):
         values = self.host._workflow_field_defaults()
@@ -440,8 +471,9 @@ class ZeroCurrentPage(QWidget):
         canvas.refresh()
         self.status_label.setText(f"Kaart ingezoomd op {len(ids)} aansluiting(en).")
 
-    def _ensure_category_field(self, provider):
-        field_index = self.layer.fields().lookupField(self.CATEGORY_FIELD)
+    def _ensure_category_field(self, provider, layer=None):
+        layer = layer or self.layer
+        field_index = layer.fields().lookupField(self.CATEGORY_FIELD)
         if field_index >= 0:
             return field_index
         if not provider.capabilities() & QgsVectorDataProvider.AddAttributes:
@@ -450,8 +482,8 @@ class ZeroCurrentPage(QWidget):
             [QgsField(self.CATEGORY_FIELD, QVariant.String, len=20)]
         ):
             return -1
-        self.layer.updateFields()
-        return self.layer.fields().lookupField(self.CATEGORY_FIELD)
+        layer.updateFields()
+        return layer.fields().lookupField(self.CATEGORY_FIELD)
 
     def _household_context(self):
         from .algorithms.woningtype_selectie_herberekenen_tool import (
@@ -464,9 +496,9 @@ class ZeroCurrentPage(QWidget):
         standard, cable, opwek, opwek_cable = _configurations(values, module)
         return module, values, standard, cable, opwek, opwek_cable
 
-    def _household_currents(self, feature, house_type, context):
+    def _household_currents(self, layer, feature, house_type, context):
         module, values, standard, cable, opwek, opwek_cable = context
-        year_field = self.layer.fields().lookupField("Gevonden_Bouwjaar")
+        year_field = layer.fields().lookupField("Gevonden_Bouwjaar")
         year = feature[year_field] if year_field >= 0 else None
         try:
             year = int(float(year))
@@ -503,6 +535,97 @@ class ZeroCurrentPage(QWidget):
         )
         return normal, cable_current, generation, generation_cable
 
+    def apply_values_to_layer(
+        self,
+        layer,
+        feature_ids,
+        category,
+        currents,
+        house_type=None,
+    ):
+        """Write all four component currents and both derived maxima."""
+        if layer is None or not layer.isValid():
+            raise ValueError("Kies een geldige ontwerpstroomlaag.")
+        if layer.isEditable():
+            raise ValueError("Sla de bestaande bewerkingen eerst op.")
+        provider = layer.dataProvider()
+        if not provider.capabilities() & QgsVectorDataProvider.ChangeAttributeValues:
+            raise ValueError("De ontwerpstroomlaag kan niet worden aangepast.")
+
+        indices = {
+            name: layer.fields().lookupField(name) for name in self.OUTPUT_FIELDS
+        }
+        required = (
+            "Ontwerpstroom",
+            "Ontwerpstroom kabel",
+            "Opwek ontwerpstroom",
+            "Kabel opwek ontwerpstroom",
+            "Hoogste Trafo",
+            "Hoogste Kabel",
+        )
+        if any(indices[name] < 0 for name in required):
+            raise ValueError(
+                "De laag mist een of meer verbruiks-, opwek- of hoogste stroomvelden."
+            )
+        category_index = self._ensure_category_field(provider, layer)
+        if category_index < 0:
+            raise ValueError("Het categorieveld 'HerstelCat' kan niet worden opgeslagen.")
+
+        household_context = (
+            self._household_context() if category == "Huishoudelijk" else None
+        )
+        selected_ids = {int(feature_id) for feature_id in feature_ids}
+        changes = {}
+        request = QgsFeatureRequest().setFilterFids(list(selected_ids))
+        for feature in layer.getFeatures(request):
+            if int(feature.id()) not in selected_ids:
+                continue
+            if category == "Huishoudelijk":
+                if not house_type:
+                    raise ValueError("Kies eerst een woningtype.")
+                normal, cable_current, generation, generation_cable = (
+                    self._household_currents(
+                        layer, feature, house_type, household_context
+                    )
+                )
+                stored_house_type = house_type
+            else:
+                normal = float(currents["consumption_trafo"])
+                cable_current = float(currents["consumption_cable"])
+                generation = float(currents["generation_trafo"])
+                generation_cable = float(currents["generation_cable"])
+                stored_house_type = self._field_value(
+                    feature, "Gevonden_Woningtype"
+                )
+            values = {
+                "Ontwerpstroom": normal,
+                "Ontwerpstroom kabel": cable_current,
+                "Opwek ontwerpstroom": generation,
+                "Kabel opwek ontwerpstroom": generation_cable,
+                "Hoogste Trafo": max(normal, generation),
+                "Hoogste Kabel": max(cable_current, generation_cable),
+                "Gevonden_Woningtype": stored_house_type,
+            }
+            attributes = {
+                indices[name]: value
+                for name, value in values.items()
+                if indices[name] >= 0
+            }
+            attributes[category_index] = category
+            changes[int(feature.id())] = attributes
+
+        if not changes:
+            raise ValueError("De geselecteerde aansluitingen zijn niet meer beschikbaar.")
+        if not provider.changeAttributeValues(changes):
+            raise ValueError("De ontwerpstroomwaarden konden niet worden opgeslagen.")
+        layer.updateFields()
+        layer.triggerRepaint()
+        project = QgsProject.instance()
+        project.setDirty(True)
+        if project.fileName():
+            project.write()
+        return len(changes)
+
     def apply_category(self):
         ids = self._selected_feature_ids()
         if self.layer is None or not ids:
@@ -521,99 +644,36 @@ class ZeroCurrentPage(QWidget):
             if self.housing_combo.currentData() is None:
                 self.status_label.setText("Kies eerst een woningtype.")
                 return
-        elif self.trafo_spin.value() <= 0 or self.cable_spin.value() <= 0:
+        elif max(
+            self.trafo_spin.value(), self.generation_trafo_spin.value()
+        ) <= 0:
             self.status_label.setText(
-                "Vul voor beide velden een ontwerpstroom groter dan 0 A in."
+            "Vul voor trafoverbruik of trafo-opwek een ontwerpstroom groter dan 0 A in."
             )
             return
 
-        provider = self.layer.dataProvider()
-        if not provider.capabilities() & QgsVectorDataProvider.ChangeAttributeValues:
-            self.status_label.setText("De ontwerpstroomlaag kan niet worden aangepast.")
-            return
-        indices = {
-            name: self.layer.fields().lookupField(name) for name in self.OUTPUT_FIELDS
+        currents = {
+            "consumption_trafo": self.trafo_spin.value(),
+            "consumption_cable": self.cable_spin.value(),
+            "generation_trafo": self.generation_trafo_spin.value(),
+            "generation_cable": self.generation_cable_spin.value(),
         }
-        required = ("Hoogste Trafo", "Hoogste Kabel")
-        if any(indices[name] < 0 for name in required):
-            self.status_label.setText(
-                "De laag mist Hoogste Trafo en/of Hoogste Kabel. Vernieuw stap 1."
+        try:
+            count = self.apply_values_to_layer(
+                self.layer,
+                ids,
+                category,
+                currents,
+                self.housing_combo.currentData(),
             )
+        except (ValueError, KeyError, TypeError) as exc:
+            self.status_label.setText(str(exc))
             return
-        category_index = self._ensure_category_field(provider)
-        if category_index < 0:
-            self.status_label.setText(
-                "De ontwerpstroomlaag kan geen categorieveld 'HerstelCat' opslaan. "
-                "Sla de aansluitingen eerst op in een bewerkbare laag en probeer opnieuw."
-            )
-            return
-        selected = set(ids)
-        household_context = (
-            self._household_context() if category == "Huishoudelijk" else None
-        )
-        changes = {}
-        request = QgsFeatureRequest().setFilterFids(ids)
-        for feature in self.layer.getFeatures(request):
-            feature_id = int(feature.id())
-            if feature_id not in selected:
-                continue
-            if category == "Huishoudelijk":
-                normal, cable_current, generation, generation_cable = (
-                    self._household_currents(
-                        feature, self.housing_combo.currentData(), household_context
-                    )
-                )
-                stored_house_type = self.housing_combo.currentData()
-            elif category == "Zakelijk":
-                normal = self.trafo_spin.value()
-                cable_current = self.cable_spin.value()
-                generation = normal
-                generation_cable = cable_current
-                stored_house_type = self._field_value(feature, "Gevonden_Woningtype")
-            else:
-                normal = self.trafo_spin.value()
-                cable_current = self.cable_spin.value()
-                generation = 0.0
-                generation_cable = 0.0
-                stored_house_type = self._field_value(feature, "Gevonden_Woningtype")
-            values = {
-                "Ontwerpstroom": normal,
-                "Ontwerpstroom kabel": cable_current,
-                "Opwek ontwerpstroom": generation,
-                "Kabel opwek ontwerpstroom": generation_cable,
-                "Hoogste Trafo": max(normal, generation),
-                "Hoogste Kabel": max(cable_current, generation_cable),
-                "Gevonden_Woningtype": stored_house_type,
-            }
-            attributes = {
-                indices[name]: value
-                for name, value in values.items()
-                if indices[name] >= 0
-            }
-            if category_index >= 0:
-                attributes[category_index] = category
-            changes[feature_id] = attributes
-
-        if not changes:
-            self.status_label.setText(
-                "De selectie staat niet meer in de lijst. Vernieuw de lijst."
-            )
-            self.refresh()
-            return
-        if not provider.changeAttributeValues(changes):
-            self.status_label.setText("De ontwerpstroomwaarden konden niet worden opgeslagen.")
-            return
-        self.layer.updateFields()
-        self.layer.triggerRepaint()
-        project = QgsProject.instance()
-        project.setDirty(True)
-        if project.fileName():
-            project.write()
         self.layer.removeSelection()
         if self.host.iface is not None:
             self.host.iface.mapCanvas().refresh()
         remaining = self.refresh()
         self.status_label.setText(
-            f"{len(changes)} aansluiting(en) opgeslagen als {self.category_combo.currentText()}. "
+            f"{count} aansluiting(en) opgeslagen als {self.category_combo.currentText()}. "
             f"Nog {remaining} aansluiting(en) zonder ontwerpstroom."
         )
