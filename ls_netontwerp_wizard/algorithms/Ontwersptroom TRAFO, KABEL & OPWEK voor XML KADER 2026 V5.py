@@ -212,6 +212,14 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     grens_jaar = config['DEFAULTS'].get('bouwjaar_grens', 2022)
     is_nieuwbouw = (bouwjaar >= grens_jaar)
 
+    if fases == 0 and g_type == 9:
+        # Zonder doorlaatwaarde krijgt straatmeubilair de standaard 3x25A-rij.
+        for row in config.get('STRAAT', []):
+            if row['min'] <= 25 <= row['max']:
+                return float(row['val'])
+        if type_cfg.get('use_straat'):
+            return float(config['DEFAULTS'].get('straat_fallback', 5.8))
+
     if fases == 0:
         woning_text = clean_text(type_woning)
         gebruik_text = clean_text(gebruiksdoel)
@@ -236,12 +244,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     limit_fase = config['DEFAULTS'].get('limit_fase', 3)
     limit_amp = config['DEFAULTS'].get('limit_amp', 40)
 
-    # Woonhuis is heavy/zakelijk bij bijv >= 3 fase en GROTER DAN 40A
-    is_heavy_woon = (fases >= limit_fase and el_amp > limit_amp)
-    
-    # Als uitzondering aanstaat en het is een lichte fase (bijv 1 fase), dan nooit heavy markeren
-    if use_1fase_exc and fases < limit_fase:
-        is_heavy_woon = False
+    # Boven de ampèregrens wordt een huishoudelijke aansluiting zakelijk gerekend.
+    # Voor deze grens tellen 1- en 2-fase als 3-fase; precies 40A blijft huishoudelijk.
+    is_heavy_woon = (fases > 0 and el_amp > limit_amp)
 
     val = 0.0
     
@@ -296,8 +301,12 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     val_gas = 0.0
     gas_cat = normalize_gas(ld_gas_type)
     
-    # Gas wordt genegeerd voor straat, EN genegeerd voor lichte fases (1-fase) als uitzondering aan staat
-    ignore_gas = (g_type == 9) or (use_1fase_exc and g_type in [1, 4] and fases < limit_fase)
+    # Gas is not applicable to public charging points or street furniture.
+    # Also ignore it for light single-phase residential connections when the
+    # corresponding exception is enabled.
+    ignore_gas = (g_type in [8, 9]) or (
+        use_1fase_exc and g_type in [1, 4] and fases < limit_fase and el_amp <= limit_amp
+    )
     
     if not ignore_gas:
         if el_amp > 0:
@@ -340,9 +349,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     limit_fase = config['DEFAULTS'].get('limit_fase', 3)
     limit_amp = config['DEFAULTS'].get('limit_amp', 40)
     
-    is_heavy_woon = (fases >= limit_fase and el_amp > limit_amp)
-    if use_1fase_exc and fases < limit_fase:
-        is_heavy_woon = False
+    is_heavy_woon = (fases > 0 and el_amp > limit_amp)
     
     # Eea-0205.K 3.2: zware woon/appartement-aansluitingen worden via de
     # ampere-/zakelijke tabel berekend. Opwek volgt daar dezelfde waarde als
@@ -364,7 +371,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
         # Gas correctie berekenen voor opwek
         val_gas = 0.0
         gas_cat = normalize_gas(ld_gas_type)
-        ignore_gas = (g_type == 9) or (use_1fase_exc and g_type == 1 and fases < limit_fase)
+        ignore_gas = (
+            use_1fase_exc and g_type == 1 and fases < limit_fase and el_amp <= limit_amp
+        )
         
         if not ignore_gas:
             if el_amp > 0:
