@@ -130,6 +130,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             "value_home_button",
             "housing_home_button",
             "station_home_button",
+            "zero_current_home_button",
             "manual_home_button",
             "network_home_button",
             "areas_home_button",
@@ -162,6 +163,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             self.value_page,
             self.housing_page,
             self.station_page,
+            self.zero_current_page,
             self.manual_page,
             self.network_page,
             self.areas_page,
@@ -460,6 +462,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
     def show_station_page(self):
         self._prepare_fixed_subpage(self.station_page)
         return super().show_station_page()
+
+    def show_zero_current_page(self, _checked=False, select_first=True):
+        self._prepare_fixed_subpage(self.zero_current_page)
+        return super().show_zero_current_page(_checked, select_first)
 
     def show_manual_page(self, unrestricted=False):
         self._prepare_fixed_subpage(self.manual_page)

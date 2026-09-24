@@ -492,7 +492,7 @@ class WorkflowRunner:
         capacity_field="trafo_power",
         max_field="Max_A",
     ):
-        """Use the same existing-station symbol as the clustering result."""
+        """Show named stations in red and unnamed planned stations in yellow."""
         symbol = QgsMarkerSymbol.createSimple(
             {
                 "name": "square",
@@ -502,30 +502,48 @@ class WorkflowRunner:
                 "size": "5.0",
             }
         )
+        planned_symbol = QgsMarkerSymbol.createSimple(
+            {
+                "name": "square",
+                "color": "255,215,0,255",
+                "outline_color": "0,0,0,255",
+                "outline_width": "0.5",
+                "size": "5.0",
+            }
+        )
         try:
-            symbol.setOutputUnit(Qgis.RenderUnit.Millimeters)
-            symbol.setSizeUnit(Qgis.RenderUnit.Millimeters)
-            symbol.symbolLayer(0).setSizeUnit(Qgis.RenderUnit.Millimeters)
-            symbol.symbolLayer(0).setStrokeWidthUnit(Qgis.RenderUnit.Millimeters)
+            for marker in (symbol, planned_symbol):
+                marker.setOutputUnit(Qgis.RenderUnit.Millimeters)
+                marker.setSizeUnit(Qgis.RenderUnit.Millimeters)
+                marker.symbolLayer(0).setSizeUnit(Qgis.RenderUnit.Millimeters)
+                marker.symbolLayer(0).setStrokeWidthUnit(Qgis.RenderUnit.Millimeters)
         except (AttributeError, TypeError):
             pass
         escaped_name = station_name_field.replace('"', '""')
         escaped_max = max_field.replace('"', '""')
         root_rule = QgsRuleBasedRenderer.Rule(None)
         station_rule = QgsRuleBasedRenderer.Rule(symbol)
-        station_rule.setLabel("Bestaand station met geldige capaciteit")
+        station_rule.setLabel("Bestaand station met naam en geldige capaciteit")
         station_rule.setFilterExpression(
             f'length(trim(coalesce("{escaped_name}", \'\'))) > 0 '
             f'AND "{escaped_max}" IS NOT NULL AND "{escaped_max}" > 0'
         )
         root_rule.appendChild(station_rule)
+        planned_rule = QgsRuleBasedRenderer.Rule(planned_symbol)
+        planned_rule.setLabel("Gepland station zonder naam en met geldige capaciteit")
+        planned_rule.setFilterExpression(
+            f'length(trim(coalesce("{escaped_name}", \'\'))) = 0 '
+            f'AND "{escaped_max}" IS NOT NULL AND "{escaped_max}" > 0'
+        )
+        root_rule.appendChild(planned_rule)
         layer.setRenderer(QgsRuleBasedRenderer(root_rule))
 
         labels = QgsPalLayerSettings()
         labels.fieldName = (
-            f'CASE WHEN "{escaped_name}" IS NOT NULL AND '
-            f'"{escaped_max}" IS NOT NULL THEN '
-            f'concat("{escaped_name}", \'\\nMax_A: \', '
+            f'CASE WHEN "{escaped_max}" IS NOT NULL AND "{escaped_max}" > 0 THEN '
+            f'concat(CASE WHEN length(trim(coalesce("{escaped_name}", \'\'))) > 0 '
+            f'THEN concat(trim("{escaped_name}"), \'\\n\') '
+            f'ELSE \'Gepland station\\n\' END, \'Max_A: \', '
             f'format_number("{escaped_max}", 0), \' A\') ELSE \'\' END'
         )
         labels.isExpression = True
@@ -884,7 +902,7 @@ class WorkflowRunner:
             osm_layer,
         )
         QgsProject.instance().writeEntry(
-            "LSNetontwerp", "presentation_version", 145
+            "LSNetontwerp", "presentation_version", 146
         )
         state = {
             "version": 1,

@@ -338,6 +338,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     target=self.edit_stations_button,
                     secondary=True,
                 ),
+                self._dashboard_button(
+                    "2d. Nulwaarden herstellen",
+                    2,
+                    target=self.edit_zero_current_button,
+                    secondary=True,
+                ),
             ],
         )
         step3 = self._make_step_card(
@@ -415,6 +421,11 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
 
     def _sync_dashboard_buttons(self):
         for mirror, source in self._dashboard_mirrors:
+            if source is self.edit_zero_current_button:
+                mirror.setText(source.text())
+                mirror.setEnabled(source.isEnabled())
+                mirror.setToolTip(source.toolTip())
+                continue
             # Werkstappen blijven altijd aanklikbaar. De achterliggende actie
             # valideert zelf of de benodigde lagen/voorbereiding beschikbaar zijn.
             mirror.setEnabled(True)
@@ -495,7 +506,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         )
 
     def _apply_step_page_colors(self):
-        for page in (self.value_page, self.housing_page, self.station_page):
+        for page in (
+            self.value_page,
+            self.housing_page,
+            self.station_page,
+            self.zero_current_page,
+        ):
             page.setStyleSheet(self._page_style(2))
         self.manual_page.setStyleSheet(self._page_style(4))
         self.network_page.setStyleSheet(self._page_style(5))

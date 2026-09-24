@@ -1,7 +1,7 @@
 [general]
 name=LS Netontwerp Wizard
 description=Begeleide GEN XML/Excel-import, ontwerpstroomberekening en kabelverbonden clustering.
-version=1.15.19
+version=1.15.20
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 author=HDB Tech

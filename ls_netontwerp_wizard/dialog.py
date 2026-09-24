@@ -47,6 +47,8 @@ from qgis.core import (
 )
 from qgis import processing
 
+from .zero_current_page import ZeroCurrentPage
+
 
 TEXT_OPTIONS = {
     # Excel import
@@ -483,6 +485,14 @@ class LSNetontwerpDialog(QDialog):
         )
         self.edit_stations_button.setEnabled(False)
         self.edit_stations_button.clicked.connect(self.open_station_editor)
+        self.edit_zero_current_button = QPushButton("2d. Nulwaarden herstellen (0)")
+        self.edit_zero_current_button.setToolTip(
+            "Bekijk aansluitingen met een ontbrekende of nulwaarde voor Hoogste Trafo, "
+            "zoom naar de kaart en wijs een categorie en ontwerpstroom toe"
+        )
+        self.edit_zero_current_button.setObjectName("secondaryButton")
+        self.edit_zero_current_button.setEnabled(False)
+        self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -518,7 +528,7 @@ class LSNetontwerpDialog(QDialog):
         for button in (
             self.edit_values_button, self.edit_housing_button,
             self.edit_stations_button, self.edit_cluster_button,
-            self.network_button, self.areas_button,
+            self.edit_zero_current_button, self.network_button, self.areas_button,
         ):
             button.setObjectName("secondaryButton")
         action_grid.addWidget(self.run_button, 0, 0)
@@ -529,6 +539,7 @@ class LSNetontwerpDialog(QDialog):
         action_grid.addWidget(self.edit_cluster_button, 1, 1)
         action_grid.addWidget(self.network_button, 1, 2)
         action_grid.addWidget(self.areas_button, 1, 3)
+        action_grid.addWidget(self.edit_zero_current_button, 2, 0, 1, 4)
         root.addWidget(actions)
         self.actions_group = actions
         close_button = QPushButton("Sluiten")
@@ -551,6 +562,8 @@ class LSNetontwerpDialog(QDialog):
         self.page_stack.addWidget(self.network_page)
         self.areas_page = self._build_areas_page()
         self.page_stack.addWidget(self.areas_page)
+        self.zero_current_page = ZeroCurrentPage(self)
+        self.page_stack.addWidget(self.zero_current_page)
         self.page_stack.setCurrentWidget(self.main_page)
 
     def _build_manual_page(self):
@@ -2348,6 +2361,22 @@ class LSNetontwerpDialog(QDialog):
         self.setWindowTitle("LS Netontwerp Wizard – woningtype aanpassen")
         self.resize(920, 650)
 
+    def show_zero_current_page(self, _checked=False, select_first=True):
+        count = self.zero_current_page.refresh(select_first=select_first)
+        self.page_stack.setCurrentWidget(self.zero_current_page)
+        self.setWindowTitle("LS Netontwerp Wizard – nulwaarden herstellen")
+        self.resize(1120, 720)
+        if count == 0:
+            self.zero_current_page.status_label.setText(
+                "Er zijn geen aansluitingen met een ontbrekende of nulwaarde in "
+                "Hoogste Trafo."
+            )
+
+    def _refresh_zero_current_count(self):
+        if hasattr(self, "zero_current_page"):
+            return self.zero_current_page.refresh()
+        return 0
+
     def _workflow_field_defaults(self):
         values = dict((self.prepared_state or {}).get("values") or {})
         if values:
@@ -2922,13 +2951,14 @@ class LSNetontwerpDialog(QDialog):
         self.edit_housing_button.setEnabled(True)
         self.edit_stations_button.setEnabled(True)
         self.cluster_button.setEnabled(True)
+        self._refresh_zero_current_count()
         self.status_label.setText(
             "Ontwerpstroomcontrole hervat. Pas aansluitingen, woningtypen en "
             "bestaande stations aan en start daarna stap 3."
         )
 
     def _upgrade_prepared_project_presentation(self):
-        """Herstel eenmalig de laagvolgorde en vaste puntsymbolen in oude projecten."""
+        """Herstel de laagweergave en stationsymbolen in oudere werkprojecten."""
         project = QgsProject.instance()
         try:
             current_version = int(
@@ -2938,7 +2968,7 @@ class LSNetontwerpDialog(QDialog):
             )
         except (TypeError, ValueError):
             current_version = 0
-        if current_version >= 145:
+        if current_version >= 146:
             return
 
         layers = list(project.mapLayers().values())
@@ -3013,7 +3043,7 @@ class LSNetontwerpDialog(QDialog):
                 osm_layer,
             )
             project.writeEntry(
-                "LSNetontwerp", "presentation_version", 145
+                "LSNetontwerp", "presentation_version", 146
             )
             project.write()
         except Exception:
@@ -3214,6 +3244,7 @@ class LSNetontwerpDialog(QDialog):
             )
             if self.iface is not None:
                 self.iface.mapCanvas().refresh()
+            self._refresh_zero_current_count()
         finally:
             self._active_feedback = None
             self.value_run_button.setEnabled(True)
@@ -3282,6 +3313,7 @@ class LSNetontwerpDialog(QDialog):
             )
             if self.iface is not None:
                 self.iface.mapCanvas().refresh()
+            self._refresh_zero_current_count()
         finally:
             self._active_feedback = None
             self.housing_run_button.setEnabled(True)
@@ -3550,14 +3582,25 @@ class LSNetontwerpDialog(QDialog):
                 extent_layer = plan_layer or review_layer
                 self.iface.mapCanvas().setExtent(extent_layer.extent())
                 self.iface.mapCanvas().refresh()
+            zero_count = self._refresh_zero_current_count()
             self.status_label.setText(
                 "Ontwerpstroom gereed. Pas stroomwaarden aan met 2a of wijzig "
                 "geselecteerde BAG-woningen met 2b. Bestaande stations wijzig "
-                "of verwijder je met 2c; start daarna stap 3."
+                "of verwijder je met 2c; herstel eventuele nulwaarden met 2d "
+                "en start daarna stap 3."
             )
-            QMessageBox.information(
-                self,
-                "Ontwerpstroom controleren",
+            if zero_count:
+                zero_message = (
+                    f"Aansluitingen zonder ontwerpstroom: {zero_count}.\n"
+                    "Gebruik '2d. Nulwaarden herstellen' om ze te bekijken, naar de "
+                    "kaart te zoomen en handmatig te categoriseren.\n\n"
+                )
+            else:
+                zero_message = (
+                    "Geen aansluitingen met een ontbrekende of nulwaarde in "
+                    "Hoogste Trafo gevonden.\n\n"
+                )
+            info_message = (
                 "Het QGIS-werkproject en de ontwerpstroomlaag zijn gereed.\n\n"
                 "Stroomwaarde handmatig wijzigen:\n"
                 "1. Selecteer één of meer aansluitingen.\n"
@@ -3570,11 +3613,15 @@ class LSNetontwerpDialog(QDialog):
                 "1. Selecteer één of meer rode stationsvierkanten.\n"
                 "2. Gebruik '2c. Stations aanpassen'.\n"
                 "3. Sla een nieuwe kVA-waarde op of verwijder de selectie.\n\n"
-                "Herhaal de correcties zo vaak als nodig en klik daarna op "
+                + zero_message
+                + "Herhaal de correcties zo vaak als nodig en klik daarna op "
                 "'Clustering maken'.\n\n"
                 "Voor de clustering wordt altijd 'Hoogste Trafo' gebruikt.\n\n"
-                f"Werkproject:\n{state['work_project']}",
+                + f"Werkproject:\n{state['work_project']}"
             )
+            QMessageBox.information(self, "Ontwerpstroom controleren", info_message)
+            if zero_count:
+                self.show_zero_current_page(select_first=True)
         finally:
             self.run_button.setEnabled(True)
 
