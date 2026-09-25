@@ -27,6 +27,52 @@ def main():
         from ls_netontwerp_wizard.workflow import WorkflowRunner
 
         dialog = LSNetontwerpDialog()
+        dialog.framework_combo.setCurrentIndex(
+            dialog.framework_combo.findData("3.0")
+        )
+        assert dialog.framework_combo.currentData() == "3.0"
+        current_values = dialog.values()
+        dialog.framework_combo.setCurrentIndex(
+            dialog.framework_combo.findData("3.1")
+        )
+        framework_values = dialog.values()
+        assert framework_values["design_framework"] == "3.1"
+        assert framework_values["matrix_straat"] == [
+            "0", "6", "4.3", "7", "10", "8.7", "11", "35", "5.8",
+            "40", "50", "22", "63", "80", "36",
+        ]
+        from ls_netontwerp_wizard.algorithms.woningtype_selectie_herberekenen_tool import (
+            _configurations,
+            _load_design_module,
+        )
+
+        design = _load_design_module()
+        current_config = _configurations(current_values, design)[0]
+        framework_config = _configurations(framework_values, design)[0]
+
+        def street_current(config, doorlaat):
+            return design.calculate_ontwerpstroom(
+                doorlaat, "straatmeubilair", "", 2020, "Geen", config,
+                1, None, True, True,
+            )
+
+        assert street_current(current_config, "1x6A") == 5.8
+        assert street_current(framework_config, "1x6A") == 4.3
+        assert street_current(framework_config, "1x10A") == 8.7
+        assert street_current(framework_config, "3x25A") == 5.8
+        assert street_current(framework_config, "3x40A") == 22.0
+        assert street_current(framework_config, "3x63A") == 36.0
+        assert street_current(framework_config, "") == 5.8
+        assert design.calculate_ontwerpstroom(
+            "3x25A", "woonfunctie", "twee-onder-een-kap", 2020, "Geen",
+            current_config, 2, None, True, True,
+        ) == design.calculate_ontwerpstroom(
+            "3x25A", "woonfunctie", "twee-onder-een-kap", 2020, "Geen",
+            framework_config, 2, None, True, True,
+        ) == 6.3
+        dialog.framework_combo.setCurrentIndex(
+            dialog.framework_combo.findData("3.0")
+        )
         assert dialog.edit_cluster_button.text() == "4. Clustering aanpassen"
         assert dialog.free_cluster_button.text() == "4b. Vrij aanpassen"
         assert dialog.free_cluster_button.isHidden()

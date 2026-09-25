@@ -94,6 +94,18 @@ TEXT_OPTIONS = {
 }
 
 
+# The supplied Eea-0205.K workbook is version 3.2. This requested 3.1 profile
+# adopts only its new street-furniture values; other category updates are out
+# of scope. Household, business, and charging rules stay unchanged.
+FRAMEWORK_31_STREET_MATRIX = [
+    0, 6, 4.3,
+    7, 10, 8.7,
+    11, 35, 5.8,
+    40, 50, 22,
+    63, 80, 36,
+]
+
+
 BOOL_OPTIONS = {
     "auto_cpu_threads": ("CPU-threads automatisch bepalen", True),
     "use_3dbag": ("3DBAG LoD 2.2-controle gebruiken", True),
@@ -182,6 +194,11 @@ DESIGN_MATRIX_OPTIONS = {
         "Straataansluitingen",
         ("Min A", "Max A", "Ontwerp A"),
         [0, 35, 5.8, 40, 50, 22, 63, 80, 36],
+    ),
+    "matrix_straat_kader31": (
+        "Straatmeubilair – Kader 3.1",
+        ("Min A", "Max A", "Ontwerp A"),
+        FRAMEWORK_31_STREET_MATRIX,
     ),
     "matrix_laad": (
         "Laadpunten – trafo",
@@ -405,6 +422,16 @@ class LSNetontwerpDialog(QDialog):
         )
         self.no_plan.toggled.connect(self._toggle_plan)
         form.addRow("", self.no_plan)
+        self.framework_combo = QComboBox()
+        self.framework_combo.addItem("Kader 3.0 (huidige methode)", "3.0")
+        self.framework_combo.addItem(
+            "Kader 3.1 (nieuwe straatmeubilairwaarden)", "3.1"
+        )
+        self.framework_combo.setToolTip(
+            "Kader 3.1 wijzigt alleen de straatmeubilairstaffel. De overige "
+            "ontwerpstroomregels blijven gelijk aan de huidige pluginmethode."
+        )
+        form.addRow("Ontwerpstroomkader", self.framework_combo)
         self.output_edit = self._path_row(form, "Uitvoermap", "output")
         root.addWidget(basic)
         self.basic_group = basic
@@ -2839,7 +2866,12 @@ class LSNetontwerpDialog(QDialog):
             ("Ampère en typen", ("matrix_amp", "matrix_type")),
             (
                 "Straat en laden",
-                ("matrix_straat", "matrix_laad", "matrix_laad_kabel"),
+                (
+                    "matrix_straat",
+                    "matrix_straat_kader31",
+                    "matrix_laad",
+                    "matrix_laad_kabel",
+                ),
             ),
             ("Gas", ("matrix_gas", "matrix_gas_kabel")),
             ("Classificatie", ("matrix_regex", "matrix_keywords")),
@@ -3067,6 +3099,7 @@ class LSNetontwerpDialog(QDialog):
             "plan": "" if self.no_plan.isChecked() else self.plan_edit.text().strip(),
             "output": self.output_edit.text().strip(),
             "open_project": self.open_project.isChecked(),
+            "design_framework": str(self.framework_combo.currentData() or "3.0"),
         }
         for key, widget in self.widgets.items():
             if isinstance(widget, QLineEdit):
@@ -3079,6 +3112,8 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = widget.value()
         if not values["plan"]:
             values["only_plan"] = False
+        if values["design_framework"] == "3.1":
+            values["matrix_straat"] = list(values["matrix_straat_kader31"])
         return values
 
     def _restore_settings(self):
@@ -3090,12 +3125,21 @@ class LSNetontwerpDialog(QDialog):
             in ("true", "1")
         )
         self.output_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "output", ""))
+        framework = str(
+            self.settings.value(self.SETTINGS_PREFIX + "design_framework", "3.0")
+        )
+        index = self.framework_combo.findData(framework)
+        self.framework_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _save_settings(self, values):
         for key in ("xml", "excel", "plan", "output"):
             stored = self.plan_edit.text().strip() if key == "plan" else values[key]
             self.settings.setValue(self.SETTINGS_PREFIX + key, stored)
         self.settings.setValue(self.SETTINGS_PREFIX + "no_plan", self.no_plan.isChecked())
+        self.settings.setValue(
+            self.SETTINGS_PREFIX + "design_framework",
+            str(values.get("design_framework", "3.0")),
+        )
 
     def _restore_prepared_state(self):
         state_file = str(
