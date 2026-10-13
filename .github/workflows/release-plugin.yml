@@ -52,12 +52,24 @@ jobs:
           ZIP_NAME: ${{ steps.version.outputs.zip }}
         run: |
           set -euo pipefail
-          rm -f "$ZIP_NAME"
-          git archive \
-            --format=zip \
-            --prefix=ls_netontwerp_wizard/ \
-            --output="$ZIP_NAME" \
-            HEAD:ls_netontwerp_wizard
+          python - <<'PY'
+          import io
+          import os
+          import subprocess
+          import zipfile
+
+          data = subprocess.check_output([
+              "git", "archive", "--format=zip", "--prefix=ls_netontwerp_wizard/",
+              "HEAD:ls_netontwerp_wizard",
+          ])
+          with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(
+              os.environ["ZIP_NAME"], "w", zipfile.ZIP_DEFLATED
+          ) as result:
+              for member in source.infolist():
+                  if "__pycache__" in member.filename.split("/") or member.filename.endswith((".pyc", ".pyo")):
+                      continue
+                  result.writestr(member.filename, source.read(member))
+          PY
 
       - name: ZIP-structuur controleren
         shell: bash
@@ -76,6 +88,8 @@ jobs:
 
           if not names:
               raise SystemExit("De release-ZIP is leeg.")
+          if any("__pycache__" in name.split("/") or name.endswith((".pyc", ".pyo")) for name in names):
+              raise SystemExit("De release-ZIP bevat Python-cachebestanden.")
 
           outside = [name for name in names if not name.startswith("ls_netontwerp_wizard/")]
           if outside:

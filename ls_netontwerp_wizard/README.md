@@ -1,5 +1,74 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.16.1 gebruikt bij **2a. Ontwerpstroom aanpassen** en **2d. Nulwaarden
+herstellen** de namen uit de kolom `Type wooneenheid` van Eea-0205.K 3.2:
+
+* Zakelijk: tien huidige aansluitwaarden van `< 3x35A` t/m `3x250A`, met
+  herkenbare aanduiding van type 8 (kleinzakelijk) of type 9 (grootverbruik).
+* Laden: `Aansluiting 3x25A` (type 10: Netbewust publiek laden).
+* Straatmeubilair: vijf aansluitwaarden van `1x6A` t/m `3x63A t/m 3x80A` (type 11).
+* Huishoudelijk: Vrijstaand, Twee onder een kap, Appartement incl. publiek laden,
+  Rijtjeswoning (woonboten, woonwagens, chalets en vakantiehuisjes), Hoekwoning en Onbekend.
+
+Bij **Zakelijk** verschijnt daarnaast `Gasaansluiting` met de Excel-kleuren:
+`G4, G6, geen of ander gas` (geel), `G10 t/m G25` (rood) en `> G25` (donkerrood).
+Het kiezen van een aansluitwaarde of gascategorie vult de vier stroomvelden in
+via de ingestelde tabellen. Trafo en kabel gebruiken hun eigen gastabel.
+Je kunt de stroomvelden vervolgens aanpassen, of `Zelf invullen` kiezen.
+De gekozen aansluitnaam wordt in `HerstelType` bewaard, de categorie in
+`HerstelCat` en zakelijk gas in de ingestelde gaskolom (standaard `G_Type`).
+Opnieuw openen herstelt deze keuzes. Een nieuwe woningtypeberekening vervangt
+de eerdere handmatige correctie en wist de bijbehorende keuzemarkeringen.
+
+De presetnamen komen uit de aangeleverde Excel 3.2. De stroomwaarden volgen
+het kader en de tabellen van het geopende werkproject. De bestaande kaderkeuze
+3.0/3.1 voor straatmeubilair blijft dus actief.
+
+Installeer de bijgewerkte ZIP `ls_netontwerp_wizard-1.16.1.zip` via QGIS →
+Plugins beheren en installeren → Installeren vanuit ZIP en herstart QGIS.
+
+Versie 1.16.0 voegt op het dashboard **2e. Stationskoppeling & nieuwbouw** toe.
+
+* **LOVION:** kies de volledige workbench-CSV. `Master Asset ID` koppelt exact
+  aan de bestaande ontwerpstroomlaag en `SourceFile` wordt de tekstkolom `Station`.
+  Ongekoppelde aansluitingen houden hun bestaande stationsnummer. Selecteer
+  aansluitingen op de kaart en kies of typ een ander stationsnummer om de
+  selectie blijvend te wijzigen. Voorloopnullen blijven behouden.
+* **Nieuwbouw:** laad de PDOK BAG-verblijfsobjecten, zoom naar het gewenste
+  gebied en selecteer de adressen op de kaart. De geselecteerde objecten worden
+  aan de blijvende ontwerpstroomlaag toegevoegd. De adresmapping is
+  `bronhouder_naam → city`, `woonplaats_naam → parish`, `huisnummer → housenumber`,
+  `huisletter → toevoeging`, `postcode → zip_code` en
+  `openbare_ruimte_naam → street`. Een aanvullende huisnummertoevoeging blijft
+  apart bewaard in `huisnummertoevoeging`.
+* Het pand op de locatie levert `Woningtype`, bouwjaar en eventuele expliciete
+  ontwerpstromen. Anders worden huishoudelijke stromen berekend uit het
+  woningtype en de ingestelde kader-/bouwjaartabellen. Bij meerdere overlappende
+  panden met verschillende typen wordt geen willekeurig pand gekozen.
+  Ontbreekt een bruikbaar pand/type, kies dan een woningtype of vul vier
+  stroomwaarden als terugval in. Overige ontbrekende waarden verschijnen bij
+  **2d. Nulwaarden herstellen**. `Hoogste Trafo` en `Hoogste Kabel` volgen steeds
+  het maximum van verbruik en opwek.
+* BAG-identificaties en bestaande adrescombinaties voorkomen dubbele toevoeging.
+  Appartementen op dezelfde locatie blijven afzonderlijke aansluitingen.
+* **Onbekend / overig** wordt expliciet opgeslagen als `onbekend` en gebruikt
+  bij een huishoudelijke correctie de onbekend-rij in de stroomtabellen.
+
+Gebruik deze bronbewerkingen na stap 1 en vóór het maken van de clustering.
+Bij kaartselectie keert het dashboard automatisch terug na de selectie.
+De ontwerpstroomlaag moet opgeslagen bewerkingen hebben voordat je toevoegt
+of stationsnummers koppelt/wijzigt.
+
+Installeren: QGIS → Plugins → Plugins beheren en installeren → Installeren
+vanuit ZIP, selecteer `ls_netontwerp_wizard-1.16.0.zip` en herstart QGIS als de
+plugin eerder geladen was.
+
+Integratiecontrole: `test_connection_sources.py` controleert de dashboardroute,
+stationsselectie, het behouden van ongekoppelde waarden, nieuwbouw/adresmapping,
+appartementen, CRS-transformatie, GeoPackage-opslag, handmatige waarden,
+pandstromen en beide onbekend/overig-correcties. Optioneel controleert
+`--live-pdok` ook een echte PDOK-opvraag; `--csv PAD` leest een lokale LOVION-CSV.
+
 Versie 1.15.22 voegt de optionele stationsnaamkoppeling na stap 1 toe. De wizard leest de `SourceFile`-kolom en koppelt deze via `Master Asset ID` aan de ontwerpstroomlaag.
 
 Versie 1.15.16 maakt plangebied optioneel en verbetert de wizardinterface. Zonder plangebied gebruikt de BAG-opvraag de omvang van de geïmporteerde LS-aansluitingen. De ontwerpstroomtabellen ondersteunen regels dupliceren/verplaatsen en kopiëren/plakken met spreadsheets.

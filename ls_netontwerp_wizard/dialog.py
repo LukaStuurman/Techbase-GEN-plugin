@@ -49,6 +49,10 @@ from qgis.core import (
 from qgis import processing
 
 from .zero_current_page import ZeroCurrentPage
+from .current_presets import (
+    HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
+    unit_currents, unit_description, category_note, current_context,
+)
 from .station_name_csv import (
     find_master_asset_id_column,
     guess_station_name_column,
@@ -528,14 +532,14 @@ class LSNetontwerpDialog(QDialog):
         self.edit_zero_current_button.setObjectName("secondaryButton")
         self.edit_zero_current_button.setEnabled(False)
         self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
-        self.station_names_button = QPushButton("2e. Stationsnamen koppelen")
+        self.station_names_button = QPushButton("2e. Stationskoppeling & nieuwbouw")
         self.station_names_button.setToolTip(
-            "Voeg na de ontwerpstroomberekening stationsnamen toe via een CSV, "
-            "gekoppeld op Master Asset ID"
+            "Koppel LOVION-stationsnummers, wijzig geselecteerde aansluitingen "
+            "en voeg nieuwbouw toe uit PDOK-verblijfsobjecten"
         )
         self.station_names_button.setObjectName("secondaryButton")
         self.station_names_button.setEnabled(False)
-        self.station_names_button.clicked.connect(self.open_station_names_csv)
+        self.station_names_button.clicked.connect(self.show_connection_sources_page)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -609,6 +613,9 @@ class LSNetontwerpDialog(QDialog):
         self.page_stack.addWidget(self.areas_page)
         self.zero_current_page = ZeroCurrentPage(self)
         self.page_stack.addWidget(self.zero_current_page)
+        from .connection_sources_page import ConnectionSourcesPage
+        self.connection_sources_page = ConnectionSourcesPage(self)
+        self.page_stack.addWidget(self.connection_sources_page)
         self.page_stack.setCurrentWidget(self.main_page)
 
     def _build_manual_page(self):
@@ -1926,13 +1933,19 @@ class LSNetontwerpDialog(QDialog):
 
     def _build_value_page(self):
         page = QWidget()
-        root = QVBoxLayout(page)
-        root.setContentsMargins(10, 8, 10, 8)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(10, 8, 10, 8)
         self.value_home_button = self._add_subpage_header(
-            root,
+            outer,
             "Ontwerpstroom aanpassen",
             "TechBase • verbruik en opwek voor kaartselecties",
         )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        root = QVBoxLayout(body)
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
         note = QLabel(
             "Selecteer een of meer punten in <b>LS-aansluitingen "
             "ontwerpstroom</b> en vul voor alle geselecteerde punten de "
@@ -1953,12 +1966,10 @@ class LSNetontwerpDialog(QDialog):
         category_form.addRow("Aansluittype", self.value_category_combo)
         root.addWidget(category_group)
 
-        from .algorithms.woningtype_selectie_herberekenen_tool import HOUSING_CHOICES
-
         self.value_housing_group = QGroupBox("Woningtype voor huishoudelijk")
         housing_layout = QVBoxLayout(self.value_housing_group)
         self.value_housing_combo = QComboBox()
-        for label, stored in HOUSING_CHOICES:
+        for label, stored in HOUSEHOLD_UNIT_CHOICES:
             self.value_housing_combo.addItem(label, stored)
         housing_layout.addWidget(self.value_housing_combo)
         self.value_housing_note = QLabel(
@@ -1968,6 +1979,21 @@ class LSNetontwerpDialog(QDialog):
         self.value_housing_note.setWordWrap(True)
         housing_layout.addWidget(self.value_housing_note)
         root.addWidget(self.value_housing_group)
+
+        self.value_unit_group = QGroupBox("Type wooneenheid / aansluiting")
+        unit_form = QFormLayout(self.value_unit_group)
+        self.value_unit_combo = QComboBox()
+        unit_form.addRow("Aansluitwaarde", self.value_unit_combo)
+        self.value_gas_combo = QComboBox()
+        fill_gas_combo(self.value_gas_combo)
+        self.value_gas_label = QLabel("Gasaansluiting")
+        unit_form.addRow(self.value_gas_label, self.value_gas_combo)
+        self.value_unit_note = QLabel()
+        self.value_unit_note.setWordWrap(True)
+        unit_form.addRow(self.value_unit_note)
+        self.value_unit_combo.currentIndexChanged.connect(self._value_unit_changed)
+        self.value_gas_combo.currentIndexChanged.connect(self._value_unit_changed)
+        root.addWidget(self.value_unit_group)
 
         selection_group = QGroupBox("Kaartselectie")
         selection_row = QHBoxLayout(selection_group)
@@ -2300,8 +2326,8 @@ class LSNetontwerpDialog(QDialog):
         )
         self.value_advanced_toggle.setChecked(False)
         layer = self._layer_from_combo(self.value_layer_combo)
-        self._choose_value_category_from_selection(layer)
         self._value_category_changed()
+        self._choose_value_category_from_selection(layer)
         self._refresh_value_selection_status(True)
         self.page_stack.setCurrentWidget(self.value_page)
         self.setWindowTitle("LS Netontwerp Wizard – ontwerpstroom aanpassen")
@@ -2324,6 +2350,7 @@ class LSNetontwerpDialog(QDialog):
             return "" if value is None else str(value).strip().casefold()
 
         sample = selected[0]
+        stored_category = self.zero_current_page._field_value(sample, "HerstelCat")
         use = " ".join(
             text_value(sample, field_name)
             for field_name in ("Gebruiksdoel", "Gevonden_Woningtype", "G_Type")
@@ -2352,6 +2379,8 @@ class LSNetontwerpDialog(QDialog):
             category = "Huishoudelijk"
         else:
             category = "Zakelijk"
+        if stored_category in known_categories:
+            category = stored_category
         if category in known_categories:
             self.value_category_combo.setCurrentIndex(known_categories[category])
         house_type = text_value(sample, "Gevonden_Woningtype")
@@ -2361,6 +2390,18 @@ class LSNetontwerpDialog(QDialog):
                 index = self.value_housing_combo.findText(house_type)
             if index >= 0:
                 self.value_housing_combo.setCurrentIndex(index)
+        if category != "Huishoudelijk":
+            stored_unit = text_value(sample, "HerstelType")
+            index = next((i for i in range(self.value_unit_combo.count()) if self.value_unit_combo.itemText(i).casefold() == stored_unit), -1)
+            if index >= 0:
+                self.value_unit_combo.setCurrentIndex(index)
+            elif stored_unit:
+                self.value_unit_combo.setCurrentIndex(self.value_unit_combo.findData(None))
+            if category == "Zakelijk":
+                module = current_context(self)[0]
+                gas_field = self._workflow_field_defaults().get("field_gas", "G_Type")
+                gas = module.normalize_gas(text_value(sample, gas_field))
+                self.value_gas_combo.setCurrentIndex(self.value_gas_combo.findData(gas))
 
     def _value_matrix_current(self, key, fallback):
         items = self._workflow_field_defaults().get(key)
@@ -2382,6 +2423,10 @@ class LSNetontwerpDialog(QDialog):
         household = category == "Huishoudelijk"
         self.value_housing_group.setVisible(household)
         self.value_manual_group.setVisible(not household)
+        self.value_unit_group.setVisible(not household)
+        self.value_gas_combo.setVisible(category == "Zakelijk")
+        self.value_gas_label.setVisible(category == "Zakelijk")
+        fill_unit_combo(self.value_unit_combo, category)
         if category == "Straatmeubilair":
             trafo = self._value_matrix_current("matrix_straat", 5.8)
             cable = trafo
@@ -2394,7 +2439,17 @@ class LSNetontwerpDialog(QDialog):
         self.value_cable.setValue(cable)
         self.value_generation_trafo.setValue(0.0)
         self.value_generation_cable.setValue(0.0)
+        self._value_unit_changed()
         self._update_value_highest_preview()
+
+    def _value_unit_changed(self, *_args):
+        category = self.value_category_combo.currentData()
+        key = self.value_unit_combo.currentData()
+        self.value_unit_note.setText(category_note(category, key) + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast.")
+        currents = unit_currents(current_context(self), category, key, self.value_gas_combo.currentData())
+        if currents is not None:
+            for spin, value in zip((self.value_trafo, self.value_cable, self.value_generation_trafo, self.value_generation_cable), currents):
+                spin.setValue(value)
 
     def _update_value_highest_preview(self, *_args):
         if not hasattr(self, "value_highest_preview"):
@@ -3273,8 +3328,12 @@ class LSNetontwerpDialog(QDialog):
     def open_station_editor(self):
         self.show_station_page()
 
-    def open_station_names_csv(self):
-        if not self.prepared_state:
+    def show_connection_sources_page(self):
+        self.connection_sources_page.refresh()
+        self.page_stack.setCurrentWidget(self.connection_sources_page)
+
+    def open_station_names_csv(self, target_layer=None):
+        if not self.prepared_state and target_layer is None:
             QMessageBox.warning(
                 self,
                 "Ontwerpstroom ontbreekt",
@@ -3315,7 +3374,7 @@ class LSNetontwerpDialog(QDialog):
                     return
             load_station_name_lookup(csv_path, name_column)
 
-            review_layer = next(
+            review_layer = target_layer or next(
                 (
                     layer
                     for layer in QgsProject.instance().mapLayers().values()
@@ -3364,7 +3423,8 @@ class LSNetontwerpDialog(QDialog):
         self.settings.setValue(
             self.SETTINGS_PREFIX + "station_name_csv_field", name_column
         )
-        QgsProject.instance().write()
+        if QgsProject.instance().fileName():
+            QgsProject.instance().write()
         if self.iface is not None:
             self.iface.mapCanvas().refresh()
         self.status_label.setText(
@@ -3526,7 +3586,7 @@ class LSNetontwerpDialog(QDialog):
             return
         category = self.value_category_combo.currentData()
         house_type = self.value_housing_combo.currentData()
-        if category == "Huishoudelijk" and not house_type:
+        if category == "Huishoudelijk" and house_type is None:
             self._set_page_status(
                 self.value_status_label, "Kies een woningtype.", True
             )
@@ -3557,6 +3617,8 @@ class LSNetontwerpDialog(QDialog):
                     "generation_cable": self.value_generation_cable.value(),
                 },
                 house_type,
+                unit_name=unit_description(category, self.value_unit_combo.currentData()) if category != "Huishoudelijk" else None,
+                gas_category=self.value_gas_combo.currentData() if category == "Zakelijk" else None,
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")
@@ -3931,7 +3993,7 @@ class LSNetontwerpDialog(QDialog):
             info_message = (
                 "Het QGIS-werkproject en de ontwerpstroomlaag zijn gereed.\n\n"
                 "Stationsnamen toevoegen is optioneel: gebruik daarvoor "
-                "'2e. Stationsnamen koppelen'.\n\n"
+                "'2e. Stationskoppeling & nieuwbouw'.\n\n"
                 "Stroomwaarde handmatig wijzigen:\n"
                 "1. Selecteer één of meer aansluitingen.\n"
                 "2. Gebruik '2a. Stroom aanpassen'.\n\n"

@@ -225,6 +225,8 @@ class WorkflowRunner:
         csv_path = str(values.get("station_names_csv", "") or "").strip()
         if not csv_path:
             return None
+        if layer.isEditable():
+            raise QgsProcessingException("Sla bestaande bewerkingen in de aansluitingenlaag eerst op.")
         lookup, csv_summary = load_station_name_lookup(
             csv_path, values.get("station_name_csv_field", "")
         )
@@ -274,7 +276,7 @@ class WorkflowRunner:
             station_name = lookup.get(asset_id, "")
             if station_name:
                 matched_count += 1
-            changes[feature.id()] = {station_index: station_name}
+                changes[feature.id()] = {station_index: station_name}
 
         if not matched_count:
             layer.rollBack()

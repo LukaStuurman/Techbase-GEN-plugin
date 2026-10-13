@@ -344,6 +344,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     target=self.edit_zero_current_button,
                     secondary=True,
                 ),
+                self._dashboard_button(
+                    "2e. Stationskoppeling & nieuwbouw",
+                    2,
+                    target=self.station_names_button,
+                    secondary=True,
+                ),
             ],
         )
         step3 = self._make_step_card(
