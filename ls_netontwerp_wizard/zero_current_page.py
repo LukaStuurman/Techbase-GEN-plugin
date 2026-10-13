@@ -581,7 +581,7 @@ class ZeroCurrentPage(QWidget):
             if int(feature.id()) not in selected_ids:
                 continue
             if category == "Huishoudelijk":
-                if not house_type:
+                if house_type is None:
                     raise ValueError("Kies eerst een woningtype.")
                 normal, cable_current, generation, generation_cable = (
                     self._household_currents(

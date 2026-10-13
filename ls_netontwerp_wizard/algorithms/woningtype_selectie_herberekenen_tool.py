@@ -30,7 +30,7 @@ HOUSING_CHOICES = (
     ("Appartement", "appartement"),
     ("Rijtjeswoning / geschakeld", "tussenwoning/geschakeld"),
     ("Hoekwoning", "hoekwoning"),
-    ("Onbekend / overig", ""),
+    ("Onbekend / overig", "onbekend"),
 )
 
 
@@ -479,6 +479,12 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             doorlaat = point[doorlaat_index]
             gebruik = point[gebruik_index]
             gas = point[gas_index]
+            if new_type == "onbekend":
+                # Expliciete huishoudelijke correctie gebruikt de onbekend-rij,
+                # ook wanneer de bron geen doorlaatwaarde bevat.
+                gebruik = "woonhuis"
+                if module.parse_doorlaat(doorlaat)[0] == 0:
+                    doorlaat = "3 x 25 A"
             normal = module.calculate_ontwerpstroom(
                 doorlaat,
                 gebruik,

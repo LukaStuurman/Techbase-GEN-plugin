@@ -528,14 +528,14 @@ class LSNetontwerpDialog(QDialog):
         self.edit_zero_current_button.setObjectName("secondaryButton")
         self.edit_zero_current_button.setEnabled(False)
         self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
-        self.station_names_button = QPushButton("2e. Stationsnamen koppelen")
+        self.station_names_button = QPushButton("2e. Stationskoppeling & nieuwbouw")
         self.station_names_button.setToolTip(
-            "Voeg na de ontwerpstroomberekening stationsnamen toe via een CSV, "
-            "gekoppeld op Master Asset ID"
+            "Koppel LOVION-stationsnummers, wijzig geselecteerde aansluitingen "
+            "en voeg nieuwbouw toe uit PDOK-verblijfsobjecten"
         )
         self.station_names_button.setObjectName("secondaryButton")
         self.station_names_button.setEnabled(False)
-        self.station_names_button.clicked.connect(self.open_station_names_csv)
+        self.station_names_button.clicked.connect(self.show_connection_sources_page)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -609,6 +609,9 @@ class LSNetontwerpDialog(QDialog):
         self.page_stack.addWidget(self.areas_page)
         self.zero_current_page = ZeroCurrentPage(self)
         self.page_stack.addWidget(self.zero_current_page)
+        from .connection_sources_page import ConnectionSourcesPage
+        self.connection_sources_page = ConnectionSourcesPage(self)
+        self.page_stack.addWidget(self.connection_sources_page)
         self.page_stack.setCurrentWidget(self.main_page)
 
     def _build_manual_page(self):
@@ -3273,8 +3276,12 @@ class LSNetontwerpDialog(QDialog):
     def open_station_editor(self):
         self.show_station_page()
 
-    def open_station_names_csv(self):
-        if not self.prepared_state:
+    def show_connection_sources_page(self):
+        self.connection_sources_page.refresh()
+        self.page_stack.setCurrentWidget(self.connection_sources_page)
+
+    def open_station_names_csv(self, target_layer=None):
+        if not self.prepared_state and target_layer is None:
             QMessageBox.warning(
                 self,
                 "Ontwerpstroom ontbreekt",
@@ -3315,7 +3322,7 @@ class LSNetontwerpDialog(QDialog):
                     return
             load_station_name_lookup(csv_path, name_column)
 
-            review_layer = next(
+            review_layer = target_layer or next(
                 (
                     layer
                     for layer in QgsProject.instance().mapLayers().values()
@@ -3364,7 +3371,8 @@ class LSNetontwerpDialog(QDialog):
         self.settings.setValue(
             self.SETTINGS_PREFIX + "station_name_csv_field", name_column
         )
-        QgsProject.instance().write()
+        if QgsProject.instance().fileName():
+            QgsProject.instance().write()
         if self.iface is not None:
             self.iface.mapCanvas().refresh()
         self.status_label.setText(
@@ -3526,7 +3534,7 @@ class LSNetontwerpDialog(QDialog):
             return
         category = self.value_category_combo.currentData()
         house_type = self.value_housing_combo.currentData()
-        if category == "Huishoudelijk" and not house_type:
+        if category == "Huishoudelijk" and house_type is None:
             self._set_page_status(
                 self.value_status_label, "Kies een woningtype.", True
             )
@@ -3931,7 +3939,7 @@ class LSNetontwerpDialog(QDialog):
             info_message = (
                 "Het QGIS-werkproject en de ontwerpstroomlaag zijn gereed.\n\n"
                 "Stationsnamen toevoegen is optioneel: gebruik daarvoor "
-                "'2e. Stationsnamen koppelen'.\n\n"
+                "'2e. Stationskoppeling & nieuwbouw'.\n\n"
                 "Stroomwaarde handmatig wijzigen:\n"
                 "1. Selecteer één of meer aansluitingen.\n"
                 "2. Gebruik '2a. Stroom aanpassen'.\n\n"
