@@ -179,7 +179,7 @@ def add_selected_objects(source, target, housing, household_page,
         attrs.update({"BAG_VBO_ID": bag_id, "BAG_PAND_ID": text_value(building, "identificatie") if building else "",
                       "Gebruiksdoel": value(original, "gebruiksdoel"), "Gevonden_Woningtype": house_type,
                       "Gevonden_Bouwjaar": str(year), "Station": station,
-                      "service_co": "verblijfsobject",
+                      "service_connection_type_type": "verblijfsobject",
                       "Bron": "PDOK BAG verblijfsobject", "BAG_Status": value(original, "status")})
         attrs[field_defaults.get("field_usage", "Gebruiksdoel")] = attrs["Gebruiksdoel"]
         inherited = None

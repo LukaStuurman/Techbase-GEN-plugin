@@ -48,7 +48,7 @@ def main():
         ("Gevonden_Bouwjaar", QVariant.String),
     ] + [(n, QVariant.Double) for n in CURRENT_FIELDS])
     target.setCustomProperty("LSNetontwerp/review_current_layer", True)
-    first = add(target, "POINT(156010 381010)", {"Master Asset ID": "8410456966819408130", "Station": "old", "Gebruiksdoel": "woonhuis"})
+    first = add(target, "POINT(156010 381010)", {"Master Asset ID": "8410456966819408130", "Station": "old", "Gebruiksdoel": "woonhuis", "service_connection_type_type": "3 x 25 A"})
     second = add(target, "POINT(156011 381011)", {"Master Asset ID": "8410456966791976966", "Station": "keep"})
     housing = make_layer("Polygon", "Woningtypen BAG/3DBAG", [
         ("identificatie", QVariant.String), ("Woningtype", QVariant.String), ("bouwjaar", QVariant.Int)])
@@ -106,8 +106,10 @@ def main():
         added = [f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001"]
         assert len(added) == 1
         f = added[0]
-        assert f["service_co"] == "verblijfsobject"
-        assert all(f["service_co"] == "verblijfsobject" for f in target.selectedFeatures())
+        assert f["service_connection_type_type"] == "verblijfsobject"
+        assert all(f["service_connection_type_type"] == "verblijfsobject" for f in target.selectedFeatures())
+        assert target.getFeature(first.id())["service_connection_type_type"] == "3 x 25 A"
+        assert target.fields().lookupField("service_co") < 0
         assert [f[n] for n in ("city", "parish", "housenumber", "toevoeging", "zip_code", "huisnummertoevoeging")] == ["Veldhoven", "Zeelst", "12", "A", "5502HC", "1"]
         assert f["Gevonden_Woningtype"] == "appartement"
         assert f["Gevonden_Bouwjaar"] == "2026"
@@ -126,10 +128,10 @@ def main():
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         assert reopened.isValid() and reopened.featureCount() == 5
         assert reopened.fields().lookupField("BAG_VBO_ID") >= 0
-        assert next(f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")["service_co"] == "verblijfsobject"
-        existing_service_index = reopened.fields().lookupField("service_co")
+        assert next(f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")["service_connection_type_type"] == "verblijfsobject"
+        existing_service_index = reopened.fields().lookupField("service_connection_type_type")
         assert reopened.dataProvider().changeAttributeValues({
-            f.id(): {existing_service_index: "bestaande aansluiting"}
+            f.id(): {existing_service_index: "3 x 40 A"}
             for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130"
         })
         manual_object = add(source, "POINT(5.4 51.4)", {**attrs, "identificatie": "0000010000000004", "huisnummer": "16"})
@@ -138,8 +140,8 @@ def main():
         reopened = None
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         persisted = [f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000004"][0]
-        assert persisted["service_co"] == "verblijfsobject"
-        assert next(f for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130")["service_co"] == "bestaande aansluiting"
+        assert persisted["service_connection_type_type"] == "verblijfsobject"
+        assert next(f for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130")["service_connection_type_type"] == "3 x 40 A"
         assert [persisted[n] for n in CURRENT_FIELDS] == [10, 11, 12, 13, 12, 13]
         assert reopened.featureCount() == 6
         reopened = None
