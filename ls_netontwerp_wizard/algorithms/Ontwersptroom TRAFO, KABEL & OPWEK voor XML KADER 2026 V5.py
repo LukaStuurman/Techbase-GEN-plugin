@@ -19,6 +19,8 @@ from qgis.core import (QgsProcessing,
                        QgsMessageLog,
                        Qgis)
 import re
+import math
+from ls_netontwerp_wizard.bag_current_rules import has_residential_usage, is_bag_object
 
 # ==============================================================================
 # 1. STANDAARD CONFIGURATIE (DEFAULTS)
@@ -212,6 +214,12 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     grens_jaar = config['DEFAULTS'].get('bouwjaar_grens', 2022)
     is_nieuwbouw = (bouwjaar >= grens_jaar)
 
+    if is_bag_object(doorlaat):
+        if not has_residential_usage(gebruiksdoel) or not clean_text(type_woning) or clean_text(type_woning) == "null":
+            return 0.0
+        table = config.get('WOONHUIS_2022') if is_nieuwbouw else None
+        return float(woonhuis_ontwerp(type_woning, table or config['WOONHUIS']))
+
     if fases == 0 and g_type == 9:
         # Zonder doorlaatwaarde krijgt straatmeubilair de standaard 3x25A-rij.
         for row in config.get('STRAAT', []):
@@ -340,6 +348,11 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
 
 
 def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc):
+    if is_bag_object(doorlaat):
+        if not has_residential_usage(gebruiksdoel) or not clean_text(type_woning) or clean_text(type_woning) == "null":
+            return 0.0
+        usage = "appartement" if "appartement" in clean_text(type_woning) else "woonhuis"
+        return calculate_opwek_ontwerpstroom(None, usage, type_woning, "", opwek_table, config, normal_val, use_1fase_exc)
     fases, el_amp = parse_doorlaat(doorlaat)
     g_type = map_gebruiksdoel(gebruiksdoel, type_woning, config)
     
@@ -694,9 +707,11 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         ]
         
         for f in numeric_output_fields:
-            fields.append(QgsField(f, QVariant.Double))
+            if fields.lookupField(f) < 0:
+                fields.append(QgsField(f, QVariant.Double))
         for f in text_output_fields:
-            fields.append(QgsField(f, QVariant.String))
+            if fields.lookupField(f) < 0:
+                fields.append(QgsField(f, QVariant.String))
             
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields, source_points.wkbType(), source_points.sourceCrs())
         
@@ -754,15 +769,46 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                             except: pass
                             break 
             
+            if is_bag_object(val_door) and has_residential_usage(val_gebr) and clean_text(val_woning) in ("", "null", "none"):
+                # A type explicitly chosen in the review page remains available
+                # when there is no matching pand with a known housing type.
+                type_index = feat.fields().lookupField("Gevonden_Woningtype")
+                year_index = feat.fields().lookupField("Gevonden_Bouwjaar")
+                if type_index >= 0 and clean_text(feat[type_index]) not in ("", "null", "none"):
+                    val_woning = str(feat[type_index])
+                    if not val_bouwjaar and year_index >= 0:
+                        val_bouwjaar = parse_bouwjaar(feat[year_index])
+
             res_std = calculate_ontwerpstroom(val_door, val_gebr, val_woning, val_bouwjaar, val_gas, full_config_std, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
             res_kabel = calculate_ontwerpstroom(val_door, val_gebr, val_woning, val_bouwjaar, val_gas, full_config_kabel, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
             
             res_opwek_std = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek, full_config_std, res_std, use_1fase_exc)
             res_opwek_kabel = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel, full_config_kabel, res_kabel, use_1fase_exc)
+
+            # Explicit BAG choices survive a general recalculation. A residential
+            # table choice still follows the current pand unless manually overridden.
+            if is_bag_object(val_door):
+                def saved_text(name):
+                    index = feat.fields().lookupField(name)
+                    return str(feat[index]).strip() if index >= 0 else ""
+                keep_choice = saved_text("HerstelHandmatig") == "1" or (
+                    not has_residential_usage(val_gebr) and saved_text("HerstelCat") in
+                    ("Huishoudelijk", "Zakelijk", "Oplaadpunt", "Straatmeubilair")
+                )
+                if keep_choice:
+                    try:
+                        saved = [float(feat[name]) for name in numeric_output_fields[:4]]
+                        if all(math.isfinite(value) and value >= 0 for value in saved):
+                            res_std, res_kabel, res_opwek_std, res_opwek_kabel = saved
+                    except (KeyError, ValueError, TypeError):
+                        pass
             
-            new_feat = QgsFeature(feat)
+            new_feat = QgsFeature(fields)
+            new_feat.setGeometry(feat.geometry())
             new_attrs = list(attrs)
-            new_attrs.extend([
+            new_attrs.extend([None] * (len(fields) - len(new_attrs)))
+            new_feat.setAttributes(new_attrs)
+            calculated = [
                 float(res_std), 
                 float(res_kabel), 
                 float(res_opwek_std), 
@@ -771,9 +817,9 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 float(max(res_kabel, res_opwek_kabel)), 
                 val_woning, 
                 str(val_bouwjaar)
-            ])
-            
-            new_feat.setAttributes(new_attrs)
+            ]
+            for name, value in zip(numeric_output_fields + text_output_fields, calculated):
+                new_feat[name] = value
             sink.addFeature(new_feat, QgsFeatureSink.FastInsert)
             
             count += 1

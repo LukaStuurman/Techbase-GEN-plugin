@@ -136,7 +136,7 @@ def main():
     assert "1" in dialog.value_selection_label.text()
     assert dialog.value_category_combo.currentData() == "Huishoudelijk"
     assert dialog.zero_current_page.refresh() == 1
-    assert dialog.zero_current_page.table.columnCount() == 12
+    assert dialog.zero_current_page.table.columnCount() == 13
     table_headers = [
         dialog.zero_current_page.table.horizontalHeaderItem(index).text()
         for index in range(dialog.zero_current_page.table.columnCount())

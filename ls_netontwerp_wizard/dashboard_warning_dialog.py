@@ -498,9 +498,9 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         self._prepare_fixed_subpage(self.station_page)
         return super().show_station_page()
 
-    def show_zero_current_page(self, _checked=False, select_first=True):
+    def show_zero_current_page(self, _checked=False, select_first=True, review_layer=None):
         self._prepare_fixed_subpage(self.zero_current_page)
-        return super().show_zero_current_page(_checked, select_first)
+        return super().show_zero_current_page(_checked, select_first, review_layer)
 
     def show_manual_page(self, unrestricted=False):
         self._prepare_fixed_subpage(self.manual_page)

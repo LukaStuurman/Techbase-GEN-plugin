@@ -8,6 +8,7 @@ from qgis.core import (
     QgsCoordinateTransform, QgsFeature, QgsField, QgsGeometry, QgsProject,
     QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes, QgsVariantUtils,
 )
+from .bag_current_rules import has_residential_usage
 
 CURRENT_FIELDS = (
     "Ontwerpstroom", "Ontwerpstroom kabel", "Opwek ontwerpstroom",
@@ -171,8 +172,9 @@ def add_selected_objects(source, target, housing, household_page,
             types = {text_value(f, field_defaults.get("field_building_type", "Woningtype")) for f in matches}
             if len(types) == 1 and matches:
                 building = sorted(matches, key=lambda f: (f.geometry().area(), f.id()))[0]
-        house_type = text_value(building, field_defaults.get("field_building_type", "Woningtype")) if building else ""
-        if not house_type and fallback_type is not None:
+        residential = has_residential_usage(value(original, "gebruiksdoel"))
+        house_type = text_value(building, field_defaults.get("field_building_type", "Woningtype")) if building and residential else ""
+        if residential and not house_type and fallback_type is not None:
             house_type = fallback_type
         year = value(building, field_defaults.get("field_build_year", "bouwjaar")) if building else ""
         attrs = {name: value(original, *sources) for name, sources in ADDRESS_FIELDS.items()}
@@ -180,23 +182,29 @@ def add_selected_objects(source, target, housing, household_page,
                       "Gebruiksdoel": value(original, "gebruiksdoel"), "Gevonden_Woningtype": house_type,
                       "Gevonden_Bouwjaar": str(year), "Station": station,
                       "service_connection_type_type": "verblijfsobject",
+                      "HerstelHandmatig": "0",
                       "Bron": "PDOK BAG verblijfsobject", "BAG_Status": value(original, "status")})
         attrs[field_defaults.get("field_usage", "Gebruiksdoel")] = attrs["Gebruiksdoel"]
+        attrs[field_defaults.get("field_passthrough", "service_connection_type_type")] = "verblijfsobject"
         inherited = None
-        if building and all(building.fields().lookupField(name) >= 0 for name in CURRENT_FIELDS[:4]):
+        if residential and building and all(building.fields().lookupField(name) >= 0 for name in CURRENT_FIELDS[:4]):
             try:
                 inherited = [float(value(building, name)) for name in CURRENT_FIELDS[:4]]
+                if any(not math.isfinite(v) or v < 0 for v in inherited) or max(inherited) <= 0:
+                    inherited = None
             except (TypeError, ValueError):
                 pass
         currents = inherited
-        if currents is None and house_type and ("woon" in text_value(original, "gebruiksdoel").casefold() or fallback_type is not None):
+        if residential and currents is None and house_type:
             sample = QgsFeature(calculation_layer.fields())
             sample["Gevonden_Bouwjaar"] = str(year)
             currents = household_page._household_currents(calculation_layer, sample, house_type, config)
         if currents is not None and any(not math.isfinite(float(v)) or float(v) < 0 for v in currents):
             currents = None
         if currents is None or max(currents) <= 0:
-            currents = manual_currents if manual_currents is not None else [0.0] * 4
+            currents = manual_currents if residential and manual_currents is not None else [0.0] * 4
+            if residential and manual_currents is not None:
+                attrs["HerstelHandmatig"] = "1"
         if max(currents[0], currents[2]) <= 0:
             missing += 1
         attrs.update(zip(CURRENT_FIELDS, list(currents) + [max(currents[0], currents[2]), max(currents[1], currents[3])]))
