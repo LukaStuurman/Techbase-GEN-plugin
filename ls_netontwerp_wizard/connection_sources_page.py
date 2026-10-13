@@ -14,7 +14,7 @@ class ConnectionSourcesPage(QWidget):
         super().__init__(host)
         self.host = host
         outer = QVBoxLayout(self)
-        host._add_subpage_header(outer, "Stationskoppeling & nieuwbouw", "TechBase • brondata aanvullen vóór clustering")
+        host._add_subpage_header(outer, "Stationskoppeling en nieuwbouw", "TechBase • brondata aanvullen vóór clustering")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         body = QWidget()

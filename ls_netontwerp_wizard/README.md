@@ -1,5 +1,33 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.17.0 brengt alle menu's en opties samen in één TechBase-vormgeving.
+Het dashboard, broncontrole, LOVION/BAG-nieuwbouw, clustercorrectie,
+sleuven/routes, gebieden, geavanceerde tabbladen, ontwerpstroomtabellen en
+beide visuele clustereditors gebruiken dezelfde kleuren, typografie,
+panelen, invoervelden en knoppen.
+
+* Oranje knoppen voeren een wijziging uit; neutrale knoppen openen, zoeken,
+  vernieuwen en navigeren. Kaartacties hebben een lichte oranje achtergrond.
+  Verwijderen blijft rood herkenbaar, evenals de stopknop.
+* De kop blijft bovenaan staan. Home staat op iedere subpagina rechtsonder,
+  samen met de belangrijkste actieknoppen. Lange optielijsten kunnen scrollen.
+* De invoer op het dashboard staat in twee kolommen. Alle werkstappen hebben
+  dezelfde witte panelen. `Advanced` heet nu `Geavanceerde opties`.
+* Dropdowns, aanvinkvakjes en getalvelden gebruiken dezelfde duidelijke
+  bedieningstekens. Tabellen tonen hun kolomkoppen op inhoudsbreedte.
+  De gele/rode gascategorieën en bestaande statuskleuren blijven behouden.
+* De nieuwbouwpagina kan na Home opnieuw worden geopend. De handmatige
+  clustereditor bouwt zijn acties vóór het indelen van de pagina op, zodat
+  knoppen niet over elkaar of over het volgende paneel vallen.
+* Informatie- en meldingsvensters van de plugin volgen dezelfde stijl.
+  Native bestandskiezers en QGIS-vensters buiten de plugin behouden hun
+  systeembediening.
+
+De ontwerp- en berekeningsinstellingen blijven beschikbaar. Installeer
+`ls_netontwerp_wizard-1.17.0.zip` vanuit QGIS' pluginbeheer en herstart QGIS.
+De UI-controle `test_uniform_ui.py` doorloopt negen pagina's, hun geavanceerde
+opties, alle ontwerpstroomtabellen, beide editormodi en de Home-navigatie.
+
 Versie 1.16.1 gebruikt bij **2a. Ontwerpstroom aanpassen** en **2d. Nulwaarden
 herstellen** de namen uit de kolom `Type wooneenheid` van Eea-0205.K 3.2:
 

@@ -98,7 +98,7 @@ def main():
         assert not dialog.manual_advanced_container.isHidden()
         dialog.show_home_page()
         assert dialog.page_stack.currentWidget() is dialog.main_page
-        assert dialog.info_button.text().startswith("ⓘ")
+        assert dialog.info_button.text() == "Informatie over GEN-invoer"
         query_text = dialog._gen_query_text()
         assert "|LS Kabel [LS Kaart]|" in query_text
         assert "interacts trail" in query_text

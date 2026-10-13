@@ -16,6 +16,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.core import QgsVectorLayer
 
 from .dashboard_dialog import LSNetontwerpDashboardDialog as _DashboardDialog
+from .ui_theme import apply_theme, install_dialog_theme, normalize_page
 
 
 BAG3D_WFS_URL = "https://data.3dbag.nl/api/BAG3D/wfs"
@@ -33,6 +34,40 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         super().__init__(iface, parent)
         self._install_area_shape_mode()
         self._install_submenu_consistency()
+        self._install_uniform_ui()
+
+    def _install_uniform_ui(self):
+        self._ui_pages = (
+            self.main_page, self.value_page, self.housing_page, self.station_page,
+            self.zero_current_page, self.connection_sources_page, self.manual_page,
+            self.network_page, self.areas_page,
+        )
+        action_sets = (
+            (self.value_page, (self.value_run_button,)),
+            (self.housing_page, (self.housing_run_button,)),
+            (self.station_page, (self.station_delete_button, self.station_save_button)),
+            (self.zero_current_page, (self.zero_current_page.apply_button,)),
+            (self.connection_sources_page, ()),
+            (self.manual_page, (self.manual_run_button,)),
+            (self.network_page, (self.network_draw_button, self.network_refresh_button, self.network_selected_refresh_button)),
+            (self.areas_page, (self.areas_create_button, self.areas_draw_button)),
+        )
+        for page, actions in action_sets:
+            normalize_page(page, self, actions)
+        close = next((button for button in self.main_page.findChildren(QPushButton) if button.text() == "Sluiten"), None)
+        normalize_page(self.main_page, self, (close,) if close is not None else (), home=False)
+        apply_theme(self)
+        install_dialog_theme(self)
+
+    def show_connection_sources_page(self):
+        self._prepare_fixed_subpage(self.connection_sources_page)
+        return super().show_connection_sources_page()
+
+    def _toggle_advanced(self, enabled):
+        super()._toggle_advanced(enabled)
+        self.header_widget.show()
+        self.advanced_hint.setText("Geavanceerde instellingen · schakel Geavanceerde opties uit om de ontwerpstappen te starten.")
+        self.advanced_container.setMinimumHeight(650 if enabled else 0)
 
     def _fix_compact_progress(self):
         """Zet de rode stopknop bewust iets hoger dan de smalle voortgangsbalk."""
@@ -491,6 +526,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         result = super()._open_visual_cluster_editor(requested_mode)
         editor = self._dashboard_visual_cluster_dialog
         if editor is not None:
+            apply_theme(editor)
             editor.setUpdatesEnabled(True)
             editor.show()
             self.page_stack.setCurrentWidget(editor)

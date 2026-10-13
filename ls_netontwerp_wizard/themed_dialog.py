@@ -17,6 +17,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .dialog import LSNetontwerpDialog
 from . import cluster_paint_dialog as _cluster_paint_dialog
+from .ui_theme import PALETTE, STYLE, apply_theme, normalize_page
 
 VisueleClusterEditorDialog = _cluster_paint_dialog.VisueleClusterEditorDialog
 
@@ -79,14 +80,7 @@ class EmbeddedVisualClusterEditor(VisueleClusterEditorDialog):
 class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
     """Wizardvariant met een duidelijk gekleurd workflowdashboard."""
 
-    STEP_PALETTES = {
-        1: {"main": "#1565C0", "hover": "#0D47A1", "soft": "#E8F1FB", "border": "#90B7E3"},
-        2: {"main": "#00897B", "hover": "#00695C", "soft": "#E4F4F1", "border": "#80CBC4"},
-        3: {"main": "#6A1B9A", "hover": "#4A148C", "soft": "#F0E5F6", "border": "#CE93D8"},
-        4: {"main": "#EF6C00", "hover": "#E65100", "soft": "#FFF0E2", "border": "#FFB56B"},
-        5: {"main": "#2E7D32", "hover": "#1B5E20", "soft": "#E8F4E9", "border": "#9CCC9E"},
-        6: {"main": "#C2185B", "hover": "#880E4F", "soft": "#FBE7EF", "border": "#F48FB1"},
-    }
+    STEP_PALETTES = {step: dict(PALETTE) for step in range(1, 7)}
 
     def __init__(self, iface, parent=None):
         self._dashboard_visual_cluster_dialog = None
@@ -345,7 +339,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     secondary=True,
                 ),
                 self._dashboard_button(
-                    "2e. Stationskoppeling & nieuwbouw",
+                    "2e. Stationskoppeling en nieuwbouw",
                     2,
                     target=self.station_names_button,
                     secondary=True,
@@ -453,24 +447,10 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             )
             self.page_stack.addWidget(self._dashboard_visual_cluster_dialog)
 
-        palette = self.STEP_PALETTES[3 if requested_mode == "prepare" else 4]
-        self._dashboard_visual_cluster_dialog.setStyleSheet(
-            "QPushButton {"
-            f"background:{palette['main']}; color:white; border:1px solid {palette['main']}; "
-            "border-radius:5px; padding:7px 10px; font-weight:650;"
-            "}"
-            "QPushButton:hover {"
-            f"background:{palette['hover']}; border-color:{palette['hover']};"
-            "}"
-            "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
-            "QGroupBox {"
-            f"border:1px solid {palette['border']}; border-radius:6px; margin-top:8px; "
-            "padding-top:7px; font-weight:700;"
-            "}"
-            "QGroupBox::title {"
-            f"color:{palette['main']}; subcontrol-origin:margin; left:8px; padding:0 4px;"
-            "}"
-        )
+        apply_theme(self._dashboard_visual_cluster_dialog)
+        normalize_page(self._dashboard_visual_cluster_dialog, self)
+        if hasattr(self._dashboard_visual_cluster_dialog, "dashboard_manual_cluster_button"):
+            self._dashboard_visual_cluster_dialog.dashboard_manual_cluster_button.setVisible(requested_mode == "prepare")
         self._dashboard_visual_cluster_dialog.refresh_layers()
         self.page_stack.setCurrentWidget(self._dashboard_visual_cluster_dialog)
         self.setWindowTitle(
@@ -484,32 +464,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         self.resize(max(self.width(), 1180), max(self.height(), 820))
 
     def _page_style(self, step):
-        palette = self.STEP_PALETTES[step]
-        return (
-            "QPushButton {"
-            f"background:{palette['main']}; color:white; border:1px solid {palette['main']}; "
-            "border-radius:5px; padding:7px 10px; font-weight:650;"
-            "}"
-            "QPushButton:hover {"
-            f"background:{palette['hover']}; border-color:{palette['hover']};"
-            "}"
-            "QPushButton:disabled {background:#c9c9c9; color:#f4f4f4; border-color:#c9c9c9;}"
-            "QPushButton#genInfoButton {"
-            f"background:{palette['soft']}; color:{palette['main']}; "
-            f"border:1px solid {palette['border']};"
-            "}"
-            "QGroupBox {"
-            f"border:1px solid {palette['border']}; border-radius:6px; "
-            "margin-top:8px; padding-top:7px; font-weight:700;"
-            "}"
-            "QGroupBox::title {"
-            f"color:{palette['main']}; subcontrol-origin:margin; "
-            "left:8px; padding:0 4px;"
-            "}"
-            "QProgressBar::chunk {"
-            f"background:{palette['main']};"
-            "}"
-        )
+        return STYLE
 
     def _apply_step_page_colors(self):
         for page in (

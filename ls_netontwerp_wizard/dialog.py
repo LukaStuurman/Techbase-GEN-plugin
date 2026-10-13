@@ -49,6 +49,7 @@ from qgis.core import (
 from qgis import processing
 
 from .zero_current_page import ZeroCurrentPage
+from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
     unit_currents, unit_description, category_note, current_context,
@@ -308,55 +309,12 @@ class LSNetontwerpDialog(QDialog):
         self.settings = QSettings()
         self.widgets = {}
         self._active_feedback = None
-        self.setStyleSheet(
-            """
-            QDialog { background: #f5f7fa; color: #243246; }
-            QLabel#techbaseTitle { color: #17263a; font-size: 23px; font-weight: 700; }
-            QLabel#techbaseSubtitle { color: #64748b; font-size: 11px; }
-            QGroupBox {
-                background: #ffffff; border: 1px solid #dfe5ec; border-radius: 9px;
-                margin-top: 13px; padding: 12px; font-weight: 600;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin; left: 14px; padding: 0 6px;
-                color: #243246; background: #ffffff;
-            }
-            QPushButton {
-                background: #e86c12; color: white; border: 1px solid #e86c12;
-                border-radius: 6px; padding: 8px 12px; font-weight: 600;
-            }
-            QPushButton:hover { background: #f47a20; }
-            QPushButton:pressed { background: #c7580b; }
-            QPushButton:disabled { background: #e8ecf0; border-color: #e8ecf0; color: #8995a3; }
-            QPushButton#secondaryButton, QPushButton#genInfoButton {
-                background: #ffffff; color: #b7500b;
-                border: 1px solid #e3a276;
-            }
-            QPushButton#secondaryButton:hover, QPushButton#genInfoButton:hover { background: #fff3e9; }
-            QPushButton#dangerButton { background: #c62828; }
-            QPushButton#dangerButton:hover { background: #e53935; }
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTableWidget {
-                border: 1px solid #ccd5df; border-radius: 5px; padding: 4px;
-                background: white; selection-background-color: #f9d8bd;
-            }
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTableWidget:focus {
-                border: 1px solid #e86c12;
-            }
-            QTabWidget::pane { border: 1px solid #dfe5ec; border-radius: 6px; background: #ffffff; }
-            QTabBar::tab { background: #edf1f5; color: #42546b; padding: 9px 13px; margin-right: 3px; border-radius: 5px; }
-            QTabBar::tab:hover { background: #ffe8d5; }
-            QTabBar::tab:selected { background: #e86c12; color: white; }
-            QHeaderView::section {
-                background: #fff0e3; color: #814012; padding: 6px;
-                border: 0; border-bottom: 1px solid #e9c3a7; font-weight: 600;
-            }
-            QProgressBar { border: 1px solid #ccd5df; border-radius: 4px; text-align: center; }
-            QProgressBar::chunk { background: #e86c12; }
-            """
-        )
+        self.setStyleSheet(STYLE)
         self._build_ui()
         self._restore_settings()
         self._restore_prepared_state()
+        apply_theme(self)
+        install_dialog_theme(self)
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -395,7 +353,7 @@ class LSNetontwerpDialog(QDialog):
         title_box.addStretch(1)
         header.addWidget(logo)
         header.addLayout(title_box, 1)
-        self.info_button = QPushButton("ⓘ  Informatie over GEN-invoer")
+        self.info_button = QPushButton("Informatie over GEN-invoer")
         self.info_button.setObjectName("genInfoButton")
         self.info_button.setToolTip(
             "Uitleg over trail, GEN-query en het exporteren naar XML en Excel"
@@ -414,10 +372,18 @@ class LSNetontwerpDialog(QDialog):
         self.intro_label = intro
 
         basic = QGroupBox("Benodigde invoer")
-        form = QFormLayout(basic)
+        input_layout = QGridLayout(basic)
+        input_layout.setHorizontalSpacing(18)
+        form = QFormLayout()
+        right_form = QFormLayout()
+        input_layout.addLayout(form, 0, 0)
+        input_layout.addLayout(right_form, 0, 1)
+        input_layout.setColumnStretch(0, 1)
+        input_layout.setColumnStretch(1, 1)
         form.setSpacing(9)
+        right_form.setSpacing(9)
         self.xml_edit = self._path_row(form, "GEN XML", "xml")
-        self.excel_edit = self._path_row(form, "Kabelgegevens Excel", "excel")
+        self.excel_edit = self._path_row(right_form, "Kabelgegevens Excel", "excel")
         self.plan_edit = self._path_row(form, "Plangebied (optioneel)", "plan")
         self.no_plan = QCheckBox("Zonder plangebied werken")
         self.no_plan.setToolTip(
@@ -426,6 +392,7 @@ class LSNetontwerpDialog(QDialog):
         )
         self.no_plan.toggled.connect(self._toggle_plan)
         form.addRow("", self.no_plan)
+        self.output_edit = self._path_row(right_form, "Uitvoermap", "output")
         self.framework_combo = QComboBox()
         self.framework_combo.addItem("Kader 3.0 (huidige methode)", "3.0")
         self.framework_combo.addItem(
@@ -435,8 +402,7 @@ class LSNetontwerpDialog(QDialog):
             "Kader 3.1 wijzigt alleen de straatmeubilairstaffel. De overige "
             "ontwerpstroomregels blijven gelijk aan de huidige pluginmethode."
         )
-        form.addRow("Ontwerpstroomkader", self.framework_combo)
-        self.output_edit = self._path_row(form, "Uitvoermap", "output")
+        right_form.addRow("Ontwerpstroomkader", self.framework_combo)
         root.addWidget(basic)
         self.basic_group = basic
 
@@ -453,7 +419,7 @@ class LSNetontwerpDialog(QDialog):
         option_row.addWidget(self.open_project)
         root.addLayout(option_row)
         self.advanced_hint = QLabel(
-            "Geavanceerde instellingen · schakel Advanced uit om de ontwerpstappen te starten."
+            "Geavanceerde instellingen · schakel Geavanceerde opties uit om de ontwerpstappen te starten."
         )
         self.advanced_hint.setVisible(False)
         root.addWidget(self.advanced_hint)
@@ -532,7 +498,7 @@ class LSNetontwerpDialog(QDialog):
         self.edit_zero_current_button.setObjectName("secondaryButton")
         self.edit_zero_current_button.setEnabled(False)
         self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
-        self.station_names_button = QPushButton("2e. Stationskoppeling & nieuwbouw")
+        self.station_names_button = QPushButton("2e. Stationskoppeling en nieuwbouw")
         self.station_names_button.setToolTip(
             "Koppel LOVION-stationsnummers, wijzig geselecteerde aansluitingen "
             "en voeg nieuwbouw toe uit PDOK-verblijfsobjecten"
@@ -663,7 +629,7 @@ class LSNetontwerpDialog(QDialog):
             "Selecteer in de kaart een of meer punten uit <b>Aansluitingen "
             "geclusterd</b> en precies één punt uit <b>Stations ontwerp</b>. "
             "De normale modus bewaakt capaciteit, kabellengte en geldige "
-            "kabelroutes. Open Advanced om alle invoerlagen en controles aan te passen."
+            "kabelroutes. Open Geavanceerde opties om alle invoerlagen en controles aan te passen."
         )
         explanation.setWordWrap(True)
         root.addWidget(explanation)
@@ -832,7 +798,7 @@ class LSNetontwerpDialog(QDialog):
         self.network_home_button = self._add_subpage_header(
             root,
             "Sleuven en clusterroutes",
-            "TechBase â€¢ netwerk tekenen, knippen/noden en kortste routes verversen",
+            "TechBase • netwerk tekenen, knippen/noden en kortste routes verversen",
         )
         explanation = QLabel(
             "Met <b>Nieuwe sleuf tekenen</b> teken je rechtstreeks in de kaart. "
@@ -890,7 +856,7 @@ class LSNetontwerpDialog(QDialog):
         advanced_form.addRow(self.network_check_shared)
         backup_row = QHBoxLayout()
         self.network_backup_edit = QLineEdit()
-        backup_button = QPushButton("Kiezenâ€¦")
+        backup_button = QPushButton("Kiezen…")
         backup_button.clicked.connect(self._browse_network_backup_folder)
         backup_row.addWidget(self.network_backup_edit, 1)
         backup_row.addWidget(backup_button)
@@ -956,7 +922,7 @@ class LSNetontwerpDialog(QDialog):
     def show_network_page(self):
         self._refresh_network_layer_choices()
         self.page_stack.setCurrentWidget(self.network_page)
-        self.setWindowTitle("LS Netontwerp Wizard â€“ sleuven en routes")
+        self.setWindowTitle("LS Netontwerp Wizard – sleuven en routes")
         self.resize(1120, 700 if not self.network_advanced_toggle.isChecked() else 820)
 
     def _build_areas_page(self):
@@ -1733,7 +1699,7 @@ class LSNetontwerpDialog(QDialog):
         if not backup:
             home = QgsProject.instance().homePath()
             if not home:
-                self._set_network_status("Kies in Advanced een back-upmap.", True)
+                self._set_network_status("Kies bij Geavanceerde opties een back-upmap.", True)
                 return
             backup = str(Path(home) / "netwerk_onderhoud")
             self.network_backup_edit.setText(backup)
@@ -1743,9 +1709,9 @@ class LSNetontwerpDialog(QDialog):
         self.network_refresh_button.setEnabled(False)
         self.network_selected_refresh_button.setEnabled(False)
         action_text = (
-            "Geselecteerde clusterroutes worden vernieuwdâ€¦"
+            "Geselecteerde clusterroutes worden vernieuwd…"
             if selected_only
-            else "Alle kortste clusterroutes worden vernieuwdâ€¦"
+            else "Alle kortste clusterroutes worden vernieuwd…"
         )
         self._set_network_status(action_text)
         feedback = InlineProcessingFeedback(self._network_progress_update)
@@ -3518,7 +3484,7 @@ class LSNetontwerpDialog(QDialog):
         if any(not value for value in fields.values()):
             self._set_page_status(
                 self.station_status_label,
-                "Kies in Advanced alle drie benodigde stationskolommen.",
+                "Kies bij Geavanceerde opties alle drie benodigde stationskolommen.",
                 True,
             )
             return
@@ -3664,7 +3630,7 @@ class LSNetontwerpDialog(QDialog):
         if any(not value for value in fields.values()):
             self._set_page_status(
                 self.housing_status_label,
-                "Kies in Advanced alle vijf benodigde kolommen.",
+                "Kies bij Geavanceerde opties alle vijf benodigde kolommen.",
                 True,
             )
             return
@@ -3783,7 +3749,7 @@ class LSNetontwerpDialog(QDialog):
             project_home = QgsProject.instance().homePath()
             if not project_home:
                 self._set_manual_status(
-                    "Kies in Advanced een map voor back-up en resultaatkopie.",
+                    "Kies bij Geavanceerde opties een map voor back-up en resultaatkopie.",
                     True,
                 )
                 return
