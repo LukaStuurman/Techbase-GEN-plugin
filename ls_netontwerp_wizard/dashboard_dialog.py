@@ -246,7 +246,7 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             )
             pre_layout = editor.pre_group.layout()
             if pre_layout is not None:
-                pre_layout.addRow("", editor.dashboard_manual_cluster_button)
+                pre_layout.addWidget(editor.dashboard_manual_cluster_button)
 
     @staticmethod
     def _manual_coverage(editor):

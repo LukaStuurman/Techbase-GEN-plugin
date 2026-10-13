@@ -42,6 +42,7 @@ from qgis.core import (
 from .algorithms.handmatige_cluster_correctie_tool import (
     HandmatigeClusterCorrectieAlgorithm,
 )
+from .ui_theme import apply_theme, branded_header, install_dialog_theme, normalize_page
 
 try:
     NON_MODAL = Qt.WindowModality.NonModal
@@ -73,15 +74,15 @@ class VisueleClusterEditorDialog(QDialog):
         self.setWindowModality(NON_MODAL)
 
         root = QVBoxLayout(self)
-        title = QLabel("<b>Visuele handmatige clustereditor</b>")
-        title.setStyleSheet("font-size: 18px;")
-        root.addWidget(title)
+        header = branded_header("Visuele handmatige clustereditor", "TechBase • aansluitingen verdelen en stations ontwerpen")
+        root.addWidget(header)
 
         self.mode_label = QLabel()
         self.mode_label.setWordWrap(True)
         self.mode_label.setStyleSheet(
             "background:#eef3f6; border:1px solid #c8d3da; padding:7px;"
         )
+        self.mode_label.setProperty("uiRole", "notice")
         root.addWidget(self.mode_label)
 
         selection_group = QGroupBox("1. Aansluitingen selecteren")
@@ -112,7 +113,7 @@ class VisueleClusterEditorDialog(QDialog):
         switch_layout.addLayout(switch_row)
         self.preview_label = QLabel("Selecteer aansluitingen en één doelstation.")
         self.preview_label.setWordWrap(True)
-        self.preview_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.preview_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse if hasattr(Qt, "TextInteractionFlag") else Qt.TextSelectableByMouse)
         switch_layout.addWidget(self.preview_label)
         root.addWidget(self.switch_group)
 
@@ -146,7 +147,7 @@ class VisueleClusterEditorDialog(QDialog):
         root.addWidget(self.new_group)
 
         self.pre_group = QGroupBox("2C. Handmatige indeling vóór de clustering")
-        pre_layout = QFormLayout(self.pre_group)
+        pre_layout = QVBoxLayout(self.pre_group)
         self.pre_cluster_combo = QComboBox()
         self.pre_assign_button = QPushButton(
             "Geselecteerde aansluitingen aan handmatig cluster koppelen"
@@ -158,10 +159,17 @@ class VisueleClusterEditorDialog(QDialog):
         self.pre_clear_button.clicked.connect(self.clear_prepared_assignment)
         self.pre_coverage_label = QLabel()
         self.pre_coverage_label.setWordWrap(True)
-        pre_layout.addRow("Bestaand handmatig cluster", self.pre_cluster_combo)
-        pre_layout.addRow("", self.pre_assign_button)
-        pre_layout.addRow("", self.pre_clear_button)
-        pre_layout.addRow("Voortgang", self.pre_coverage_label)
+        pre_fields = QFormLayout()
+        pre_fields.addRow("Bestaand handmatig cluster", self.pre_cluster_combo)
+        pre_layout.addLayout(pre_fields)
+        pre_layout.addWidget(self.pre_assign_button)
+        pre_layout.addWidget(self.pre_clear_button)
+        pre_layout.addWidget(self.pre_coverage_label)
+        if hasattr(getattr(self, "_host", None), "_run_manual_clustering_from_editor"):
+            self.dashboard_manual_cluster_button = QPushButton("Handmatige clustering uitvoeren")
+            self.dashboard_manual_cluster_button.setToolTip("Maak de volledige clustering met exact de voorbereide H-xx-indeling")
+            self.dashboard_manual_cluster_button.clicked.connect(self._host._run_manual_clustering_from_editor)
+            pre_layout.addWidget(self.dashboard_manual_cluster_button)
         root.addWidget(self.pre_group)
 
         self.enforce_group = QGroupBox("2D. Voorbereide handmatige clusters afdwingen")
@@ -179,6 +187,7 @@ class VisueleClusterEditorDialog(QDialog):
         root.addWidget(self.enforce_group)
 
         options_group = QGroupBox("3. Veiligheidscontroles")
+        self.options_group = options_group
         options = QFormLayout(options_group)
         self.remove_source_cluster = QCheckBox(
             "Hele broncluster(s) samenvoegen en verwijderen"
@@ -231,6 +240,11 @@ class VisueleClusterEditorDialog(QDialog):
         root.addLayout(buttons)
 
         self.refresh_layers()
+        self.mode_label.setStyleSheet("")
+        apply_theme(self)
+        install_dialog_theme(self)
+        if not hasattr(self, "_host"):
+            normalize_page(self, self, (close_button,), home=False)
 
     @staticmethod
     def _field_name(layer, candidates):

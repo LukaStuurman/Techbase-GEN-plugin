@@ -68,7 +68,7 @@ def main():
     dialog = LSNetontwerpDashboardDialog(None)
     dialog.show_connection_sources_page()
     assert dialog.page_stack.currentWidget() is dialog.connection_sources_page
-    assert any(b.text() == "2e. Stationskoppeling & nieuwbouw" for b, _ in dialog._dashboard_mirrors)
+    assert any(b.text() == "2e. Stationskoppeling en nieuwbouw" for b, _ in dialog._dashboard_mirrors)
     page = dialog.zero_current_page
     # QGIS' OGR connection pool may keep the GeoPackage open until process exit.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
