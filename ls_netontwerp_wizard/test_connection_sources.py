@@ -106,6 +106,8 @@ def main():
         added = [f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001"]
         assert len(added) == 1
         f = added[0]
+        assert f["service_co"] == "verblijfsobject"
+        assert all(f["service_co"] == "verblijfsobject" for f in target.selectedFeatures())
         assert [f[n] for n in ("city", "parish", "housenumber", "toevoeging", "zip_code", "huisnummertoevoeging")] == ["Veldhoven", "Zeelst", "12", "A", "5502HC", "1"]
         assert f["Gevonden_Woningtype"] == "appartement"
         assert f["Gevonden_Bouwjaar"] == "2026"
@@ -124,12 +126,20 @@ def main():
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         assert reopened.isValid() and reopened.featureCount() == 5
         assert reopened.fields().lookupField("BAG_VBO_ID") >= 0
+        assert next(f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")["service_co"] == "verblijfsobject"
+        existing_service_index = reopened.fields().lookupField("service_co")
+        assert reopened.dataProvider().changeAttributeValues({
+            f.id(): {existing_service_index: "bestaande aansluiting"}
+            for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130"
+        })
         manual_object = add(source, "POINT(5.4 51.4)", {**attrs, "identificatie": "0000010000000004", "huisnummer": "16"})
         source.selectByIds([manual_object.id()])
         assert add_selected_objects(source, reopened, None, page, manual_currents=[10, 11, 12, 13])["missing"] == 0
         reopened = None
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         persisted = [f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000004"][0]
+        assert persisted["service_co"] == "verblijfsobject"
+        assert next(f for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130")["service_co"] == "bestaande aansluiting"
         assert [persisted[n] for n in CURRENT_FIELDS] == [10, 11, 12, 13, 12, 13]
         assert reopened.featureCount() == 6
         reopened = None
