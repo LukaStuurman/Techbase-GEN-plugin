@@ -1,9 +1,10 @@
 # LS Netontwerp Wizard voor QGIS
 
-Versie 1.17.2 vult bij het toevoegen van BAG-verblijfsobjecten via **2e.
-Stationskoppeling en nieuwbouw** de kolom `service_co` met `verblijfsobject`.
+Versie 1.17.3 vult bij het toevoegen van BAG-verblijfsobjecten via **2e.
+Stationskoppeling en nieuwbouw** de kolom `service_connection_type_type`
+(doorlaatwaarde uit GEN) met `verblijfsobject`.
 Als de tekstkolom ontbreekt, wordt deze aangemaakt. De aanduiding wordt samen
-met de nieuwe objecten opgeslagen. Bestaande aansluitingen behouden hun waarde.
+met de nieuwe objecten opgeslagen. Bestaande GEN-aansluitingen behouden hun doorlaatwaarde.
 
 Versie 1.17.1 maakt bij **2d. Nulwaarden herstellen** de zakelijke keuzes
 **Type wooneenheid** en **Gasaansluiting** zichtbaar in eigen panelen, zonder
