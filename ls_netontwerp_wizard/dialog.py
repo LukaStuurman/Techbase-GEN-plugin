@@ -49,6 +49,7 @@ from qgis.core import (
 from qgis import processing
 
 from .zero_current_page import ZeroCurrentPage
+from .current_inputs import connect_current_edits, set_current_values, has_manual_currents
 from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
@@ -1938,6 +1939,7 @@ class LSNetontwerpDialog(QDialog):
         for label, stored in HOUSEHOLD_UNIT_CHOICES:
             self.value_housing_combo.addItem(label, stored)
         housing_layout.addWidget(self.value_housing_combo)
+        self.value_housing_combo.currentIndexChanged.connect(self._value_household_changed)
         self.value_housing_note = QLabel(
             "Oude of nieuwbouwtabellen worden per aansluiting gekozen op basis "
             "van bouwjaar."
@@ -1949,7 +1951,7 @@ class LSNetontwerpDialog(QDialog):
         self.value_unit_group = QGroupBox("Type wooneenheid / aansluiting")
         unit_form = QFormLayout(self.value_unit_group)
         self.value_unit_combo = QComboBox()
-        unit_form.addRow("Aansluitwaarde", self.value_unit_combo)
+        unit_form.addRow("Type wooneenheid", self.value_unit_combo)
         self.value_gas_combo = QComboBox()
         fill_gas_combo(self.value_gas_combo)
         self.value_gas_label = QLabel("Gasaansluiting")
@@ -1973,6 +1975,9 @@ class LSNetontwerpDialog(QDialog):
         values_group = QGroupBox("Verbruik en opwek")
         self.value_manual_group = values_group
         values_form = QFormLayout(values_group)
+        self.value_manual_checkbox = QCheckBox("Zelf ingevulde stroomwaarden gebruiken")
+        values_form.addRow(self.value_manual_checkbox)
+        self.value_manual_checkbox.toggled.connect(self._value_manual_mode_changed)
         self.value_trafo = QDoubleSpinBox()
         self.value_trafo.setRange(0.0, 1000000.0)
         self.value_trafo.setDecimals(3)
@@ -2000,6 +2005,7 @@ class LSNetontwerpDialog(QDialog):
             self.value_generation_cable,
         ):
             spin.valueChanged.connect(self._update_value_highest_preview)
+        connect_current_edits(self._value_current_spins(), self.value_manual_checkbox)
 
         self.value_advanced_toggle = QCheckBox("Advanced")
         root.addWidget(self.value_advanced_toggle)
@@ -2388,7 +2394,8 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         household = category == "Huishoudelijk"
         self.value_housing_group.setVisible(household)
-        self.value_manual_group.setVisible(not household)
+        self.value_manual_group.setVisible(True)
+        self.value_manual_checkbox.setChecked(False)
         self.value_unit_group.setVisible(not household)
         self.value_gas_combo.setVisible(category == "Zakelijk")
         self.value_gas_label.setVisible(category == "Zakelijk")
@@ -2401,35 +2408,59 @@ class LSNetontwerpDialog(QDialog):
             cable = self._value_matrix_current("matrix_laad_kabel", 4.8)
         else:
             trafo = cable = 0.0
-        self.value_trafo.setValue(trafo)
-        self.value_cable.setValue(cable)
-        self.value_generation_trafo.setValue(0.0)
-        self.value_generation_cable.setValue(0.0)
+        set_current_values(self._value_current_spins(), (trafo, cable, 0, 0))
         self._value_unit_changed()
+        self._value_household_changed()
+        self._update_value_highest_preview()
+
+    def _value_current_spins(self):
+        return (self.value_trafo, self.value_cable, self.value_generation_trafo, self.value_generation_cable)
+
+    def _value_household_changed(self, *_args):
+        if not hasattr(self, "zero_current_page") or self.value_category_combo.currentData() != "Huishoudelijk":
+            return
+        self.value_manual_checkbox.setChecked(False)
+        layer = self._layer_from_combo(self.value_layer_combo)
+        features = list(layer.selectedFeatures()) if layer is not None else []
+        context = self.zero_current_page._household_context()
+        rows = [self.zero_current_page._household_currents(layer, feature, self.value_housing_combo.currentData(), context) for feature in features]
+        set_current_values(self._value_current_spins(), [max(column) for column in zip(*rows)] if rows else (0, 0, 0, 0))
+        self._update_value_highest_preview()
+
+    def _value_manual_mode_changed(self, manual):
+        if not manual:
+            if self.value_category_combo.currentData() == "Huishoudelijk":
+                self._value_household_changed()
+            else:
+                self._value_unit_changed()
         self._update_value_highest_preview()
 
     def _value_unit_changed(self, *_args):
         category = self.value_category_combo.currentData()
         key = self.value_unit_combo.currentData()
+        self.value_manual_checkbox.setChecked(False)
         self.value_unit_note.setText(category_note(category, key) + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast.")
         currents = unit_currents(current_context(self), category, key, self.value_gas_combo.currentData())
         if currents is not None:
-            for spin, value in zip((self.value_trafo, self.value_cable, self.value_generation_trafo, self.value_generation_cable), currents):
-                spin.setValue(value)
+            set_current_values(self._value_current_spins(), currents)
+        elif category != "Huishoudelijk" and key is None:
+            self.value_manual_checkbox.setChecked(True)
+        self._update_value_highest_preview()
 
     def _update_value_highest_preview(self, *_args):
         if not hasattr(self, "value_highest_preview"):
             return
-        if self.value_category_combo.currentData() == "Huishoudelijk":
+        if self.value_category_combo.currentData() == "Huishoudelijk" and not self.value_manual_checkbox.isChecked():
             self.value_highest_preview.setText(
                 "Hoogste Trafo en Hoogste Kabel worden per aansluiting berekend "
-                "op basis van het gekozen woningtype en bouwjaar."
+                "op basis van het gekozen woningtype en bouwjaar. De velden tonen het maximum "
+                "in de selectie. Typ een waarde om je eigen vier waarden op te slaan."
             )
             return
         highest_trafo = max(self.value_trafo.value(), self.value_generation_trafo.value())
         highest_cable = max(self.value_cable.value(), self.value_generation_cable.value())
         self.value_highest_preview.setText(
-            f"Wordt opgeslagen als: Hoogste Trafo {highest_trafo:.3f} A · "
+            f"Voor alle geselecteerde aansluitingen: Hoogste Trafo {highest_trafo:.3f} A · "
             f"Hoogste Kabel {highest_cable:.3f} A"
         )
 
@@ -2444,6 +2475,7 @@ class LSNetontwerpDialog(QDialog):
             f"Geselecteerde LS-aansluitingen: {len(selected)}"
         )
         if update_values and selected:
+            loaded = []
             for field_name, spin in (
                 ("Ontwerpstroom", self.value_trafo),
                 ("Ontwerpstroom kabel", self.value_cable),
@@ -2456,8 +2488,10 @@ class LSNetontwerpDialog(QDialog):
                         values.append(float(feature[field_name]))
                     except (KeyError, TypeError, ValueError):
                         continue
-                if values:
-                    spin.setValue(max(values))
+                loaded.append(max(values) if values else 0.0)
+            set_current_values(self._value_current_spins(), loaded)
+            self.value_manual_checkbox.setChecked(all(has_manual_currents(feature) for feature in selected))
+            self._update_value_highest_preview()
         return bool(selected)
 
     def show_station_page(self):
@@ -3557,7 +3591,7 @@ class LSNetontwerpDialog(QDialog):
                 self.value_status_label, "Kies een woningtype.", True
             )
             return
-        if category != "Huishoudelijk" and max(
+        if category != "Huishoudelijk" and not self.value_manual_checkbox.isChecked() and max(
             self.value_trafo.value(), self.value_generation_trafo.value()
         ) <= 0:
             self._set_page_status(
@@ -3585,6 +3619,7 @@ class LSNetontwerpDialog(QDialog):
                 house_type,
                 unit_name=unit_description(category, self.value_unit_combo.currentData()) if category != "Huishoudelijk" else None,
                 gas_category=self.value_gas_combo.currentData() if category == "Zakelijk" else None,
+                manual_override=self.value_manual_checkbox.isChecked(),
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")

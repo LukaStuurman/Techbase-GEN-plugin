@@ -1,5 +1,29 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.17.1 maakt bij **2d. Nulwaarden herstellen** de zakelijke keuzes
+**Type wooneenheid** en **Gasaansluiting** zichtbaar in eigen panelen, zonder
+een extra scrollvak binnen de pagina.
+
+Bij **2a. Ontwerpstroom aanpassen** en **2d. Nulwaarden herstellen** kun je in
+alle categorieën de vier stroomwaarden zelf typen: trafoverbruik,
+kabelverbruik, trafo-opwek en kabelopwek. Dit geldt ook voor huishoudelijk.
+Typen schakelt **Zelf ingevulde stroomwaarden gebruiken** in. De vier waarden
+worden voor alle geselecteerde aansluitingen opgeslagen; Hoogste Trafo en
+Hoogste Kabel volgen automatisch het maximum van verbruik en opwek.
+Ook een bewust ingevulde nulwaarde blijft behouden. Enter bevestigt het
+getal zonder een navigatie- of uitvoerknop van het venster te activeren.
+
+Schakel het vinkje uit of kies opnieuw een woningtype/aansluitwaarde of
+gascategorie om de tabelberekening te gebruiken. Huishoudelijke tabellen
+blijven zonder handmatige invoer per aansluiting het bouwjaar volgen.
+De handmatige keuze wordt opgeslagen in `HerstelHandmatig` en bij opnieuw
+openen van 2a hersteld. Een nieuwe pand-/woningtypeberekening wist deze keuze.
+
+Installeer `ls_netontwerp_wizard-1.17.1.zip` vanuit QGIS' pluginbeheer en
+herstart QGIS. `test_manual_currents.py` controleert echte toetsenbordinvoer,
+oude/nieuwe huishoudelijke aansluitingen, opnieuw openen, terugschakelen
+naar tabellen, de vier categorieën en zakelijke nulwaardenherstelacties.
+
 Versie 1.17.0 brengt alle menu's en opties samen in één TechBase-vormgeving.
 Het dashboard, broncontrole, LOVION/BAG-nieuwbouw, clustercorrectie,
 sleuven/routes, gebieden, geavanceerde tabbladen, ontwerpstroomtabellen en
