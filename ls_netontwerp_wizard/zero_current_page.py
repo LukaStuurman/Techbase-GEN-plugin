@@ -7,6 +7,7 @@ import math
 from qgis.PyQt.QtCore import Qt, QVariant
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -16,7 +17,6 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -35,6 +35,7 @@ from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, GAS_CHOICES, fill_gas_combo, fill_unit_combo,
     unit_currents, unit_description, category_note,
 )
+from .current_inputs import connect_current_edits, set_current_values
 
 
 class ZeroCurrentPage(QWidget):
@@ -78,8 +79,8 @@ class ZeroCurrentPage(QWidget):
             "De lijst toont aansluitingen met een ontbrekende of nulwaarde in "
             "<b>Hoogste Trafo</b>. Selecteer één of meerdere aansluitingen, "
             "gebruik Ctrl of Shift voor meerdere regels, zoom naar de "
-            "kaartselectie en kies daarna de juiste categorie. Voor zakelijke, "
-            "straat- en laadpuntcategorieën kun je trafo- en kabelverbruik en "
+            "kaartselectie en kies daarna de juiste categorie. Bij iedere "
+            "categorie kun je trafo- en kabelverbruik en "
             "trafo- en kabelopwek apart instellen. Alle zes ontwerpstroomvelden "
             "worden opgeslagen; de hoogste waarden worden uit verbruik en opwek berekend."
         )
@@ -159,6 +160,8 @@ class ZeroCurrentPage(QWidget):
         for label, stored in HOUSEHOLD_UNIT_CHOICES:
             self.housing_combo.addItem(label, stored)
         category_form.addRow("Woningtype", self.housing_combo)
+        self.housing_label = category_form.labelForField(self.housing_combo)
+        self.housing_combo.currentIndexChanged.connect(self._household_changed)
         self.housing_note = QLabel(
             "De ingestelde oude/nieuwbouwtabellen worden per aansluiting gekozen "
             "op basis van bouwjaar. Bij een onbekend bouwjaar wordt de oude tabel gebruikt."
@@ -169,7 +172,7 @@ class ZeroCurrentPage(QWidget):
         self.unit_group = QGroupBox("Type wooneenheid / aansluiting")
         unit_form = QFormLayout(self.unit_group)
         self.unit_combo = QComboBox()
-        unit_form.addRow("Aansluitwaarde", self.unit_combo)
+        unit_form.addRow("Type wooneenheid", self.unit_combo)
         self.gas_combo = QComboBox()
         fill_gas_combo(self.gas_combo)
         self.gas_label = QLabel("Gasaansluiting")
@@ -179,10 +182,14 @@ class ZeroCurrentPage(QWidget):
         unit_form.addRow(self.unit_note)
         self.unit_combo.currentIndexChanged.connect(self._unit_changed)
         self.gas_combo.currentIndexChanged.connect(self._unit_changed)
-        category_form.addRow(self.unit_group)
+        root.addWidget(category_group)
+        root.addWidget(self.unit_group)
 
-        self.current_values_group = QGroupBox("Handmatige ontwerpstroom")
+        self.current_values_group = QGroupBox("Verbruik en opwek")
         current_form = QFormLayout(self.current_values_group)
+        self.manual_checkbox = QCheckBox("Zelf ingevulde stroomwaarden gebruiken")
+        current_form.addRow(self.manual_checkbox)
+        self.manual_checkbox.toggled.connect(self._manual_mode_changed)
         self.trafo_spin = self._current_spin()
         self.cable_spin = self._current_spin()
         self.generation_trafo_spin = self._current_spin()
@@ -193,16 +200,14 @@ class ZeroCurrentPage(QWidget):
         current_form.addRow("Kabel opwek (A)", self.generation_cable_spin)
         self.current_values_note = QLabel(
             "Hoogste Trafo en Hoogste Kabel worden automatisch berekend als de "
-            "hoogste waarde van verbruik en opwek."
+            "hoogste waarde van verbruik en opwek. Typ een waarde om je eigen vier "
+            "stroomwaarden voor de selectie op te slaan. Zonder handmatige invoer "
+            "blijft bij huishoudelijk woningtype en bouwjaar per aansluiting gelden."
         )
         self.current_values_note.setWordWrap(True)
         current_form.addRow("", self.current_values_note)
-        category_form.addRow(self.current_values_group)
-        category_scroll = QScrollArea()
-        category_scroll.setWidgetResizable(True)
-        category_scroll.setWidget(category_group)
-        category_scroll.setMinimumHeight(230)
-        root.addWidget(category_scroll, 2)
+        root.addWidget(self.current_values_group)
+        connect_current_edits(self._current_spins(), self.manual_checkbox)
 
         self.status_label = QLabel("Selecteer een of meer regels om te herstellen.")
         self.status_label.setWordWrap(True)
@@ -382,8 +387,10 @@ class ZeroCurrentPage(QWidget):
         code = self.category_combo.currentData()
         is_household = code == "Huishoudelijk"
         self.housing_combo.setVisible(is_household)
+        self.housing_label.setVisible(is_household)
         self.housing_note.setVisible(is_household)
-        self.current_values_group.setVisible(not is_household)
+        self.current_values_group.setVisible(True)
+        self.manual_checkbox.setChecked(False)
         self.unit_group.setVisible(not is_household)
         self.gas_combo.setVisible(code == "Zakelijk")
         self.gas_label.setVisible(code == "Zakelijk")
@@ -406,20 +413,48 @@ class ZeroCurrentPage(QWidget):
         else:
             default_trafo = default_cable = 0.0
             default_generation_trafo = default_generation_cable = 0.0
-        self.trafo_spin.setValue(default_trafo)
-        self.cable_spin.setValue(default_cable)
-        self.generation_trafo_spin.setValue(default_generation_trafo)
-        self.generation_cable_spin.setValue(default_generation_cable)
+        set_current_values(self._current_spins(), (default_trafo, default_cable,
+                          default_generation_trafo, default_generation_cable))
         self._unit_changed()
+        self._household_changed()
+
+    def _current_spins(self):
+        return (self.trafo_spin, self.cable_spin, self.generation_trafo_spin, self.generation_cable_spin)
+
+    def _household_changed(self, *_args):
+        if self.category_combo.currentData() != "Huishoudelijk":
+            return
+        self.manual_checkbox.setChecked(False)
+        ids = self._selected_feature_ids()
+        features = list(self.layer.getFeatures(QgsFeatureRequest().setFilterFids(ids))) if self.layer is not None and ids else []
+        context = self._household_context()
+        rows = [self._household_currents(self.layer, feature, self.housing_combo.currentData(), context) for feature in features]
+        set_current_values(self._current_spins(), [max(column) for column in zip(*rows)] if rows else (0, 0, 0, 0))
+
+    def _manual_mode_changed(self, manual):
+        if not manual:
+            if self.category_combo.currentData() == "Huishoudelijk":
+                self._household_changed()
+            else:
+                self._unit_changed()
+        self.current_values_note.setText(
+            "Je eigen vier stroomwaarden worden voor alle geselecteerde aansluitingen opgeslagen. "
+            "Hoogste Trafo en Hoogste Kabel volgen het maximum van verbruik en opwek."
+            if manual else
+            "De tabelberekening blijft actief. Bij huishoudelijk geldt woningtype en bouwjaar per aansluiting. "
+            "De velden tonen het maximum in de selectie. Typ een waarde om zelf in te vullen."
+        )
 
     def _unit_changed(self, *_args):
         category = self.category_combo.currentData()
         key = self.unit_combo.currentData()
-        self.unit_note.setText(category_note(category, key))
+        self.manual_checkbox.setChecked(False)
+        self.unit_note.setText(category_note(category, key) + "\nJe kunt de vier stroomwaarden hieronder ook zelf typen.")
         currents = unit_currents(self._household_context(), category, key, self.gas_combo.currentData())
         if currents is not None:
-            for spin, value in zip((self.trafo_spin, self.cable_spin, self.generation_trafo_spin, self.generation_cable_spin), currents):
-                spin.setValue(value)
+            set_current_values(self._current_spins(), currents)
+        elif category != "Huishoudelijk" and key is None:
+            self.manual_checkbox.setChecked(True)
 
     def _matrix_value(self, key, fallback):
         values = self.host._workflow_field_defaults()
@@ -464,6 +499,8 @@ class ZeroCurrentPage(QWidget):
             if ids
             else "Selecteer een of meer regels om te herstellen."
         )
+        if not self.manual_checkbox.isChecked():
+            self._household_changed()
 
     def zoom_to_selection(self):
         ids = self._selected_feature_ids()
@@ -581,6 +618,7 @@ class ZeroCurrentPage(QWidget):
         house_type=None,
         unit_name=None,
         gas_category=None,
+        manual_override=False,
     ):
         """Write all four component currents and both derived maxima."""
         if layer is None or not layer.isValid():
@@ -610,7 +648,12 @@ class ZeroCurrentPage(QWidget):
         if category_index < 0:
             raise ValueError("Het categorieveld 'HerstelCat' kan niet worden opgeslagen.")
 
-        metadata = {}
+        if category == "Huishoudelijk" and house_type is None:
+            raise ValueError("Kies eerst een woningtype.")
+        if category != "Huishoudelijk" or manual_override:
+            if any(not math.isfinite(float(value)) or float(value) < 0 for value in currents.values()):
+                raise ValueError("Vul geldige stroomwaarden van 0 A of hoger in.")
+        metadata = {"HerstelHandmatig": "1" if manual_override else "0"}
         if unit_name is not None and category != "Huishoudelijk":
             metadata["HerstelType"] = str(unit_name)
         if gas_category is not None and category == "Zakelijk":
@@ -625,7 +668,7 @@ class ZeroCurrentPage(QWidget):
                 layer.updateFields()
 
         household_context = (
-            self._household_context() if category == "Huishoudelijk" else None
+            self._household_context() if category == "Huishoudelijk" and not manual_override else None
         )
         selected_ids = {int(feature_id) for feature_id in feature_ids}
         changes = {}
@@ -633,7 +676,7 @@ class ZeroCurrentPage(QWidget):
         for feature in layer.getFeatures(request):
             if int(feature.id()) not in selected_ids:
                 continue
-            if category == "Huishoudelijk":
+            if category == "Huishoudelijk" and not manual_override:
                 if house_type is None:
                     raise ValueError("Kies eerst een woningtype.")
                 normal, cable_current, generation, generation_cable = (
@@ -650,6 +693,8 @@ class ZeroCurrentPage(QWidget):
                 stored_house_type = self._field_value(
                     feature, "Gevonden_Woningtype"
                 )
+                if category == "Huishoudelijk":
+                    stored_house_type = house_type
             values = {
                 "Ontwerpstroom": normal,
                 "Ontwerpstroom kabel": cable_current,
@@ -700,7 +745,7 @@ class ZeroCurrentPage(QWidget):
             if self.housing_combo.currentData() is None:
                 self.status_label.setText("Kies eerst een woningtype.")
                 return
-        elif max(
+        elif not self.manual_checkbox.isChecked() and max(
             self.trafo_spin.value(), self.generation_trafo_spin.value()
         ) <= 0:
             self.status_label.setText(
@@ -723,6 +768,7 @@ class ZeroCurrentPage(QWidget):
                 self.housing_combo.currentData(),
                 unit_name=unit_description(category, self.unit_combo.currentData()) if category != "Huishoudelijk" else None,
                 gas_category=self.gas_combo.currentData() if category == "Zakelijk" else None,
+                manual_override=self.manual_checkbox.isChecked(),
             )
         except (ValueError, KeyError, TypeError) as exc:
             self.status_label.setText(str(exc))
