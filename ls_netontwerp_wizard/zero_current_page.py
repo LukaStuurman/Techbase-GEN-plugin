@@ -16,6 +16,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -28,6 +29,11 @@ from qgis.core import (
     QgsProject,
     QgsRectangle,
     QgsVectorDataProvider,
+)
+
+from .current_presets import (
+    HOUSEHOLD_UNIT_CHOICES, GAS_CHOICES, fill_gas_combo, fill_unit_combo,
+    unit_currents, unit_description, category_note,
 )
 
 
@@ -149,10 +155,8 @@ class ZeroCurrentPage(QWidget):
         self.category_combo.currentIndexChanged.connect(self._category_changed)
         category_form.addRow("Categorie", self.category_combo)
 
-        from .algorithms.woningtype_selectie_herberekenen_tool import HOUSING_CHOICES
-
         self.housing_combo = QComboBox()
-        for label, stored in HOUSING_CHOICES:
+        for label, stored in HOUSEHOLD_UNIT_CHOICES:
             self.housing_combo.addItem(label, stored)
         category_form.addRow("Woningtype", self.housing_combo)
         self.housing_note = QLabel(
@@ -161,6 +165,21 @@ class ZeroCurrentPage(QWidget):
         )
         self.housing_note.setWordWrap(True)
         category_form.addRow("", self.housing_note)
+
+        self.unit_group = QGroupBox("Type wooneenheid / aansluiting")
+        unit_form = QFormLayout(self.unit_group)
+        self.unit_combo = QComboBox()
+        unit_form.addRow("Aansluitwaarde", self.unit_combo)
+        self.gas_combo = QComboBox()
+        fill_gas_combo(self.gas_combo)
+        self.gas_label = QLabel("Gasaansluiting")
+        unit_form.addRow(self.gas_label, self.gas_combo)
+        self.unit_note = QLabel()
+        self.unit_note.setWordWrap(True)
+        unit_form.addRow(self.unit_note)
+        self.unit_combo.currentIndexChanged.connect(self._unit_changed)
+        self.gas_combo.currentIndexChanged.connect(self._unit_changed)
+        category_form.addRow(self.unit_group)
 
         self.current_values_group = QGroupBox("Handmatige ontwerpstroom")
         current_form = QFormLayout(self.current_values_group)
@@ -179,7 +198,11 @@ class ZeroCurrentPage(QWidget):
         self.current_values_note.setWordWrap(True)
         current_form.addRow("", self.current_values_note)
         category_form.addRow(self.current_values_group)
-        root.addWidget(category_group)
+        category_scroll = QScrollArea()
+        category_scroll.setWidgetResizable(True)
+        category_scroll.setWidget(category_group)
+        category_scroll.setMinimumHeight(230)
+        root.addWidget(category_scroll, 2)
 
         self.status_label = QLabel("Selecteer een of meer regels om te herstellen.")
         self.status_label.setWordWrap(True)
@@ -361,6 +384,10 @@ class ZeroCurrentPage(QWidget):
         self.housing_combo.setVisible(is_household)
         self.housing_note.setVisible(is_household)
         self.current_values_group.setVisible(not is_household)
+        self.unit_group.setVisible(not is_household)
+        self.gas_combo.setVisible(code == "Zakelijk")
+        self.gas_label.setVisible(code == "Zakelijk")
+        fill_unit_combo(self.unit_combo, code)
         if code == "Straatmeubilair":
             default_trafo = self._matrix_value("matrix_straat", 5.8)
             default_cable = default_trafo
@@ -383,6 +410,16 @@ class ZeroCurrentPage(QWidget):
         self.cable_spin.setValue(default_cable)
         self.generation_trafo_spin.setValue(default_generation_trafo)
         self.generation_cable_spin.setValue(default_generation_cable)
+        self._unit_changed()
+
+    def _unit_changed(self, *_args):
+        category = self.category_combo.currentData()
+        key = self.unit_combo.currentData()
+        self.unit_note.setText(category_note(category, key))
+        currents = unit_currents(self._household_context(), category, key, self.gas_combo.currentData())
+        if currents is not None:
+            for spin, value in zip((self.trafo_spin, self.cable_spin, self.generation_trafo_spin, self.generation_cable_spin), currents):
+                spin.setValue(value)
 
     def _matrix_value(self, key, fallback):
         values = self.host._workflow_field_defaults()
@@ -542,6 +579,8 @@ class ZeroCurrentPage(QWidget):
         category,
         currents,
         house_type=None,
+        unit_name=None,
+        gas_category=None,
     ):
         """Write all four component currents and both derived maxima."""
         if layer is None or not layer.isValid():
@@ -570,6 +609,20 @@ class ZeroCurrentPage(QWidget):
         category_index = self._ensure_category_field(provider, layer)
         if category_index < 0:
             raise ValueError("Het categorieveld 'HerstelCat' kan niet worden opgeslagen.")
+
+        metadata = {}
+        if unit_name is not None and category != "Huishoudelijk":
+            metadata["HerstelType"] = str(unit_name)
+        if gas_category is not None and category == "Zakelijk":
+            if gas_category not in {stored for _, stored, _ in GAS_CHOICES}:
+                raise ValueError("Kies een geldige gasaansluitcategorie.")
+            gas_field = self.host._workflow_field_defaults().get("field_gas", "G_Type")
+            metadata[gas_field] = gas_category
+        for name in metadata:
+            if layer.fields().lookupField(name) < 0:
+                if not provider.addAttributes([QgsField(name, QVariant.String)]):
+                    raise ValueError(f"Kolom '{name}' kon niet worden opgeslagen.")
+                layer.updateFields()
 
         household_context = (
             self._household_context() if category == "Huishoudelijk" else None
@@ -612,6 +665,9 @@ class ZeroCurrentPage(QWidget):
                 if indices[name] >= 0
             }
             attributes[category_index] = category
+            if category == "Huishoudelijk" and layer.fields().lookupField("HerstelType") >= 0:
+                attributes[layer.fields().lookupField("HerstelType")] = house_type
+            attributes.update({layer.fields().lookupField(name): val for name, val in metadata.items()})
             changes[int(feature.id())] = attributes
 
         if not changes:
@@ -665,6 +721,8 @@ class ZeroCurrentPage(QWidget):
                 category,
                 currents,
                 self.housing_combo.currentData(),
+                unit_name=unit_description(category, self.unit_combo.currentData()) if category != "Huishoudelijk" else None,
+                gas_category=self.gas_combo.currentData() if category == "Zakelijk" else None,
             )
         except (ValueError, KeyError, TypeError) as exc:
             self.status_label.setText(str(exc))

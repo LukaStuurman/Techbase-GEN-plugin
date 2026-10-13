@@ -539,6 +539,11 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 output_indices["Gevonden_Woningtype"]: new_type,
                 output_indices["Gevonden_Bouwjaar"]: str(bouwjaar or ""),
             }
+            # A fresh pand calculation replaces the previous manual preset.
+            for field in ("HerstelCat", "HerstelType"):
+                metadata_index = points.fields().lookupField(field)
+                if metadata_index >= 0:
+                    point_changes[int(point.id())][metadata_index] = ""
 
         housing_changes = {
             int(feature.id()): {woning_index: new_type} for feature in selected

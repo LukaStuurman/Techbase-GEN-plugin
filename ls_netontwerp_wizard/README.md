@@ -1,5 +1,32 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.16.1 gebruikt bij **2a. Ontwerpstroom aanpassen** en **2d. Nulwaarden
+herstellen** de namen uit de kolom `Type wooneenheid` van Eea-0205.K 3.2:
+
+* Zakelijk: tien huidige aansluitwaarden van `< 3x35A` t/m `3x250A`, met
+  herkenbare aanduiding van type 8 (kleinzakelijk) of type 9 (grootverbruik).
+* Laden: `Aansluiting 3x25A` (type 10: Netbewust publiek laden).
+* Straatmeubilair: vijf aansluitwaarden van `1x6A` t/m `3x63A t/m 3x80A` (type 11).
+* Huishoudelijk: Vrijstaand, Twee onder een kap, Appartement incl. publiek laden,
+  Rijtjeswoning (woonboten, woonwagens, chalets en vakantiehuisjes), Hoekwoning en Onbekend.
+
+Bij **Zakelijk** verschijnt daarnaast `Gasaansluiting` met de Excel-kleuren:
+`G4, G6, geen of ander gas` (geel), `G10 t/m G25` (rood) en `> G25` (donkerrood).
+Het kiezen van een aansluitwaarde of gascategorie vult de vier stroomvelden in
+via de ingestelde tabellen. Trafo en kabel gebruiken hun eigen gastabel.
+Je kunt de stroomvelden vervolgens aanpassen, of `Zelf invullen` kiezen.
+De gekozen aansluitnaam wordt in `HerstelType` bewaard, de categorie in
+`HerstelCat` en zakelijk gas in de ingestelde gaskolom (standaard `G_Type`).
+Opnieuw openen herstelt deze keuzes. Een nieuwe woningtypeberekening vervangt
+de eerdere handmatige correctie en wist de bijbehorende keuzemarkeringen.
+
+De presetnamen komen uit de aangeleverde Excel 3.2. De stroomwaarden volgen
+het kader en de tabellen van het geopende werkproject. De bestaande kaderkeuze
+3.0/3.1 voor straatmeubilair blijft dus actief.
+
+Installeer de bijgewerkte ZIP `ls_netontwerp_wizard-1.16.1.zip` via QGIS →
+Plugins beheren en installeren → Installeren vanuit ZIP en herstart QGIS.
+
 Versie 1.16.0 voegt op het dashboard **2e. Stationskoppeling & nieuwbouw** toe.
 
 * **LOVION:** kies de volledige workbench-CSV. `Master Asset ID` koppelt exact
