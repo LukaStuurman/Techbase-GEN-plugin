@@ -457,6 +457,10 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
         point_changes = {}
         request = QgsFeatureRequest()
         for point in points.getFeatures(request):
+            if module.is_bag_object(point[doorlaat_index]) and not module.has_residential_usage(point[gebruik_index]):
+                # Non-residential BAG objects are categorized by the user, not
+                # by the housing type of a shared building.
+                continue
             geometry = QgsGeometry(point.geometry())
             if geometry.isEmpty():
                 continue
@@ -482,8 +486,8 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             if new_type == "onbekend":
                 # Expliciete huishoudelijke correctie gebruikt de onbekend-rij,
                 # ook wanneer de bron geen doorlaatwaarde bevat.
-                gebruik = "woonhuis"
-                if module.parse_doorlaat(doorlaat)[0] == 0:
+                gebruik = "woonfunctie" if module.is_bag_object(doorlaat) else "woonhuis"
+                if not module.is_bag_object(doorlaat) and module.parse_doorlaat(doorlaat)[0] == 0:
                     doorlaat = "3 x 25 A"
             normal = module.calculate_ontwerpstroom(
                 doorlaat,

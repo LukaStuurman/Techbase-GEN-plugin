@@ -36,6 +36,7 @@ from .current_presets import (
     unit_currents, unit_description, category_note,
 )
 from .current_inputs import connect_current_edits, set_current_values
+from .bag_current_rules import has_residential_usage, is_bag_object
 
 
 class ZeroCurrentPage(QWidget):
@@ -77,7 +78,8 @@ class ZeroCurrentPage(QWidget):
 
         note = QLabel(
             "De lijst toont aansluitingen met een ontbrekende of nulwaarde in "
-            "<b>Hoogste Trafo</b>. Selecteer één of meerdere aansluitingen, "
+            "<b>Hoogste Trafo</b> en verblijfsobjecten met andere gebruiksdoelen "
+            "die je nog moet beoordelen. Selecteer één of meerdere aansluitingen, "
             "gebruik Ctrl of Shift voor meerdere regels, zoom naar de "
             "kaartselectie en kies daarna de juiste categorie. Bij iedere "
             "categorie kun je trafo- en kabelverbruik en "
@@ -93,7 +95,7 @@ class ZeroCurrentPage(QWidget):
         self.count_label = QLabel("Lijst nog niet vernieuwd")
         self.count_label.setStyleSheet("font-weight:700;")
         self.refresh_button = QPushButton("Lijst vernieuwen")
-        self.refresh_button.clicked.connect(self.refresh)
+        self.refresh_button.clicked.connect(lambda _checked=False: self.refresh(review_layer=self.layer))
         self.zoom_button = QPushButton("Zoom naar selectie")
         self.zoom_button.setObjectName("secondaryButton")
         self.zoom_button.clicked.connect(self.zoom_to_selection)
@@ -102,11 +104,12 @@ class ZeroCurrentPage(QWidget):
         selection_top.addWidget(self.refresh_button)
         selection_layout.addLayout(selection_top)
 
-        self.table = QTableWidget(0, 12)
+        self.table = QTableWidget(0, 13)
         self.table.setHorizontalHeaderLabels(
             (
                 "FID",
                 "ID",
+                "Adres",
                 "Gebruiksdoel",
                 "Doorlaatwaarde",
                 "Woningtype",
@@ -142,7 +145,8 @@ class ZeroCurrentPage(QWidget):
         except AttributeError:  # QGIS 3 / PyQt5
             stretch = QHeaderView.Stretch
         self.table.horizontalHeader().setSectionResizeMode(2, stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, stretch)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(lambda _row, _column: self.zoom_to_selection())
         selection_layout.addWidget(self.table, 1)
@@ -283,14 +287,20 @@ class ZeroCurrentPage(QWidget):
         if layer.fields().lookupField(highest_field) < 0:
             raise ValueError("De laag mist 'Hoogste Trafo' en 'Ontwerpstroom'.")
         result = []
+        defaults = self.host._workflow_field_defaults()
         for feature in layer.getFeatures():
             value = self._numeric(feature[highest_field])
-            if value is None or value <= 0.0:
+            unreviewed_object = (
+                is_bag_object(self._field_value(feature, defaults.get("field_passthrough", "service_connection_type_type")))
+                and not has_residential_usage(self._field_value(feature, defaults.get("field_usage", "Gebruiksdoel")))
+                and not self._field_value(feature, "HerstelCat")
+            )
+            if unreviewed_object or value is None or value <= 0.0:
                 result.append(feature)
         return result
 
-    def refresh(self, select_first=False):
-        self.layer = self._review_layer()
+    def refresh(self, select_first=False, review_layer=None):
+        self.layer = review_layer if review_layer is not None else self._review_layer()
         self._changing_selection = True
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
@@ -333,14 +343,19 @@ class ZeroCurrentPage(QWidget):
             self._changing_selection = False
             return 0
 
-        self.count_label.setText(f"{len(features)} aansluiting(en) zonder ontwerpstroom")
+        self.count_label.setText(f"{len(features)} aansluiting(en) zonder ontwerpstroom of nog te beoordelen")
         self._sync_host_button(len(features))
         for feature in features:
             row = self.table.rowCount()
             self.table.insertRow(row)
             values_to_show = (
                 self._field_value(feature, fid_field, str(feature.id())),
-                self._field_value(feature, id_field),
+                self._field_value(feature, id_field) or self._field_value(feature, "BAG_VBO_ID"),
+                " ".join(filter(None, (self._field_value(feature, "street"),
+                                       self._field_value(feature, "housenumber") + self._field_value(feature, "toevoeging"),
+                                       self._field_value(feature, "huisnummertoevoeging"),
+                                       self._field_value(feature, "zip_code"),
+                                       self._field_value(feature, "parish")))),
                 self._field_value(feature, usage_field),
                 self._field_value(feature, pass_field),
                 self._field_value(feature, house_field),
@@ -776,8 +791,8 @@ class ZeroCurrentPage(QWidget):
         self.layer.removeSelection()
         if self.host.iface is not None:
             self.host.iface.mapCanvas().refresh()
-        remaining = self.refresh()
+        remaining = self.refresh(review_layer=self.layer)
         self.status_label.setText(
             f"{count} aansluiting(en) opgeslagen als {self.category_combo.currentText()}. "
-            f"Nog {remaining} aansluiting(en) zonder ontwerpstroom."
+            f"Nog {remaining} aansluiting(en) zonder ontwerpstroom of nog te beoordelen."
         )

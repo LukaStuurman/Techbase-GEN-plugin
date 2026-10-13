@@ -23,8 +23,9 @@ class ConnectionSourcesPage(QWidget):
         outer.addWidget(scroll)
         note = QLabel("Koppel de LOVION-export of wijzig het stationsnummer van geselecteerde aansluitingen. "
                       "Laad voor nieuwbouw de BAG-verblijfsobjecten, selecteer de gewenste adressen op de kaart en voeg ze toe. "
-                      "Woningtype en ontwerpstroom volgen het bijbehorende pand. Ontbrekende waarden kun je hier invullen "
-                      "of achteraf bij 'Nulwaarden herstellen'.")
+                      "Bij woonfunctie volgen woningtype en ontwerpstroom het bijbehorende pand. "
+                      "Andere gebruiksdoelen worden na toevoegen getoond in 'Nulwaarden herstellen', "
+                      "waar je zelf de categorie en stroomwaarden kiest.")
         note.setWordWrap(True)
         root.addWidget(note)
         refresh = QPushButton("Lagen vernieuwen")
@@ -67,7 +68,7 @@ class ConnectionSourcesPage(QWidget):
         for label, stored in HOUSING_CHOICES:
             self.type_combo.addItem(label, stored)
         form.addRow("Woningtype als het pand geen type heeft", self.type_combo)
-        self.manual = QCheckBox("Onderstaande stroom gebruiken als het pand geen ontwerpstroom oplevert")
+        self.manual = QCheckBox("Onderstaande stroom gebruiken als woonfunctie geen ontwerpstroom oplevert")
         form.addRow(self.manual)
         self.currents = []
         for label in ("Trafoverbruik (A)", "Kabelverbruik (A)", "Trafo-opwek (A)", "Kabelopwek (A)"):
@@ -182,9 +183,15 @@ class ConnectionSourcesPage(QWidget):
             result = add_selected_objects(source, target, self.layer(self.housing_combo), self.host.zero_current_page,
                                           self.type_combo.currentData(), currents, self.station_combo.currentText().strip())
             self.host._refresh_zero_current_count()
-            self.status.setText(f"{result['added']} aansluitingen toegevoegd; {result['skipped']} al aanwezig of zonder BAG-ID. "
-                                f"{result['missing']} zonder ontwerpstroom: vul deze aan via 'Nulwaarden herstellen'.")
+            summary = (f"{result['added']} aansluitingen toegevoegd; {result['skipped']} al aanwezig of zonder BAG-ID. "
+                       f"{result['missing']} zonder ontwerpstroom of nog te beoordelen.")
+            self.status.setText(summary)
             if self.host.iface is not None:
                 self.host.iface.mapCanvas().refresh()
+            if result['added'] and result['missing']:
+                self.host.show_zero_current_page(select_first=False, review_layer=target)
+                self.host.zero_current_page.status_label.setText(
+                    summary + " Selecteer de gewenste regels en kies per gebruiksdoel de categorie en stroomwaarden."
+                )
         except Exception as exc:
             self.status.setText(str(exc))

@@ -141,6 +141,7 @@ def main():
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         persisted = [f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000004"][0]
         assert persisted["service_connection_type_type"] == "verblijfsobject"
+        assert persisted["HerstelHandmatig"] == "1"
         assert next(f for f in reopened.getFeatures() if f["Master Asset ID"] == "8410456966819408130")["service_connection_type_type"] == "3 x 40 A"
         assert [persisted[n] for n in CURRENT_FIELDS] == [10, 11, 12, 13, 12, 13]
         assert reopened.featureCount() == 6

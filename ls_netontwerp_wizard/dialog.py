@@ -2612,8 +2612,8 @@ class LSNetontwerpDialog(QDialog):
         self.setWindowTitle("LS Netontwerp Wizard – woningtype aanpassen")
         self.resize(920, 650)
 
-    def show_zero_current_page(self, _checked=False, select_first=True):
-        count = self.zero_current_page.refresh(select_first=select_first)
+    def show_zero_current_page(self, _checked=False, select_first=True, review_layer=None):
+        count = self.zero_current_page.refresh(select_first=select_first, review_layer=review_layer)
         self.page_stack.setCurrentWidget(self.zero_current_page)
         self.setWindowTitle("LS Netontwerp Wizard – nulwaarden herstellen")
         self.resize(1120, 720)

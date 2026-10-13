@@ -1,5 +1,31 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.17.4 onderscheidt BAG-verblijfsobjecten op basis van `gebruiksdoel`:
+
+* **Woonfunctie:** woningtype en bouwjaar komen uit de woningtypenlaag.
+  Geldige pandstromen worden overgenomen; anders worden de ingestelde
+  huishoudelijke tabellen gebruikt. Ook meerdere gebruiksdoelen met
+  `woonfunctie` worden herkend. Ontbrekende woninggegevens kun je aanvullen.
+* **Andere gebruiksdoelen:** kantoor, winkel en andere objecten krijgen
+  geen woningstromen mee van het pand. Na toevoegen opent automatisch
+  **Nulwaarden herstellen** met BAG-ID, adres en gebruiksdoel. Selecteer
+  een of meer regels en kies categorie, type wooneenheid en eventueel gas,
+  of typ zelf de vier stroomwaarden.
+* **Herberekenen:** de aanduiding `verblijfsobject` blijft in
+  `service_connection_type_type`. Bij woonfunctie worden woningtype- en
+  bouwjaartabellen gebruikt zonder een elektrische doorlaatwaarde te verzinnen.
+  Andere gebruiksdoelen blijven zonder stroom tot de gebruiker een keuze maakt.
+  Opgeslagen keuzes en handmatige BAG-stromen blijven bij een algemene
+  herberekening behouden. Een wijziging van een pandwoningtype herberekent
+  alleen BAG-objecten met woonfunctie en vervangt daar de eerdere correctie.
+* Eerder toegevoegde niet-woonobjecten met pandstromen verschijnen eveneens
+  in het hersteloverzicht zolang ze nog geen eigen categoriekeuze hebben.
+
+Installeer `ls_netontwerp_wizard-1.17.4.zip` en herstart QGIS.
+`test_bag_usage_currents.py` controleert gemengde gebruiksdoelen in hetzelfde
+pand, de herstelbediening, de volledige ruimtelijke herberekening,
+GEN-bronvelden, pandwoningtypewijzigingen en de gekozen doellaag.
+
 Versie 1.17.3 vult bij het toevoegen van BAG-verblijfsobjecten via **2e.
 Stationskoppeling en nieuwbouw** de kolom `service_connection_type_type`
 (doorlaatwaarde uit GEN) met `verblijfsobject`.
