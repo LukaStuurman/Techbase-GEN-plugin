@@ -455,11 +455,14 @@ def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDat
     return buildings
 
 
+BAG_POINT_TOLERANCE_M = 0.35
+
+
 def point_building_index(
     point: Point,
     buildings: gpd.GeoDataFrame,
     building_tree: STRtree,
-    tolerance_m: float = 0.35,
+    tolerance_m: float = BAG_POINT_TOLERANCE_M,
 ) -> int | None:
     """Return the smallest BAG building covering a point (boundary tolerant)."""
     candidate_indices = building_tree.query(point.buffer(tolerance_m))
@@ -476,7 +479,9 @@ def point_building_index(
 def line_inside_building(start: Point, end: Point, building) -> LineString:
     """Shortest straight/visibility path that remains in a BAG footprint."""
     direct = LineString([start, end])
-    permitted = building.buffer(0.05)
+    # Points accepted by point_building_index must also be reachable by the
+    # indoor path. GEN positions can sit just outside the BAG footprint.
+    permitted = building.buffer(BAG_POINT_TOLERANCE_M)
     if permitted.covers(direct):
         return direct
 
@@ -689,7 +694,7 @@ def make_apartment_trenches(
         f"{matched_count} aansluiting(en) via een flatkast in hetzelfde BAG-pand; "
         f"{fallback_inside_count} via dichtstbijzijnde kabel binnen het pand; "
         f"{fallback_outside_count} via de algemene dichtstbijzijnde kabel. "
-        "Deze sleuven tellen voor 0 m mee in de 850-metercontrole."
+        f"Deze sleuven tellen voor 0 m mee in de {MAX_ROUTE_M:g}-metercontrole."
     )
     return trenches, used_buildings
 
@@ -4532,11 +4537,12 @@ def make_map(
 
 def make_qgis_project(gpkg: Path) -> Path | None:
     try:
-        from qgis.PyQt.QtCore import Qt
+        from qgis.PyQt.QtCore import Qt, QVariant
         from qgis.PyQt.QtGui import QColor, QFont
         from qgis.core import (
             Qgis,
             QgsApplication,
+            QgsField,
             QgsCategorizedSymbolRenderer,
             QgsConditionalStyle,
             QgsCoordinateReferenceSystem,
@@ -4984,6 +4990,17 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         )
 
         source_stations = loaded["stations_ontwerp"]
+        if source_stations.fields().lookupField("Volgnummer") < 0:
+            # Older results assigned sequence numbers only after writing the
+            # GeoPackage. Keep recovery read-only by storing a virtual field
+            # in the project, using the order of the existing overview CSV.
+            sequence_cases = [
+                "WHEN \"Cluster\" = '" + str(name).replace("'", "''") + f"' THEN {index + 1}"
+                for index, name in enumerate(cluster_names)
+            ]
+            source_stations.addExpressionField(
+                "CASE " + " ".join(sequence_cases) + " ELSE NULL END", QgsField("Volgnummer", QVariant.Int)
+            )
         configure_layout_style(
             source_stations,
             symbol_scale=LAYOUT_STATION_SYMBOL_SCALE,
@@ -5194,47 +5211,45 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         )
         layout.addLayoutItem(table_title)
 
-        station_table = QgsLayoutItemAttributeTable(layout)
-        station_table.setVectorLayer(loaded["stations_ontwerp"])
-        station_table.setMaximumNumberOfFeatures(100)
-        station_table.setDisplayOnlyVisibleFeatures(False)
-        station_table.setUseConditionalStyling(True)
-        station_table.setCellMargin(1.0)
-        station_table.setShowGrid(True)
-        station_table.setGridColor(QColor(125, 125, 125))
-        station_table.setGridStrokeWidth(0.18)
-        content_font = QFont("Arial", 6)
-        header_font = QFont("Arial", 6)
-        header_font.setBold(True)
-        station_table.setContentFont(content_font)
-        station_table.setHeaderFont(header_font)
-        table_columns = []
-        for attribute, heading, column_width in (
-            ('"Volgnummer"', "Nr", 6.0),
-            ('"Cluster"', "Station", 16.0),
-            ('"Aantal"', "Aantal", 10.0),
-            ('format_number("Belast_A", 1)', "Belast A", 17.0),
-            ('format_number("Max_A", 1)', "Max A", 16.0),
-            ('format_number("Benut_pct", 1)', "Benut %", 16.0),
-        ):
-            column = QgsLayoutTableColumn()
-            column.setAttribute(attribute)
-            column.setHeading(heading)
-            column.setWidth(column_width)
-            table_columns.append(column)
-        table_columns[0].setSortByRank(1)
-        table_columns[0].setSortOrder(Qt.SortOrder.AscendingOrder)
-        station_table.setColumns(table_columns)
-        layout.addMultiFrame(station_table)
-        table_frame = QgsLayoutFrame(layout, station_table)
-        table_frame.setFrameEnabled(True)
-        table_frame.attemptMove(
+        # QgsLayoutFrame/attribute-table resizing corrupts the Windows QGIS
+        # 4.2 heap for some station sets. A dynamic HTML label keeps the same
+        # live project fields and cluster colors without that multiframe path.
+        table_label = QgsLayoutItemLabel(layout)
+        table_label.setId("stationsoverzicht")
+        table_label.setMode(QgsLayoutItemLabel.Mode.ModeHtml)
+        table_label.setMargin(0)
+        table_label.setFont(QFont("Arial", 6))
+        color_cases = []
+        for cluster_name in cluster_names:
+            rgb = cluster_rgb[cluster_name]
+            pastel = "#" + "".join(f"{round(component * .3 + 255 * .7):02x}" for component in rgb)
+            escaped = str(cluster_name).replace("'", "''")
+            color_cases.append(f"WHEN \"Cluster\" = '{escaped}' THEN '{pastel}'")
+        background_expression = "CASE " + " ".join(color_cases) + " ELSE '#ffffff' END"
+        row_expression = (
+            "concat('<tr style=\"background-color:', " + background_expression + ", '\">', "
+            "'<td>', \"Volgnummer\", '</td><td>', \"Cluster\", '</td><td>', \"Aantal\", "
+            "'</td><td>', format_number(\"Belast_A\", 1), '</td><td>', "
+            "format_number(\"Max_A\", 1), '</td><td>', format_number(\"Benut_pct\", 1), '</td></tr>')"
+        )
+        table_expression = (
+            f"aggregate(layer:='{loaded['stations_ontwerp'].id()}', aggregate:='concatenate', "
+            f"expression:={row_expression}, concatenator:='', filter:=\"Volgnummer\" <= 100, order_by:=\"Volgnummer\")"
+        )
+        table_label.setText(
+            '<table width="100%" border="1" cellspacing="0" cellpadding="0" '
+            'style="font-family:Arial; font-size:6pt; border-color:#7d7d7d;">'
+            '<tr style="background-color:#eeeeee"><th>Nr</th><th>Station</th><th>Aantal</th>'
+            '<th>Belast A</th><th>Max A</th><th>Benut %</th></tr>'
+            '[% ' + table_expression + ' %]</table>'
+        )
+        table_label.attemptMove(
             QgsLayoutPoint(side_panel_content_x, 26.0, Qgis.LayoutUnit.Millimeters)
         )
-        table_frame.attemptResize(
+        table_label.attemptResize(
             QgsLayoutSize(86.0, 137.0, Qgis.LayoutUnit.Millimeters)
         )
-        station_table.addFrame(table_frame)
+        layout.addLayoutItem(table_label)
 
         north_arrow = QgsLayoutItemLabel(layout)
         north_arrow.setId("noordpijl")

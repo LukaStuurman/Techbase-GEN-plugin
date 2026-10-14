@@ -840,6 +840,8 @@ verzoek zichtbaar worden.
                 ) from exc
 
         attempt_details = []
+        process_log = output_dir / "qgis_project_creation.log"
+        process_log.write_text("QGIS-project en printlayout maken\n", encoding="utf-8")
         for attempt in range(1, 4):
             if attempt > 1:
                 feedback.pushInfo(
@@ -872,6 +874,9 @@ verzoek zichtbaar worden.
             )
             for line in project_process.stdout.splitlines():
                 feedback.pushInfo(line)
+            with process_log.open("a", encoding="utf-8") as handle:
+                handle.write(f"\nPoging {attempt}: code {project_process.returncode}\n")
+                handle.write(project_process.stdout + "\n" + project_process.stderr + "\n")
             project_valid = self._project_artifacts_valid(project_path, layout_path)
             code_text = (
                 str(project_process.returncode)
@@ -886,6 +891,7 @@ verzoek zichtbaar worden.
                 for line in project_process.stderr.splitlines()
                 if line.strip()
             ]
+            error_lines.extend(line.strip() for line in project_process.stdout.splitlines() if "Waarschuwing:" in line)
             attempt_details.append(
                 error_lines[-1]
                 if error_lines
@@ -901,7 +907,7 @@ verzoek zichtbaar worden.
         raise QgsProcessingException(
             "De clustering is berekend, maar het QGIS-project kon niet worden "
             "gemaakt na drie pogingen: "
-            f"{attempt_details[-1]}"
+            f"{attempt_details[-1]}\nProceslog: {process_log}"
         )
 
     def processAlgorithm(self, parameters, context, feedback):

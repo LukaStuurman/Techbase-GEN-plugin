@@ -1,5 +1,46 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.21.0 opent bij **3a. Automatische clustering maken** eerst een instellingenvenster.
+Kies de **ontwerpstroomkolom (A)**, het **plangebied**, de **maximale kabelroute**,
+**knooptolerantie**, **nieuw stationvermogen** en **voorkeursbenutting**.
+Je kunt het aantal nieuwe stations automatisch laten bepalen of zelf invullen.
+De gekozen kolom wordt daadwerkelijk gebruikt; de wizard forceert niet langer
+`Hoogste Trafo`. Instellingen uit Advanced die na stap 1 zijn aangepast, worden
+in het venster meegenomen. Bestaande trafocapaciteiten blijven instelbaar bij 2c.
+Kabelroute en capaciteit zijn harde grenzen; voorkeursbenutting is een voorkeur.
+
+Ook na stap 1 kun je een plangebied kiezen uit de QGIS-lagen of met
+**Plangebied uit bestand toevoegen** laden. Optioneel gebruik je alleen geselecteerde
+vlakken. Bij opslaan wordt een blijvende GeoPackage-kopie in RD gemaakt en gekoppeld
+aan de workflow. Met **Alleen aansluitingen en netwerk binnen het plangebied clusteren**
+begrens je de invoer. Kies **Geen plangebied** om de koppeling te verwijderen.
+Instellingen en plangebied blijven bij heropenen en een volgende clusterronde behouden.
+De flatkast-/BAG-koppeling van appartementen kan afzonderlijk worden in- of uitgeschakeld.
+
+De fout **projectproces eindigde met code 1** aan het eind van Zeelst is eveneens
+hersteld. QGIS 4.2 kon tijdens de opbouw van de stationsoverzichttabel in de printlayout
+crashen. Het overzicht gebruikt nu een dynamische HTML-labeltabel met dezelfde actuele
+stationsvelden en clusterkleuren. Oudere berekende bestanden zonder `Volgnummer` krijgen
+een virtuele volgnummerkolom in het project; de GeoPackage hoeft daarvoor niet te veranderen.
+Met **Berekend project herstellen** kun je het project en de printlayout opnieuw maken
+uit de bestaande clusterresultaten, zonder de clustering opnieuw te berekenen.
+Procesuitvoer en eventuele native fouten worden naast de resultaten opgeslagen als
+`qgis_project_creation.log` en `qgis_project_worker.log`.
+
+De gemelde Zeelst-fout bij een inpandige flatkastverbinding is hersteld. De koppeling
+aan een BAG-pand accepteert 35 cm geometrische afwijking; de inpandige route gebruikte
+ten onrechte maar 5 cm. Beide stappen gebruiken nu dezelfde 35 cm. Bij de onderzochte
+Zeelst-aansluiting waren de afwijkingen ongeveer 20 en 30 cm. Alle 1.773 appartement-
+sleuven uit deze dataset konden na de correctie worden opgebouwd. Route- en
+capaciteitscontroles blijven van toepassing op de clustering.
+
+`test_clustering_options.py` controleert de latere plangebiedkoppeling, selectie,
+CRS, herstelde opgeslagen instellingen, wijzigingen na stap 1, daadwerkelijke
+Processing-parameters, opnieuw clusteren en routes bij BAG-grenzen en binnenhoven.
+`test_project_recovery.py` controleert drie onafhankelijke projectprocessen,
+geldige QGZ/QPT-bestanden en actuele waarden in het stationsoverzicht na wijzigen.
+Installeer `ls_netontwerp_wizard-1.21.0.zip` en herstart QGIS.
+
 Versie 1.20.0 maakt de controle op bestaande nieuwbouw optioneel. Het vinkje
 **Bestaande BAG-objecten en adressen overslaan** staat standaard uit; geselecteerde
 verblijfsobjecten worden ook toegevoegd wanneer BAG-ID of adres al aanwezig is.
