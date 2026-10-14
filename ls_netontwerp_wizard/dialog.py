@@ -1949,6 +1949,7 @@ class LSNetontwerpDialog(QDialog):
         root.addWidget(self.value_housing_group)
 
         self.value_unit_group = QGroupBox("Type wooneenheid / aansluiting")
+        self.value_unit_group.setProperty("uiContentMinimum", True)
         unit_form = QFormLayout(self.value_unit_group)
         self.value_unit_combo = QComboBox()
         unit_form.addRow("Type wooneenheid", self.value_unit_combo)

@@ -70,6 +70,34 @@ def main():
         elif captures:
             assert dialog.grab().save(str(captures / f"{name}.png"))
 
+    # Adding the business gas row must grow the group, also after a one-row category.
+    for name, show, category, group, unit, gas, note in (
+        ("stroom", dialog.show_value_page, dialog.value_category_combo, dialog.value_unit_group,
+         dialog.value_unit_combo, dialog.value_gas_combo, dialog.value_unit_note),
+        ("nulwaarden", lambda: dialog.show_zero_current_page(select_first=False),
+         dialog.zero_current_page.category_combo, dialog.zero_current_page.unit_group,
+         dialog.zero_current_page.unit_combo, dialog.zero_current_page.gas_combo, dialog.zero_current_page.unit_note),
+    ):
+        show()
+        for width, height in ((1180, 740), (1440, 960)):
+            dialog.resize(width, height)
+            for code in ("Oplaadpunt", "Zakelijk", "Straatmeubilair", "Zakelijk", "Huishoudelijk", "Zakelijk"):
+                category.setCurrentIndex(category.findData(code))
+                app.processEvents()
+                QTest.qWait(50)
+                if code == "Huishoudelijk":
+                    assert group.isHidden()
+                    continue
+                last_input = gas if code == "Zakelijk" else unit
+                if code == "Zakelijk":
+                    assert not gas.isHidden()
+                    assert unit.geometry().bottom() < gas.geometry().top(), (name, code)
+                assert note.geometry().top() > last_input.geometry().bottom(), (name, code, group.height(), last_input.geometry(), note.geometry())
+                assert note.height() >= note.heightForWidth(note.width()), (name, code, note.geometry())
+                assert note.geometry().bottom() < group.height(), (name, code, group.height(), note.geometry())
+            if captures:
+                assert group.grab().save(str(captures / f"14-zakelijk-{name}-{width}.png"))
+
     # Header Home is reused in the footer, so execution-time disable still works.
     dialog.show_value_page()
     dialog.value_home_button.setEnabled(False)
