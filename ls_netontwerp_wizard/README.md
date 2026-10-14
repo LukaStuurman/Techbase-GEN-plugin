@@ -1,5 +1,29 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.18.0 plaatst bij **1. Invoer & ontwerpstroom** drie knoppen:
+**1.1. Ontwerpstroom maken**, **1.2. Stationskoppeling** en **1.3. Nieuwbouw**.
+Stationskoppeling en nieuwbouw openen ieder hun eigen scherm.
+
+Na het koppelen van de stations-CSV via Master Asset ID krijgen aansluitingen
+een willekeurige kleur per station. De kleuren worden in het project bewaard
+en blijven bij opnieuw koppelen en stationswisselingen gelijk voor bestaande
+stations. Nieuwe stations krijgen een nieuwe kleur; aansluitingen zonder
+stationsnummer zijn grijs. Ook nieuwe BAG-objecten gebruiken deze stationkleuren.
+De stroomlabels blijven zichtbaar en de stationsymbolen staan uitgeklapt in
+de lagenlijst.
+
+De normale lagenlijst bepaalt nu de tekenvolgorde in het werkproject en het
+clusteringproject, met OpenStreetMap onderaan. Handmatig toegevoegde lagen
+kunnen daardoor normaal boven de achtergrond worden getekend. Het vernieuwen
+van de controleweergave schakelt eigen lagen niet uit. Oudere gemaakte
+projecten worden bij openen met de plugin op deze laagweergave bijgewerkt.
+Ook het vereenvoudigen van gebieden behoudt de normale laagvolgorde.
+
+Installeer `ls_netontwerp_wizard-1.18.0.zip` en herstart QGIS.
+`test_station_presentation.py` controleert de aparte knoppen, CSV-kleuren,
+legendasymbolen, stationswisselingen, QGZ/GeoPackage-opslag en het tekenen van
+een handmatig toegevoegde laag boven een ondoorzichtige achtergrond.
+
 Versie 1.17.5 laat het paneel **Type wooneenheid / aansluiting** meegroeien
 wanneer bij Zakelijk de extra gasaansluitkeuze verschijnt. De keuzelijsten
 en toelichting overlappen niet meer. Dit geldt voor **2a. Ontwerpstroom

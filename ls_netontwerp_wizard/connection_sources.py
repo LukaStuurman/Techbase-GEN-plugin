@@ -9,6 +9,7 @@ from qgis.core import (
     QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes, QgsVariantUtils,
 )
 from .bag_current_rules import has_residential_usage
+from .station_symbology import color_connections_by_station
 
 CURRENT_FIELDS = (
     "Ontwerpstroom", "Ontwerpstroom kabel", "Opwek ontwerpstroom",
@@ -65,6 +66,8 @@ def _commit(layer):
     if not layer.commitChanges():
         raise ValueError("Opslaan mislukt: " + "; ".join(layer.commitErrors()))
     layer.updateExtents()
+    if layer.customProperty("LSNetontwerp/station_coloring", False):
+        color_connections_by_station(layer)
     layer.triggerRepaint()
     save_project()
 

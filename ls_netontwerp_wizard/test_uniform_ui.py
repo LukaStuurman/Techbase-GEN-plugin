@@ -38,6 +38,7 @@ def main():
         ("04-stations", dialog.show_station_page, dialog.station_page),
         ("05-nulwaarden", lambda: dialog.show_zero_current_page(select_first=False), dialog.zero_current_page),
         ("06-lovion-nieuwbouw", dialog.show_connection_sources_page, dialog.connection_sources_page),
+        ("06a-stationskoppeling", dialog.show_station_link_page, dialog.station_link_page),
         ("07-clustercorrectie", dialog.show_manual_page, dialog.manual_page),
         ("08-sleuven-routes", dialog.show_network_page, dialog.network_page),
         ("09-clustergebieden", dialog.show_areas_page, dialog.areas_page),
@@ -172,7 +173,7 @@ def main():
     child.close()
     assert not any(c.text() == "Advanced" for c in dialog.findChildren(QCheckBox))
     assert dialog.station_delete_button.property("uiRole") == "danger"
-    print("UNIFORM_UI_TEST_OK (9 pages, all advanced tabs, both editor modes, navigation and owned dialogs)", flush=True)
+    print("UNIFORM_UI_TEST_OK (10 pages, all advanced tabs, both editor modes, navigation and owned dialogs)", flush=True)
     os._exit(0)
 
 

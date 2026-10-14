@@ -2,12 +2,13 @@ from pathlib import Path
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsApplication
+from qgis.core import QgsApplication, QgsProject
 
 from .dashboard_warning_dialog import LSNetontwerpDashboardDialog as LSNetontwerpDialog
 from .provider import LSNetontwerpProvider
 from .workflow import WorkflowRunner
 from .automatic_clustering_optimization import install_workflow_optimizations
+from .project_presentation import repair_generated_project
 
 
 ICON_PATH = Path(__file__).resolve().parent / "assets" / "techbase-logo.png"
@@ -38,6 +39,8 @@ class LSNetontwerpPlugin:
 
     def initGui(self):
         self.initProcessing()
+        QgsProject.instance().readProject.connect(self._repair_project_presentation)
+        self._repair_project_presentation()
         icon = QIcon(str(ICON_PATH))
         self.action = QAction(icon, "LS-netontwerp wizard", self.iface.mainWindow())
         self.action.setObjectName("lsNetontwerpWizardAction")
@@ -49,6 +52,10 @@ class LSNetontwerpPlugin:
         self.iface.addToolBarIcon(self.action)
 
     def unload(self):
+        try:
+            QgsProject.instance().readProject.disconnect(self._repair_project_presentation)
+        except (TypeError, RuntimeError):
+            pass
         if self.action is not None:
             self.iface.removePluginVectorMenu("LS Netontwerp", self.action)
             self.iface.removeToolBarIcon(self.action)
@@ -76,7 +83,11 @@ class LSNetontwerpPlugin:
         self.dialog = None
         self.cluster_editor_dialog = None
 
+    def _repair_project_presentation(self, *_args):
+        repair_generated_project()
+
     def open_dialog(self):
+        self._repair_project_presentation()
         if self.dialog is None:
             self.dialog = LSNetontwerpDialog(self.iface, self.iface.mainWindow())
         self.dialog.show_home_page()

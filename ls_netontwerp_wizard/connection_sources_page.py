@@ -10,11 +10,13 @@ from .connection_sources import add_selected_objects, assign_station, pdok_objec
 
 
 class ConnectionSourcesPage(QWidget):
-    def __init__(self, host):
+    def __init__(self, host, mode="newbouw"):
         super().__init__(host)
         self.host = host
+        self.mode = mode
         outer = QVBoxLayout(self)
-        host._add_subpage_header(outer, "Stationskoppeling en nieuwbouw", "TechBase • brondata aanvullen vóór clustering")
+        title = "Stationskoppeling" if mode == "stations" else "Nieuwbouw uit verblijfsobjecten"
+        host._add_subpage_header(outer, title, "TechBase • invoer en ontwerpstroom aanvullen")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         body = QWidget()
@@ -22,7 +24,8 @@ class ConnectionSourcesPage(QWidget):
         scroll.setWidget(body)
         outer.addWidget(scroll)
         note = QLabel("Koppel de LOVION-export of wijzig het stationsnummer van geselecteerde aansluitingen. "
-                      "Laad voor nieuwbouw de BAG-verblijfsobjecten, selecteer de gewenste adressen op de kaart en voeg ze toe. "
+                      "Aansluitingen krijgen een kleur per station." if mode == "stations" else
+                      "Laad de BAG-verblijfsobjecten, selecteer de gewenste adressen op de kaart en voeg ze toe. "
                       "Bij woonfunctie volgen woningtype en ontwerpstroom het bijbehorende pand. "
                       "Andere gebruiksdoelen worden na toevoegen getoond in 'Nulwaarden herstellen', "
                       "waar je zelf de categorie en stroomwaarden kiest.")
@@ -44,7 +47,8 @@ class ConnectionSourcesPage(QWidget):
         form.addRow(csv)
         self.station_combo = QComboBox()
         self.station_combo.setEditable(True)
-        form.addRow("Stationsnummer", self.station_combo)
+        if mode == "stations":
+            form.addRow("Stationsnummer", self.station_combo)
         row = QHBoxLayout()
         select = QPushButton("Aansluitingen op kaart selecteren")
         select.clicked.connect(lambda: self.select_on_map(self.target_combo))
@@ -54,9 +58,13 @@ class ConnectionSourcesPage(QWidget):
         row.addWidget(apply)
         form.addRow(row)
         root.addWidget(station_group)
+        self.station_group = station_group
+        station_group.setVisible(mode == "stations")
 
         bag_group = QGroupBox("Nieuwbouw uit BAG-verblijfsobjecten")
         form = QFormLayout(bag_group)
+        if mode != "stations":
+            form.addRow("Stationsnummer voor nieuwe adressen", self.station_combo)
         load = QPushButton("PDOK-verblijfsobjecten laden")
         load.clicked.connect(self.load_bag)
         form.addRow(load)
@@ -88,6 +96,8 @@ class ConnectionSourcesPage(QWidget):
         row.addWidget(add)
         form.addRow(row)
         root.addWidget(bag_group)
+        self.bag_group = bag_group
+        bag_group.setVisible(mode != "stations")
         self.status = QLabel("")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
