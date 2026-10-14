@@ -1,5 +1,44 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.19.0 integreert de LOVION Aansluiting Extractor in **1.2. Stationskoppeling**.
+
+1. Kies de ontwerpstroomlaag, stationslaag en kolom met het stationsnummer.
+2. Voeg geselecteerde stations toe, of kies een plangebied en gebruik **Stations in plangebied toevoegen**.
+   Dit selecteert stations met een echte geometrische intersectie, ook als de lagen verschillende CRS'en hebben.
+   Een selectie in het plangebied heeft voorrang; zonder selectie worden alle vlakken uit die laag gebruikt.
+3. Voeg desgewenst stationsnummers handmatig toe, met komma's, puntkomma's of nieuwe regels.
+4. Open in LOVION/Citrix de lijst **LS stroomtransformatorgroep** met alleen de eerste rij geselecteerd.
+   Zet LOVION volledig zichtbaar op het linker scherm en kies **LOVION starten — resterende stations**.
+   De plugin minimaliseert en geeft vijf seconden voorbereidingstijd. Gebruik tijdens de verwerking
+   geen muis of toetsenbord; zelf de muis bewegen stopt de automatisering.
+5. Na afloop koppelt de plugin geverifieerde aansluitingen via **Master Asset ID → Station**.
+   Ieder station krijgt een eigen, in het project bewaarde kleur met legenda in de lagenlijst.
+
+De stationslijst bewaart statussen en resultaten in het QGIS-project. Nieuwe rondes verwerken alleen
+nieuwe, onvolledige of opnieuw klaargezette stations. Met **Selectie opnieuw klaarzetten** kun je
+eerder voltooide stations opnieuw verwerken. Meerdere trafo's per station worden samengevoegd;
+geplande trafo's worden afzonderlijk vermeld en niet geïmporteerd. Een onvolledig station wordt
+niet gekoppeld; volledig geverifieerde stations uit dezelfde afgebroken ronde blijven behouden.
+Ambigue LOVION-kaartresultaten krijgen de status **Handmatige controle nodig**; gebruik zo nodig
+de bestaande CSV-koppeling en handmatige stationswijziging onderaan het scherm.
+
+**Selectie verwijderen** en **Alles resetten** herstellen eerdere stationswaarden van aansluitingen
+die deze sessie heeft gewijzigd. Latere handmatige wijzigingen blijven behouden bij verwijderen,
+resetten en rondes voor andere stations. Een expliciete nieuwe verwerking van datzelfde station
+kan die handmatige waarde opnieuw koppelen. **Stoppen** vraagt een gecontroleerde stop aan en laat
+de actuele actie afsluiten. Bij een projectwissel wordt de verwerking gestopt en het resultaat niet
+op een ander project toegepast. Rapporten, CSV's en logbestanden blijven bewaard in
+`lovion_extractor` naast het project, of in de lokale QGIS-appgegevens bij een onopgeslagen project.
+
+De extractor draait met de ingebouwde Windows PowerShell; een losse workbench is niet nodig.
+De bestaande Windows/Citrix/OCR-schermvoorwaarden van LAE v1.4.0 blijven gelden.
+De bron is ongewijzigd overgenomen uit commit `21dab024b1b54194220c22211e5700ae8588ca5b`;
+zie `assets/lovion/UPSTREAM.md`. `test_lovion_integration.py` controleert selectie, vervolgrondes,
+meerdere trafo's, fouten, stoppen, kleuren, herstel en QGZ/GeoPackage-opslag via een gecontroleerde
+testbron zonder echte muis-, toetsenbord-, klembord- of OCR-acties.
+
+Installeer `ls_netontwerp_wizard-1.19.0.zip` en herstart QGIS.
+
 Versie 1.18.0 plaatst bij **1. Invoer & ontwerpstroom** drie knoppen:
 **1.1. Ontwerpstroom maken**, **1.2. Stationskoppeling** en **1.3. Nieuwbouw**.
 Stationskoppeling en nieuwbouw openen ieder hun eigen scherm.
