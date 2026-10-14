@@ -526,9 +526,9 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         self._prepare_fixed_subpage(self.areas_page)
         return super().show_areas_page()
 
-    def _open_visual_cluster_editor(self, requested_mode):
+    def _open_visual_cluster_editor(self, requested_mode, action=None):
         """Heropen 3b/4b altijd als schone zichtbare stacked-widgetpagina."""
-        result = super()._open_visual_cluster_editor(requested_mode)
+        result = super()._open_visual_cluster_editor(requested_mode, action)
         editor = self._dashboard_visual_cluster_dialog
         if editor is not None:
             apply_theme(editor)

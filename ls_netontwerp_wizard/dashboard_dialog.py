@@ -219,21 +219,17 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
                 )
                 break
 
-    def _open_visual_cluster_editor(self, requested_mode):
-        super()._open_visual_cluster_editor(requested_mode)
+    def _open_visual_cluster_editor(self, requested_mode, action=None):
+        super()._open_visual_cluster_editor(requested_mode, action)
         editor = self._dashboard_visual_cluster_dialog
         if editor is None or requested_mode != "prepare":
             return
 
-        editor.pre_group.setTitle("2C. Handmatige clusterindeling")
+        editor.pre_group.setTitle("Bestaand handmatig cluster")
         editor.mode_label.setText(
-            "<b>Modus: volledige handmatige clustering.</b> Selecteer alle "
-            "aansluitingen en deel ze in bij H-xx-clusters met de gewenste "
-            "stationslocaties en kVA. Als 100% is ingedeeld, klik je hieronder "
-            "op <b>Handmatige clustering uitvoeren</b>. Stap 3b bouwt dan zelf "
-            "de resultaatlagen, routes en gebieden en past jouw indeling toe."
+            "<b>Je eigen indeling.</b> Verdeel de aansluitingen over H-xx-clusters. "
+            "Zodra de indeling compleet is, kun je de handmatige clustering uitvoeren."
         )
-
         if not hasattr(editor, "dashboard_manual_cluster_button"):
             editor.dashboard_manual_cluster_button = QPushButton(
                 "Handmatige clustering uitvoeren"
@@ -244,9 +240,10 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             editor.dashboard_manual_cluster_button.clicked.connect(
                 self._run_manual_clustering_from_editor
             )
-            pre_layout = editor.pre_group.layout()
-            if pre_layout is not None:
-                pre_layout.addWidget(editor.dashboard_manual_cluster_button)
+            footer = editor.guide.commit.parentWidget().layout()
+            footer.insertWidget(footer.count() - 1, editor.dashboard_manual_cluster_button)
+        editor.guide.update_visibility()
+        editor.guide.refresh_preview()
 
     @staticmethod
     def _manual_coverage(editor):
@@ -255,11 +252,15 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             return 0, 0
         field_index = layer.fields().lookupField("GebiedLabel")
         total = int(layer.featureCount())
+        features = list(layer.getFeatures())
+        if hasattr(editor, "guide"):
+            features = editor.guide.relevant_features(layer, features)
+            total = len(features)
         if field_index < 0:
             return 0, total
         manual = sum(
             1
-            for feature in layer.getFeatures()
+            for feature in features
             if editor.MANUAL_LABEL_RE.fullmatch(
                 str(feature.attribute(field_index) or "").strip()
             )
@@ -270,7 +271,7 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
         editor = self._dashboard_visual_cluster_dialog
         if editor is None:
             return
-        editor.refresh_layers()
+        editor.refresh_layers("prepare")
         self.page_stack.setCurrentWidget(editor)
         self.setWindowTitle("LS Netontwerp Wizard – handmatige clustering")
 
@@ -303,22 +304,6 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
                 "Voor 3b moeten alle aansluitingen aan een H-xx-cluster zijn "
                 "gekoppeld. Deel eerst de resterende aansluitingen in.",
             )
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Handmatige clustering uitvoeren",
-            f"Alle {total} aansluitingen zijn handmatig ingedeeld.\n\n"
-            "Stap 3b maakt nu de volledige resultaatlagen, kabelroutes en "
-            "clustergebieden. Er worden geen extra automatische stations "
-            "aangemaakt en de H-xx-indeling wordt daarna automatisch exact "
-            "toegepast.\n\nDoorgaan?",
-        )
-        try:
-            yes_button = QMessageBox.StandardButton.Yes
-        except AttributeError:  # QGIS 3 / PyQt5
-            yes_button = QMessageBox.Yes
-        if reply != yes_button:
             return
 
         # 3b gebruikt dezelfde stabiele route-/resultaatopbouw als stap 3a,
@@ -355,6 +340,7 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
                 values[key] = value
             self._finish_progress()
             QMessageBox.critical(self, "Handmatige clustering mislukt", str(exc))
+            self.run_button.setEnabled(True)
             self.edit_values_button.setEnabled(True)
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
@@ -364,12 +350,15 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             return
 
         self._finish_progress(100)
-        self.prepared_state = None
+        for button in (self.run_button, self.edit_values_button, self.edit_housing_button,
+            self.edit_stations_button, self.cluster_button):
+            button.setEnabled(True)
+        # Keep the completed workflow available for later plan/settings edits.
 
         # Het resultaatproject is hierboven bewust geopend, zodat de visuele
         # editor de zojuist gemaakte resultaatlagen direct kan vinden en alle
         # H-xx-keuzes automatisch kan afdwingen.
-        editor.refresh_layers()
+        editor.refresh_layers("result")
         if editor.mode != "result":
             QMessageBox.warning(
                 self,
@@ -381,7 +370,18 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             self.show_home_page()
             return
 
-        editor.enforce_prepared_clusters()
+        self.page_stack.setCurrentWidget(editor)
+        if hasattr(editor, "guide"):
+            editor.guide.run_task(editor.enforce_prepared_clusters)
+        else:
+            editor.enforce_prepared_clusters()
+        if not editor.status_label.text().startswith("Gereed:"):
+            QMessageBox.warning(self, "Handmatige indeling niet voltooid",
+                "De clustering is berekend, maar de handmatige indeling is niet volledig toegepast.\n\n"
+                + editor.status_label.text())
+            self.run_button.setEnabled(True)
+            self.cluster_button.setEnabled(True)
+            return
         editor.refresh_layers()
         self.page_stack.setCurrentWidget(editor)
         self.setWindowTitle("LS Netontwerp Wizard – handmatige clustering gereed")
@@ -395,4 +395,3 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             f"Resultaatmap:\n{result['result_dir']}\n\n"
             f"QGIS-project:\n{result['project']}",
         )
-        self.run_button.setEnabled(True)

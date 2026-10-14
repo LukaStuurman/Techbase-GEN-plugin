@@ -68,6 +68,8 @@ class VisueleClusterEditorDialog(QDialog):
         self._station_draw_layer = None
         self._new_station_geometry = None
         self._new_station_geometry_crs = None
+        self.requested_mode = None
+        self._active_cluster_feedback = None
 
         self.setWindowTitle("LS Netontwerp – visuele handmatige clustereditor")
         self.setMinimumWidth(780)
@@ -86,6 +88,7 @@ class VisueleClusterEditorDialog(QDialog):
         root.addWidget(self.mode_label)
 
         selection_group = QGroupBox("1. Aansluitingen selecteren")
+        self.selection_group = selection_group
         selection_layout = QVBoxLayout(selection_group)
         selection_buttons = QHBoxLayout()
         self.lasso_button = QPushButton("Aansluitingen met lasso selecteren")
@@ -239,12 +242,15 @@ class VisueleClusterEditorDialog(QDialog):
         buttons.addWidget(close_button)
         root.addLayout(buttons)
 
+        from .cluster_editing_guide import ClusterEditingGuide
+        self.guide = ClusterEditingGuide(self, root)
         self.refresh_layers()
         self.mode_label.setStyleSheet("")
         apply_theme(self)
         install_dialog_theme(self)
         if not hasattr(self, "_host"):
-            normalize_page(self, self, (close_button,), home=False)
+            normalize_page(self, self, (self.guide.commit, self.guide.cancel, close_button), home=False)
+            self.guide.cancel.hide()
 
     @staticmethod
     def _field_name(layer, candidates):
@@ -335,13 +341,13 @@ class VisueleClusterEditorDialog(QDialog):
                 "LS-aansluitingen",
             ),
             ("aansluit", "service"),
-            ("geclusterd",),
+            ("geclusterd", "scope"),
         )
         self.source_stations = choose(
             points,
             ("Bestaande stations (bron)", "Station locatie"),
             ("station",),
-            ("ontwerp",),
+            ("ontwerp", "scope"),
         )
         self.source_cables = choose(
             lines,
@@ -364,7 +370,9 @@ class VisueleClusterEditorDialog(QDialog):
             except (TypeError, RuntimeError):
                 pass
 
-    def refresh_layers(self):
+    def refresh_layers(self, requested_mode=None):
+        if requested_mode in ("prepare", "result"):
+            self.requested_mode = requested_mode
         self._disconnect_signals()
         project = QgsProject.instance()
         defaults = HandmatigeClusterCorrectieAlgorithm._project_layer_defaults()
@@ -374,14 +382,17 @@ class VisueleClusterEditorDialog(QDialog):
         }
         result_ready = all(self.layers.get(key) is not None for key in self.REQUIRED)
 
+        preparation_error = ""
+        if self.requested_mode == "prepare":
+            try:
+                self._restore_preparation_layers()
+            except Exception as exc:
+                preparation_error = str(exc)
         self._find_source_layers()
-        if result_ready:
+        if result_ready and self.requested_mode != "prepare":
             self.mode = "result"
             self.mode_label.setText(
-                "<b>Modus: bestaande clusterresultaten.</b> "
-                "Je kunt aansluitingen naar een bestaand station verplaatsen, "
-                "een nieuw cluster met een nieuw station afsplitsen, of eerder "
-                "voorbereide H-xx-clusters exact afdwingen."
+                "<b>Bestaande clustering aanpassen.</b> Selecteer aansluitingen en kies wat je wilt wijzigen."
             )
             for key in ("AANSLUITINGEN", "STATIONS"):
                 layer = self.layers.get(key)
@@ -409,7 +420,7 @@ class VisueleClusterEditorDialog(QDialog):
             if home:
                 self.backup_edit.setText(str(Path(home) / "cluster_editor_backups"))
 
-        if result_ready:
+        if self.mode == "result":
             self._set_status(
                 "Resultaatlagen gevonden. Kies een clusterwissel of maak een nieuw cluster."
             )
@@ -433,11 +444,39 @@ class VisueleClusterEditorDialog(QDialog):
         self.location_label.setText("Nog geen nieuwe stationslocatie gekozen.")
         self.new_cluster_name.setText(self._next_manual_cluster_name())
         self._refresh_pre_cluster_choices()
+        self.guide.refresh_layers()
         self._refresh_preview()
+        if preparation_error:
+            self._set_status("De bronlagen konden niet worden heropend: " + preparation_error, True)
+
+    def _restore_preparation_layers(self):
+        """Explicit preparation also works after opening a result project."""
+        host = getattr(self, "_host", None)
+        state = getattr(host, "prepared_state", None)
+        if not state or not state.get("points_gpkg") or not state.get("import_gpkg"):
+            return
+        from .workflow import WorkflowRunner
+        runner = WorkflowRunner(state["values"], lambda *_: None)
+        points = runner._add_project_layer(
+            runner._layer(state["points_gpkg"], state.get("points_layer", Path(state["points_gpkg"]).stem)),
+            "LS-aansluitingen ontwerpstroom", True)
+        points.setCustomProperty("LSNetontwerp/review_current_layer", True)
+        for key, title, visible in (("layer_stations", "Bestaande stations (bron)", True),
+            ("layer_main_cables", "Laagspanningskabels (bron)", True)):
+            if state["values"].get(key):
+                runner._add_project_layer(runner._layer(state["import_gpkg"], state["values"][key]), title, visible)
 
     def _selection_changed(self, *args):
-        self._refresh_preview()
+        try:
+            current = self._active_connection_layer()
+            if current is not None and QgsProject.instance().mapLayer(current.id()) is None:
+                return
+        except RuntimeError:
+            return
+        if hasattr(self, "guide") and self.sender() is self.layers.get("STATIONS"):
+            self.guide._target_searching = False
         self._refresh_pre_cluster_choices()
+        self._refresh_preview()
         if self._waiting in ("connections", "station"):
             self._waiting = None
             QTimer.singleShot(0, self._restore_window)
@@ -544,6 +583,9 @@ class VisueleClusterEditorDialog(QDialog):
         return text
 
     def _refresh_preview(self):
+        if hasattr(self, "guide"):
+            self.guide.refresh_preview()
+            return
         connections = self._selected_connections()
         self.selection_label.setText(
             f"Geselecteerde aansluitingen: {len(connections)}"
@@ -824,6 +866,7 @@ class VisueleClusterEditorDialog(QDialog):
         self.location_label.setStyleSheet("color:#2e7d32; font-weight:700;")
         self._clear_station_draw_layer()
         self._restore_window()
+        self._refresh_preview()
 
     def _clear_station_draw_layer(self):
         draw_layer = self._station_draw_layer
@@ -924,6 +967,7 @@ class VisueleClusterEditorDialog(QDialog):
                 "KNOOP_TOLERANTIE_M": 0.0,
                 "BACKUPMAP": str(self._backup_folder()),
             },
+            feedback=self._active_cluster_feedback,
         )
 
     def apply_change(self):
@@ -947,7 +991,8 @@ class VisueleClusterEditorDialog(QDialog):
                 + " Routes, statistieken en clustergebieden zijn bijgewerkt."
             )
             self.status_label.setStyleSheet("color:#2e7d32; font-weight:700;")
-            self.iface.mapCanvas().refresh()
+            if self.iface is not None:
+                self.iface.mapCanvas().refresh()
         except Exception as exc:
             self._error(f"Clusterwijziging geweigerd of mislukt: {exc}")
         finally:
@@ -1136,7 +1181,8 @@ class VisueleClusterEditorDialog(QDialog):
             self._new_station_geometry_crs = None
             self.location_label.setText("Nog geen nieuwe stationslocatie gekozen.")
             self.new_cluster_name.setText(self._next_manual_cluster_name())
-            self.iface.mapCanvas().refresh()
+            if self.iface is not None:
+                self.iface.mapCanvas().refresh()
         except Exception:
             self._delete_cluster_placeholders(cluster)
             raise
@@ -1263,6 +1309,9 @@ class VisueleClusterEditorDialog(QDialog):
     def _create_prepared_cluster(self, cluster, kva):
         if self.source_connections is None or self.source_stations is None:
             raise RuntimeError("Bronlagen voor handmatige voorbereiding ontbreken.")
+        name_field = self._source_station_name_field()
+        if name_field and any(str(f[name_field]).strip().casefold() == cluster.casefold() for f in self.source_stations.getFeatures()):
+            raise RuntimeError(f"Handmatig cluster {cluster} bestaat al. Kies Toewijzen om aansluitingen eraan toe te voegen.")
         snapshot = self._write_snapshot(
             [
                 ("aansluitingen_bron", self.source_connections),
@@ -1290,7 +1339,8 @@ class VisueleClusterEditorDialog(QDialog):
         self.location_label.setText("Nog geen nieuwe stationslocatie gekozen.")
         self.new_cluster_name.setText(self._next_manual_cluster_name())
         self._refresh_pre_cluster_choices()
-        self.iface.mapCanvas().refresh()
+        if self.iface is not None:
+            self.iface.mapCanvas().refresh()
 
     def _refresh_pre_cluster_choices(self):
         if self.source_connections is None:
@@ -1500,7 +1550,8 @@ class VisueleClusterEditorDialog(QDialog):
                 "Je kunt hierna gewone lasso-clusterwissels blijven gebruiken."
             )
             self.status_label.setStyleSheet("color:#2e7d32; font-weight:700;")
-            self.iface.mapCanvas().refresh()
+            if self.iface is not None:
+                self.iface.mapCanvas().refresh()
             self._refresh_preview()
         except Exception as exc:
             self._error(
@@ -1536,6 +1587,11 @@ class VisueleClusterEditorDialog(QDialog):
 
     def _error(self, message):
         self._set_status(message, True)
+        if hasattr(self, "guide") and self.guide.busy:
+            self.guide.failed = True
+            self.guide.progress_label.setText(message)
+            self.guide.progress_label.setStyleSheet("color:#b00020; font-weight:700;")
+            return
         QMessageBox.warning(self, "Visuele handmatige clustereditor", message)
 
     def closeEvent(self, event):
