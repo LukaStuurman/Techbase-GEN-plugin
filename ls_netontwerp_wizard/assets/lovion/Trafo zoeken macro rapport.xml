@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Reports xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="Reports.xsd">
+  <LovionFileFormat>
+    <Version minRelease="7.2.1" />
+  </LovionFileFormat>
+  <Report id="87814622-a39d-4343-9fca-39b93391cc02" rwoProviderId="electricity" rwoTypeName="elec_e_lv_i_transformer_group">
+    <Localizations>
+      <Localization lang="nl" externalName="Trafo zoeker Macro" />
+    </Localizations>
+    <And>
+      <Field xsi:type="referenceExist" name="e_fl_lv_transformer">
+        <Report rwoProviderId="electricity" rwoTypeName="elec_e_fl_lv_transformer">
+          <And>
+            <Field xsi:type="referenceExist" name="station">
+              <Report rwoProviderId="electricity" rwoTypeName="elec_e_fl_station">
+                <And>
+                  <Field xsi:type="referenceExist" name="lv_installations">
+                    <Report rwoProviderId="electricity" rwoTypeName="elec_e_lv_installation">
+                      <And>
+                        <Field xsi:type="referenceExist" name="e_fl_station">
+                          <Report rwoProviderId="electricity" rwoTypeName="elec_e_fl_station">
+                            <And>
+                              <Field xsi:type="string" name="number" condition="==" value="">
+                                <Parameter>
+                                  <Localizations>
+                                    <Localization lang="nl" externalName="Station" />
+                                  </Localizations>
+                                </Parameter>
+                              </Field>
+                            </And>
+                          </Report>
+                        </Field>
+                      </And>
+                    </Report>
+                  </Field>
+                </And>
+              </Report>
+            </Field>
+          </And>
+        </Report>
+      </Field>
+    </And>
+  </Report>
+</Reports>

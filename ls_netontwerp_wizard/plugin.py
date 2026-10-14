@@ -52,6 +52,8 @@ class LSNetontwerpPlugin:
         self.iface.addToolBarIcon(self.action)
 
     def unload(self):
+        from .lovion_panel import stop_active_workers
+        stop_active_workers()
         try:
             QgsProject.instance().readProject.disconnect(self._repair_project_presentation)
         except (TypeError, RuntimeError):

@@ -23,7 +23,7 @@ class ConnectionSourcesPage(QWidget):
         root = QVBoxLayout(body)
         scroll.setWidget(body)
         outer.addWidget(scroll)
-        note = QLabel("Koppel de LOVION-export of wijzig het stationsnummer van geselecteerde aansluitingen. "
+        note = QLabel("Haal aansluitingen uit LOVION op voor gekozen stations, koppel een CSV of wijzig een stationsnummer. "
                       "Aansluitingen krijgen een kleur per station." if mode == "stations" else
                       "Laad de BAG-verblijfsobjecten, selecteer de gewenste adressen op de kaart en voeg ze toe. "
                       "Bij woonfunctie volgen woningtype en ontwerpstroom het bijbehorende pand. "
@@ -40,7 +40,12 @@ class ConnectionSourcesPage(QWidget):
         form.addRow("Ontwerpstroomlaag", self.target_combo)
         root.addWidget(target_group)
 
-        station_group = QGroupBox("LOVION stationsnummers")
+        self.lovion_panel = None
+        if mode == "stations":
+            from .lovion_panel import LovionStationPanel
+            self.lovion_panel = LovionStationPanel(self)
+            root.addWidget(self.lovion_panel)
+        station_group = QGroupBox("CSV of handmatige stationskoppeling")
         form = QFormLayout(station_group)
         csv = QPushButton("LOVION CSV koppelen (Master Asset ID → Station)")
         csv.clicked.connect(self.import_csv)
@@ -107,6 +112,8 @@ class ConnectionSourcesPage(QWidget):
         return QgsProject.instance().mapLayer(combo.currentData())
 
     def refresh(self):
+        if self.lovion_panel and self.lovion_panel.worker:
+            return
         previous = [combo.currentData() for combo in (self.target_combo, self.source_combo, self.housing_combo)]
         for combo in (self.target_combo, self.source_combo, self.housing_combo):
             combo.clear()
@@ -139,6 +146,8 @@ class ConnectionSourcesPage(QWidget):
         self.station_combo.addItem("")
         self.station_combo.addItems(sorted(stations - {""}))
         self.station_combo.setCurrentText(current)
+        if self.lovion_panel:
+            self.lovion_panel.refresh()
 
     def select_on_map(self, combo):
         layer = self.layer(combo)
