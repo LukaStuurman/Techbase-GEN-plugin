@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 
 from qgis.PyQt.QtCore import QVariant
 from qgis.core import (QgsApplication, QgsCoordinateTransform, QgsCoordinateReferenceSystem,
@@ -49,12 +50,17 @@ def main():
     app.initQgis()
     from ls_netontwerp_wizard.lovion_session import (LovionSession, STATE_KEY, station_numbers,
         selected_station_numbers, stations_in_plan, verified_report)
-    from ls_netontwerp_wizard.lovion_panel import LovionWorker
+    from ls_netontwerp_wizard.lovion_panel import LovionWorker, run_storage_root
     from ls_netontwerp_wizard.dashboard_warning_dialog import LSNetontwerpDashboardDialog
     project = QgsProject.instance()
     project.clear()
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+    local_root = run_storage_root()
+    assert local_root.is_absolute() and local_root.parts[-2:] == ("TechBase", "LOVION")
+    assert len(str(local_root / ("a" * 32) / ("b" * 12) / "result.json")) < 240
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, patch(
+            "ls_netontwerp_wizard.lovion_panel.run_storage_root") as storage_root:
         folder = Path(tmp)
+        storage_root.return_value = folder / "local-lovion"
         project.setFileName(str(folder / "project.qgz"))
         stations = layer("stations", "Point", ["Station"], [(["A"], "POINT(0 0)"),
             (["B"], "POINT(10 10)"), (["C"], "POINT(5 5)"), (["D"], "POINT(20 20)")])
@@ -96,7 +102,15 @@ def main():
         }), encoding="utf-8")
         session = LovionSession(target)
         assert session.add(["A", "a", "B", "C", "D"]) == 4
+        # Reproduce the failing long OneDrive-style project path without
+        # touching the user's project or requiring Windows long-path support.
+        project.setFileName(str(folder / ("project-" + "a" * 90) / ("b" * 90) / ("c" * 60) / "project.qgz"))
+        assert len(project.fileName()) > 260
         worker = LovionWorker(session, session.pending(), fixture)
+        assert worker.report.is_relative_to(storage_root.return_value)
+        assert len(str(worker.report)) < 240
+        assert worker.report.parent.is_dir()
+        project.setFileName(str(folder / "project.qgz"))
         messages = []
         worker.completed.connect(messages.append)
         worker.start()
@@ -181,6 +195,9 @@ def main():
         page = dialog.station_link_page
         page.refresh()
         panel = page.lovion_panel
+        assert panel.start_button.text() == "LOVION starten (resterende stations)"
+        from ls_netontwerp_wizard.lovion_panel import STATUS
+        assert STATUS["planned"] == "Gepland - geen aansluitingen"
         panel.manual.setPlainText("A;B")
         panel.add_manual()
         assert panel.table.rowCount() == 3
@@ -200,7 +217,7 @@ def main():
         fresh = layer("fresh", "Point", ["Master Asset ID", "Station"], [(["third", "untouched"], "POINT(1 1)")])
         assert next(fresh.getFeatures())["Station"] == "untouched"
         project.clear()
-    print("LOVION_INTEGRATION_TEST_OK (exact/CRS intersection, multi-trafo, partial failure, incremental runs, manual review, cancellation, asset precision, colors, undo, persistence, UI worker)")
+    print("LOVION_INTEGRATION_TEST_OK (long project path, readable labels, exact/CRS intersection, multi-trafo, partial failure, incremental runs, manual review, cancellation, asset precision, colors, undo, persistence, UI worker)")
     app.exitQgis()
 
 
