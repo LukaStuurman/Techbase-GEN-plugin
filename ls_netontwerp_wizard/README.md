@@ -1,5 +1,12 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.17.5 laat het paneel **Type wooneenheid / aansluiting** meegroeien
+wanneer bij Zakelijk de extra gasaansluitkeuze verschijnt. De keuzelijsten
+en toelichting overlappen niet meer. Dit geldt voor **2a. Ontwerpstroom
+aanpassen** en **2d. Nulwaarden herstellen**, ook na wisselen van categorie.
+`test_uniform_ui.py` controleert beide panelen op overlap en afgekapte
+toelichting bij verschillende vensterformaten.
+
 Versie 1.17.4 onderscheidt BAG-verblijfsobjecten op basis van `gebruiksdoel`:
 
 * **Woonfunctie:** woningtype en bouwjaar komen uit de woningtypenlaag.

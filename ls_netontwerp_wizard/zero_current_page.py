@@ -174,6 +174,7 @@ class ZeroCurrentPage(QWidget):
         category_form.addRow("", self.housing_note)
 
         self.unit_group = QGroupBox("Type wooneenheid / aansluiting")
+        self.unit_group.setProperty("uiContentMinimum", True)
         unit_form = QFormLayout(self.unit_group)
         self.unit_combo = QComboBox()
         unit_form.addRow("Type wooneenheid", self.unit_combo)

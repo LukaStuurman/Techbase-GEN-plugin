@@ -181,7 +181,9 @@ def apply_theme(root, clear_legacy=True):
         minimum = QSizePolicy.Policy.Minimum if hasattr(QSizePolicy, "Policy") else QSizePolicy.Minimum
         group.setSizePolicy(expanding, minimum)
         if layout is not None:
-            constraint = QLayout.SizeConstraint.SetDefaultConstraint if hasattr(QLayout, "SizeConstraint") else QLayout.SetDefaultConstraint
+            constraints = QLayout.SizeConstraint if hasattr(QLayout, "SizeConstraint") else QLayout
+            # Dynamic forms must grow when an extra row becomes visible.
+            constraint = constraints.SetMinimumSize if group.property("uiContentMinimum") else constraints.SetDefaultConstraint
             layout.setSizeConstraint(constraint)
             group.ensurePolished()
             layout.activate()
