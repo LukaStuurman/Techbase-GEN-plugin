@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from qgis.core import (
     QgsProcessingParameterString,
     QgsProviderRegistry,
     QgsVectorFileWriter,
+    QgsVariantUtils,
 )
 
 
@@ -745,7 +747,7 @@ verzoek zichtbaar worden.
                             value = _parse_localized_number(value)
                         except (TypeError, ValueError):
                             value = None
-                    elif value is None:
+                    elif QgsVariantUtils.isNull(value):
                         value = ""
                     else:
                         value = str(value)
@@ -1051,13 +1053,10 @@ verzoek zichtbaar worden.
             for feature in points.getFeatures()
         )
         label_uses_station = False
+        station_assignment_index = self._automatic_field_index(
+            points, ("Station",), "bestaand voedend station", optional=True
+        )
         if not label_has_values:
-            station_assignment_index = self._automatic_field_index(
-                points,
-                ("Station",),
-                "bestaand voedend station",
-                optional=True,
-            )
             if station_assignment_index is not None and any(
                 str(feature.attribute(station_assignment_index) or "").strip()
                 for feature in points.getFeatures()
@@ -1349,6 +1348,7 @@ verzoek zichtbaar worden.
                 [
                     ("Ontwerpstroom", design_index, QVariant.Double),
                     ("GebiedLabel", label_index, QVariant.String),
+                    ("Station", station_assignment_index, QVariant.String),
                     ("Multistory", multistory_index, QVariant.String),
                 ],
                 context,
@@ -1504,6 +1504,20 @@ verzoek zichtbaar worden.
 
             shutil.copytree(run_output, output_dir, dirs_exist_ok=True)
             copied_gpkg = output_dir / "clustering_ontwerp.gpkg"
+            # Keep every existing station available for the current-situation
+            # layout, including stations not used in the final design.
+            scope_stations = output_dir / "scope_stations_bron.gpkg"
+            shutil.copy2(stations_path, scope_stations)
+            scope_source = self.parameterAsVectorLayer(parameters, self.AANSLUITINGEN, context)
+            try:
+                station_colors = json.loads(str(scope_source.customProperty("LSNetontwerp/station_colors", "{}"))) if scope_source is not None else {}
+            except (ValueError, TypeError):
+                station_colors = {}
+            (output_dir / "scope_invoer.json").write_text(json.dumps({
+                "stations_uri": f"{scope_stations}|layername=stations",
+                "station_field": "Stationsnaa",
+                "station_colors": station_colors,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
             feedback.pushInfo(
                 "QGIS-project met resultaatlagen en OpenStreetMap maken..."
             )

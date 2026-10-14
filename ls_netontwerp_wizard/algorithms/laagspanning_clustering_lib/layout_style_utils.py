@@ -25,8 +25,8 @@ LAYOUT_NAME = "Clustering overzicht"
 
 def _layout_value_expression(normal_value, layout_value):
     return (
-        "CASE WHEN coalesce(@layout_name, '') = "
-        f"'{LAYOUT_NAME}' THEN {float(layout_value):.12g} "
+        "CASE WHEN coalesce(@layout_name, '') IN "
+        f"('{LAYOUT_NAME}', 'Scope') THEN {float(layout_value):.12g} "
         f"ELSE {float(normal_value):.12g} END"
     )
 

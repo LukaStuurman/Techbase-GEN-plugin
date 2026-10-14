@@ -591,6 +591,7 @@ dan op 0 meter.
             (field_index, result_fields[field_name])
             for field_name, field_index in field_lookup.items()
             if field_name in result_fields and field_index not in primary_key_fields
+            and layer.fields().fieldOrigin(field_index) == QgsFields.OriginProvider
         ]
         attribute_changes = {}
         geometry_changes = {}
@@ -664,7 +665,8 @@ dan op 0 meter.
 
     @staticmethod
     def _ensure_integer_field(layer, field_name):
-        if layer.fields().lookupField(field_name) >= 0:
+        index = layer.fields().lookupField(field_name)
+        if index >= 0 and layer.fields().fieldOrigin(index) != QgsFields.OriginExpression:
             return
         provider = layer.dataProvider()
         if not provider.capabilities() & QgsVectorDataProvider.AddAttributes:
@@ -675,6 +677,8 @@ dan op 0 meter.
             raise QgsProcessingException(
                 f"Veld {field_name} kon niet aan '{layer.name()}' worden toegevoegd."
             )
+        if index >= 0:
+            layer.removeExpressionField(index)
         layer.updateFields()
 
     @staticmethod

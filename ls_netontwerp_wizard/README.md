@@ -1,5 +1,23 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.22.0 herstelt de klikfout bij **Clustercorrectie** en de visuele editor
+(`takes 1 positional argument but 2 were given`). Herstelde projecten met een
+virtueel volgnummer kunnen hun nummering bij correcties nu ook opslaan.
+De lange lijst **Clustergebieden** is uit de printlegenda verwijderd;
+het stationsoverzicht blijft beschikbaar.
+
+Elk nieuw clusteringproject krijgt ook de printlayout **Scope**, gebaseerd op
+dezelfde A3-indeling, kaartuitsnede, RD-randen en achtergrond. Deze toont het
+plangebied en de aansluitingen per bestaand voedend station, met een kleursleutel,
+aantallen en ontwerpstroom per station. De bestaande stations krijgen dezelfde
+kleuren als hun aansluitingen. De Scope-lagen zijn een blijvende, alleen-lezen
+kopie van de huidige stationskoppelingen; latere clustercorrecties veranderen
+deze bestaande situatie niet. Ontbrekende koppelingen verschijnen grijs als
+**Geen station gekoppeld**. De Scope-layout gebruikt de oorspronkelijke kolom
+`Station`, onafhankelijk van `Cluster` en de handmatige indeling `GebiedLabel`.
+Stationskleuren uit de koppelstap worden overgenomen als deze beschikbaar zijn.
+Bij **Berekend project herstellen** wordt de Scope-layout ook toegevoegd.
+
 Versie 1.21.0 opent bij **3a. Automatische clustering maken** eerst een instellingenvenster.
 Kies de **ontwerpstroomkolom (A)**, het **plangebied**, de **maximale kabelroute**,
 **knooptolerantie**, **nieuw stationvermogen** en **voorkeursbenutting**.
