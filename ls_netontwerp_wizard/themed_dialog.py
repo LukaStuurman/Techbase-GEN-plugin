@@ -355,7 +355,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                 self._dashboard_button(
                     "3b. Handmatige clustering voorbereiden",
                     3,
-                    callback=lambda: self._open_visual_cluster_editor("prepare"),
+                    callback=lambda: self._open_visual_cluster_editor("prepare", "new"),
                     secondary=True,
                     enabled_source=self.cluster_button,
                 ),
@@ -367,12 +367,13 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.",
             [
                 self._dashboard_button(
-                    "4a. Clustercorrectie", 4, target=self.edit_cluster_button
+                    "4a. Aansluitingen herverdelen", 4,
+                    callback=lambda: self._open_visual_cluster_editor("result", "move")
                 ),
                 self._dashboard_button(
-                    "4b. Visuele handmatige clustereditor",
+                    "4b. Eigen cluster met station maken",
                     4,
-                    callback=lambda: self._open_visual_cluster_editor("result"),
+                    callback=lambda: self._open_visual_cluster_editor("result", "new"),
                     secondary=True,
                 ),
             ],
@@ -436,7 +437,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         if self._dashboard_widget is not None:
             self._dashboard_widget.setVisible(not enabled)
 
-    def _open_visual_cluster_editor(self, requested_mode):
+    def _open_visual_cluster_editor(self, requested_mode, action=None):
         if self._dashboard_visual_cluster_dialog is None:
             self._dashboard_visual_cluster_dialog = EmbeddedVisualClusterEditor(
                 self.iface, self
@@ -444,10 +445,17 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             self.page_stack.addWidget(self._dashboard_visual_cluster_dialog)
 
         apply_theme(self._dashboard_visual_cluster_dialog)
-        normalize_page(self._dashboard_visual_cluster_dialog, self)
+        editor = self._dashboard_visual_cluster_dialog
+        actions = [editor.guide.commit, editor.guide.cancel]
+        if hasattr(editor, "dashboard_manual_cluster_button"):
+            actions.append(editor.dashboard_manual_cluster_button)
+        normalize_page(editor, self, actions)
+        editor.guide.cancel.hide()
         if hasattr(self._dashboard_visual_cluster_dialog, "dashboard_manual_cluster_button"):
             self._dashboard_visual_cluster_dialog.dashboard_manual_cluster_button.setVisible(requested_mode == "prepare")
-        self._dashboard_visual_cluster_dialog.refresh_layers()
+        self._dashboard_visual_cluster_dialog.refresh_layers(requested_mode)
+        if action:
+            self._dashboard_visual_cluster_dialog.guide.choose_action(action)
         self.page_stack.setCurrentWidget(self._dashboard_visual_cluster_dialog)
         self.setWindowTitle(
             "LS Netontwerp Wizard – "
