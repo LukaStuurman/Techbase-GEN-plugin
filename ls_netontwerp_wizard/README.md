@@ -1,5 +1,19 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.23.0 versnelt de autoclustering met behoud van de bestaande rekenregels.
+Bij het balanceren van de belasting worden alleen de aansluitingen opnieuw
+beoordeeld waarvan het station minder aantrekkelijk is geworden. Een algemene
+verschuiving van de gewichten en het einde van de iteratiegrens behouden de
+oorspronkelijke berekeningsvolgorde, inclusief gelijke afstanden en afronding.
+Voor geschikte stationslocaties gebruikt de tool een ruimtelijke index van
+de kabeldelen in plaats van elke netwerkknoop tegen de volledige kabelgeometrie
+te toetsen. Op de exacte afstandsgrenzen blijft de oude geometrietoets actief.
+De luscontrole in de exclusieve routeopbouw telt de knopen eenmaal per cluster.
+De capaciteit, maximale kabellengte, woning-/flatkoppeling, kandidaatkeuzes en
+kabelverbondenheid worden hiermee niet versoepeld. Vergelijking met versie
+1.22 op de Zeelst-rekengegevens geeft dezelfde stationskeuzes, toedelingen,
+routeafstanden en routegeometrieën. Winst verschilt per project en rekenstap.
+
 Versie 1.22.0 herstelt de klikfout bij **Clustercorrectie** en de visuele editor
 (`takes 1 positional argument but 2 were given`). Herstelde projecten met een
 virtueel volgnummer kunnen hun nummering bij correcties nu ook opslaan.
