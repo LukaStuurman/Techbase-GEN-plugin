@@ -119,7 +119,7 @@ def main():
         assert f["Ontwerpstroom kabel"] == config[3]["WOONHUIS_2022"]["appartement"]
         assert f["Opwek ontwerpstroom"] == 0
         assert target.selectedFeatureCount() == 3
-        assert add_selected_objects(source, target, housing, page)["added"] == 0
+        assert add_selected_objects(source, target, housing, page, skip_existing=True)["added"] == 0
         assert target.featureCount() == 5
         path = Path(directory) / "review.gpkg"
         options = QgsVectorFileWriter.SaveVectorOptions()

@@ -54,6 +54,9 @@ class LSNetontwerpPlugin:
     def unload(self):
         from .lovion_panel import stop_active_workers
         stop_active_workers()
+        if self.dialog is not None:
+            self.dialog.connection_sources_page.cancel_bag_download()
+            self.dialog.station_link_page.cancel_bag_download()
         try:
             QgsProject.instance().readProject.disconnect(self._repair_project_presentation)
         except (TypeError, RuntimeError):
