@@ -294,14 +294,12 @@ def _make_greedy_solver(engine):
                 ]
             )
             biases = np.zeros(len(capacities), dtype=float)
-            assignment = np.zeros(len(loads_arr), dtype=int)
+            assignment = np.argmin(unit_distance_matrix, axis=1)
             unit_distances = np.zeros(len(loads_arr), dtype=float)
             station_loads = np.zeros(len(capacities), dtype=float)
             unit_range = np.arange(len(loads_arr))
 
             for _balance_iteration in range(10000):
-                adjusted = unit_distance_matrix + biases[None, :]
-                assignment = np.argmin(adjusted, axis=1)
                 unit_distances = unit_distance_matrix[unit_range, assignment]
                 if np.any(~np.isfinite(unit_distances)) or np.any(
                     unit_distances > engine.MAX_ROUTE_M + 1e-7
@@ -347,7 +345,7 @@ def _make_greedy_solver(engine):
                 members = np.flatnonzero(assignment == station_index)
                 if not len(members):
                     break
-                alternative_cost = adjusted[members].copy()
+                alternative_cost = unit_distance_matrix[members] + biases[None, :]
                 alternative_cost[:, station_index] = np.inf
                 alternative_station = np.argmin(alternative_cost, axis=1)
                 alternative_distance = unit_distance_matrix[
@@ -360,7 +358,7 @@ def _make_greedy_solver(engine):
                     break
                 margins = (
                     alternative_cost[np.arange(len(members)), alternative_station]
-                    - adjusted[members, station_index]
+                    - (unit_distance_matrix[members, station_index] + biases[station_index])
                 )
                 margins[~transferable] = np.inf
                 required_increase = float(np.min(margins))
@@ -372,6 +370,18 @@ def _make_greedy_solver(engine):
                 minimum_bias = float(np.min(biases))
                 if minimum_bias > 0.0:
                     biases -= minimum_bias
+                if _balance_iteration == 9999:
+                    # Preserve the final evaluated state when the iteration
+                    # budget ends; these arrays seed the next capacity site.
+                    continue
+                if minimum_bias > 0.0:
+                    # A common shift can affect floating-point ties. Recompute
+                    # every row in that case to preserve the original result.
+                    assignment = np.argmin(unit_distance_matrix + biases[None, :], axis=1)
+                else:
+                    # Only this station became less attractive. A unit owned
+                    # by any other station keeps its previous exact argmin.
+                    assignment[members] = np.argmin(unit_distance_matrix[members] + biases[None, :], axis=1)
 
             if record_failure:
                 last_overloaded = np.flatnonzero(

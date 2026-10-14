@@ -31,7 +31,7 @@ from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import coo_matrix, csr_matrix, diags, hstack, identity, kron, vstack
 from scipy.sparse.csgraph import dijkstra
 from scipy.spatial import cKDTree
-from shapely import voronoi_polygons
+from shapely import points as shapely_points, voronoi_polygons
 from shapely.geometry import LineString, MultiPoint, Point, shape
 from shapely.ops import linemerge, nearest_points, substring, unary_union
 from shapely.strtree import STRtree
@@ -969,6 +969,25 @@ def snap_xy(
     distance, indices = tree.query(xy)
     nodes = [node_list[int(i)] for i in indices]
     return nodes, np.asarray(distance, dtype=float), np.asarray(indices, dtype=int)
+
+
+def linework_distances(xy: np.ndarray, parts: list, boundary_m=None) -> np.ndarray:
+    """Exact distance to the union, querying only nearby indexed line parts."""
+    distances = np.full(len(xy), np.inf, dtype=float)
+    if parts and len(xy):
+        pairs, values = STRtree(parts).query_nearest(
+            shapely_points(xy), all_matches=False, return_distance=True
+        )
+        distances[pairs[0]] = values
+        if boundary_m is not None:
+            # GEOS union noding can introduce a tiny coordinate roundoff.
+            # Preserve the old strict decision for points on the boundary.
+            near_boundary = np.flatnonzero(np.abs(distances - boundary_m) <= 1e-8)
+            if len(near_boundary):
+                reference = unary_union(parts)
+                for index in near_boundary:
+                    distances[index] = Point(xy[index]).distance(reference)
+    return distances
 
 
 def network_distance_matrix(
@@ -2347,6 +2366,7 @@ def build_exclusive_routes(
             node_list[i] for i in np.flatnonzero(node_cluster == station_index)
         }
         owned_graph = graph.subgraph(owned_nodes)
+        owned_node_count = owned_graph.number_of_nodes()
         if source not in owned_graph:
             raise RuntimeError("Station ontbreekt in het eigen kabeldeel")
         predecessors, owned_distances = nx.dijkstra_predecessor_and_distance(
@@ -2371,7 +2391,7 @@ def build_exclusive_routes(
                 edges.add(edge)
                 current = previous
                 guard += 1
-                if guard > owned_graph.number_of_nodes():
+                if guard > owned_node_count:
                     raise RuntimeError("Lus gedetecteerd in routeboom")
         lines = [LineString([u, v]) for u, v in edges]
         geometry = merge_linework(lines)
@@ -5840,9 +5860,6 @@ def main(_automatic_retry: bool = False) -> None:
         for geometry in regular_cables_for_station_placement.geometry
         for part in line_parts(geometry)
     ]
-    station_placement_geometry = (
-        unary_union(station_placement_parts) if station_placement_parts else None
-    )
     connection_exclusion_parts = (
         [
             part
@@ -5852,30 +5869,13 @@ def main(_automatic_retry: bool = False) -> None:
         if connection_cables_for_station_exclusion is not None
         else []
     )
-    connection_exclusion_geometry = (
-        unary_union(connection_exclusion_parts) if connection_exclusion_parts else None
+    raw_main_node_indices = np.flatnonzero(
+        linework_distances(node_xy, station_placement_parts, 0.08) <= 0.08
     )
-    raw_main_node_indices = np.asarray(
-        [
-            index
-            for index, node in enumerate(node_list)
-            if station_placement_geometry is not None
-            and Point(node).distance(station_placement_geometry) <= 0.08
-        ],
-        dtype=int,
-    )
-    main_node_indices = np.asarray(
-        [
-            index
-            for index in raw_main_node_indices
-            if (
-                connection_exclusion_geometry is None
-                or Point(node_list[index]).distance(connection_exclusion_geometry)
-                >= NEW_STATION_CONNECTION_CABLE_CLEARANCE_M
-            )
-        ],
-        dtype=int,
-    )
+    main_node_indices = raw_main_node_indices[
+        linework_distances(node_xy[raw_main_node_indices], connection_exclusion_parts, NEW_STATION_CONNECTION_CABLE_CLEARANCE_M)
+        >= NEW_STATION_CONNECTION_CABLE_CLEARANCE_M
+    ]
     # A new station must not coincide with an LS connection point. Candidate
     # nodes on the main cable are therefore filtered by a real-world clearance.
     # Components without any main cable receive a safe routing anchor on their
