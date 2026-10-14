@@ -39,7 +39,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
     def _install_uniform_ui(self):
         self._ui_pages = (
             self.main_page, self.value_page, self.housing_page, self.station_page,
-            self.zero_current_page, self.connection_sources_page, self.manual_page,
+            self.zero_current_page, self.connection_sources_page, self.station_link_page, self.manual_page,
             self.network_page, self.areas_page,
         )
         action_sets = (
@@ -48,6 +48,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             (self.station_page, (self.station_delete_button, self.station_save_button)),
             (self.zero_current_page, (self.zero_current_page.apply_button,)),
             (self.connection_sources_page, ()),
+            (self.station_link_page, ()),
             (self.manual_page, (self.manual_run_button,)),
             (self.network_page, (self.network_draw_button, self.network_refresh_button, self.network_selected_refresh_button)),
             (self.areas_page, (self.areas_create_button, self.areas_draw_button)),
@@ -62,6 +63,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
     def show_connection_sources_page(self):
         self._prepare_fixed_subpage(self.connection_sources_page)
         return super().show_connection_sources_page()
+
+    def show_station_link_page(self):
+        self._prepare_fixed_subpage(self.station_link_page)
+        return super().show_station_link_page()
 
     def _toggle_advanced(self, enabled):
         super()._toggle_advanced(enabled)

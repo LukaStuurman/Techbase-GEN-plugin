@@ -308,8 +308,10 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "GEN en Excel importeren en de controlelaag voor het ontwerp opbouwen.",
             [
                 self._dashboard_button(
-                    "1. Ontwerpstroom maken", 1, target=self.run_button
-                )
+                    "1.1. Ontwerpstroom maken", 1, target=self.run_button
+                ),
+                self._dashboard_button("1.2. Stationskoppeling", 1, target=self.station_names_button, secondary=True),
+                self._dashboard_button("1.3. Nieuwbouw", 1, target=self.new_buildings_button, secondary=True),
             ],
         )
         step2 = self._make_step_card(
@@ -336,12 +338,6 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     "2d. Nulwaarden herstellen",
                     2,
                     target=self.edit_zero_current_button,
-                    secondary=True,
-                ),
-                self._dashboard_button(
-                    "2e. Stationskoppeling en nieuwbouw",
-                    2,
-                    target=self.station_names_button,
                     secondary=True,
                 ),
             ],

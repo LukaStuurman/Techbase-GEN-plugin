@@ -5057,8 +5057,19 @@ def make_qgis_project(gpkg: Path) -> Path | None:
             *hidden_reference_layers,
             osm_layer,
         ]
-        root.setHasCustomLayerOrder(True)
-        root.setCustomLayerOrder(order)
+        # Store the actual layer-list order so later manual additions render
+        # normally instead of falling behind a fixed project render list/OSM.
+        root.setHasCustomLayerOrder(False)
+        for position, layer in enumerate(order):
+            node = root.findLayer(layer.id())
+            if node is not None:
+                clone = node.clone()
+                root.insertChildNode(position, clone)
+                node.parent().removeChildNode(node)
+        project.writeEntry("LSNetontwerp", "presentation_version", 147)
+        connection_node = root.findLayer(loaded["aansluitingen_geclusterd"].id())
+        if connection_node is not None:
+            connection_node.setExpanded(True)
         for original_layer in original_cable_layers:
             tree_node = root.findLayer(original_layer.id())
             if tree_node is not None:

@@ -264,8 +264,9 @@ def main():
         project.addMapLayer(middle_test)
         project.addMapLayer(front_test)
         runner._set_step_one_render_order((front_test,), osm_test)
-        assert project.layerTreeRoot().customLayerOrder()[0].id() == front_test.id()
-        assert project.layerTreeRoot().customLayerOrder()[-1].id() == osm_test.id()
+        assert not project.layerTreeRoot().hasCustomLayerOrder()
+        assert project.layerTreeRoot().layerOrder()[0].id() == front_test.id()
+        assert project.layerTreeRoot().layerOrder()[-1].id() == osm_test.id()
         for key in ("import", "housing", "current", "clustering"):
             assert runner._algorithm(key) is not None
         from ls_netontwerp_wizard.provider import LSNetontwerpProvider

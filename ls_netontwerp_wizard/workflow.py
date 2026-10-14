@@ -31,6 +31,7 @@ from qgis.core import (
     QgsReferencedRectangle,
     QgsRendererCategory,
     QgsRuleBasedRenderer,
+    QgsSingleSymbolRenderer,
     QgsVectorFileWriter,
     QgsVectorLayer,
     QgsVectorLayerSimpleLabeling,
@@ -40,6 +41,8 @@ from qgis.core import (
 )
 
 from .station_name_csv import load_station_name_lookup, normalize_asset_id
+from .station_symbology import color_connections_by_station
+from .project_presentation import PRESENTATION_VERSION, use_layer_tree_order, show_connection_legend
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent
@@ -297,6 +300,7 @@ class WorkflowRunner:
                 "De stationsnamen konden niet naar de ontwerpstroomlaag worden "
                 f"geschreven{': ' + errors if errors else '.'}"
             )
+        color_connections_by_station(layer)
         layer.triggerRepaint()
         return {
             **csv_summary,
@@ -325,6 +329,7 @@ class WorkflowRunner:
                 )
             project.addMapLayer(layer)
         layer.setName(name)
+        layer.setCustomProperty("LSNetontwerp/workflow_layer", True)
         layer.setScaleBasedVisibility(False)
         node = project.layerTreeRoot().findLayer(layer.id())
         if node is not None:
@@ -443,6 +448,8 @@ class WorkflowRunner:
         project = QgsProject.instance()
         visible_ids = {layer.id() for layer in visible_layers if layer is not None}
         for layer in project.mapLayers().values():
+            if layer.id() not in visible_ids and not layer.customProperty("LSNetontwerp/workflow_layer", False):
+                continue
             layer.setScaleBasedVisibility(False)
             node = project.layerTreeRoot().findLayer(layer.id())
             if node is not None:
@@ -450,25 +457,8 @@ class WorkflowRunner:
 
     @staticmethod
     def _set_step_one_render_order(foreground_layers, osm_layer):
-        """Leg de kaartvolgorde vast met OSM gegarandeerd als onderste laag."""
-        root = QgsProject.instance().layerTreeRoot()
-        # Lees eerst de echte volgorde uit het lagenvenster. Als de aangepaste
-        # volgorde al actief is, kan layerOrder() juist die oude volgorde geven.
-        root.setHasCustomLayerOrder(False)
-        tree_order = list(root.layerOrder())
-        foreground = [layer for layer in foreground_layers if layer is not None]
-        foreground_ids = {layer.id() for layer in foreground}
-        osm_id = osm_layer.id() if osm_layer is not None else None
-        middle = [
-            layer
-            for layer in tree_order
-            if layer.id() not in foreground_ids and layer.id() != osm_id
-        ]
-        order = foreground + middle
-        if osm_layer is not None:
-            order.append(osm_layer)
-        root.setCustomLayerOrder(order)
-        root.setHasCustomLayerOrder(True)
+        """Use the visible layer list, with OSM at the bottom, for map order."""
+        use_layer_tree_order(foreground=foreground_layers, background=(osm_layer,))
 
     @staticmethod
     def _style_review_connections(layer):
@@ -489,7 +479,8 @@ class WorkflowRunner:
             symbol_layer.setStrokeWidthUnit(Qgis.RenderUnit.Pixels)
         except (AttributeError, TypeError):
             pass
-        layer.renderer().setSymbol(symbol)
+        station_coloring = bool(layer.customProperty("LSNetontwerp/station_coloring", False))
+        layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
         labels = QgsPalLayerSettings()
         labels.fieldName = 'format_number("Hoogste Trafo", 1)'
@@ -521,6 +512,10 @@ class WorkflowRunner:
         layer.setLabeling(QgsVectorLayerSimpleLabeling(labels))
         layer.setLabelsEnabled(True)
         layer.setCustomProperty("LSNetontwerp/review_current_layer", True)
+        if station_coloring:
+            color_connections_by_station(layer)
+        else:
+            show_connection_legend(layer)
         layer.triggerRepaint()
 
     @staticmethod
@@ -748,6 +743,10 @@ class WorkflowRunner:
             18,
             "GEN XML en Excel importeren",
         )
+        import_source = str(import_gpkg).replace("\\", "/").casefold()
+        for layer in QgsProject.instance().mapLayers().values():
+            if layer.source().replace("\\", "/").casefold().startswith(import_source):
+                layer.setCustomProperty("LSNetontwerp/workflow_layer", True)
         source_layers = {}
         for layer_key, display_name, visible in (
             ("layer_main_cables", "Laagspanningskabels (bron)", True),
@@ -990,7 +989,7 @@ class WorkflowRunner:
             osm_layer,
         )
         QgsProject.instance().writeEntry(
-            "LSNetontwerp", "presentation_version", 146
+            "LSNetontwerp", "presentation_version", PRESENTATION_VERSION
         )
         state = {
             "version": 1,

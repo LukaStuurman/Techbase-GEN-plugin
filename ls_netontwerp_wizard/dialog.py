@@ -467,7 +467,7 @@ class LSNetontwerpDialog(QDialog):
         action_grid = QGridLayout(actions)
         action_grid.setHorizontalSpacing(8)
         action_grid.setVerticalSpacing(8)
-        self.run_button = QPushButton("1. Ontwerpstroom maken")
+        self.run_button = QPushButton("1.1. Ontwerpstroom maken")
         self.run_button.setToolTip(
             "Maak het werkproject, importeer de invoer en bereken de ontwerpstroom"
         )
@@ -499,14 +499,17 @@ class LSNetontwerpDialog(QDialog):
         self.edit_zero_current_button.setObjectName("secondaryButton")
         self.edit_zero_current_button.setEnabled(False)
         self.edit_zero_current_button.clicked.connect(self.show_zero_current_page)
-        self.station_names_button = QPushButton("2e. Stationskoppeling en nieuwbouw")
+        self.station_names_button = QPushButton("1.2. Stationskoppeling")
         self.station_names_button.setToolTip(
-            "Koppel LOVION-stationsnummers, wijzig geselecteerde aansluitingen "
-            "en voeg nieuwbouw toe uit PDOK-verblijfsobjecten"
+            "Koppel LOVION-stationsnummers en kleur de aansluitingen per station"
         )
         self.station_names_button.setObjectName("secondaryButton")
         self.station_names_button.setEnabled(False)
-        self.station_names_button.clicked.connect(self.show_connection_sources_page)
+        self.station_names_button.clicked.connect(self.show_station_link_page)
+        self.new_buildings_button = QPushButton("1.3. Nieuwbouw")
+        self.new_buildings_button.setObjectName("secondaryButton")
+        self.new_buildings_button.setEnabled(False)
+        self.new_buildings_button.clicked.connect(self.show_connection_sources_page)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -555,7 +558,8 @@ class LSNetontwerpDialog(QDialog):
         action_grid.addWidget(self.network_button, 1, 2)
         action_grid.addWidget(self.areas_button, 1, 3)
         action_grid.addWidget(self.edit_zero_current_button, 2, 0, 1, 4)
-        action_grid.addWidget(self.station_names_button, 3, 0, 1, 4)
+        action_grid.addWidget(self.station_names_button, 3, 0, 1, 2)
+        action_grid.addWidget(self.new_buildings_button, 3, 2, 1, 2)
         root.addWidget(actions)
         self.actions_group = actions
         close_button = QPushButton("Sluiten")
@@ -581,8 +585,10 @@ class LSNetontwerpDialog(QDialog):
         self.zero_current_page = ZeroCurrentPage(self)
         self.page_stack.addWidget(self.zero_current_page)
         from .connection_sources_page import ConnectionSourcesPage
-        self.connection_sources_page = ConnectionSourcesPage(self)
+        self.connection_sources_page = ConnectionSourcesPage(self, "newbouw")
         self.page_stack.addWidget(self.connection_sources_page)
+        self.station_link_page = ConnectionSourcesPage(self, "stations")
+        self.page_stack.addWidget(self.station_link_page)
         self.page_stack.setCurrentWidget(self.main_page)
 
     def _build_manual_page(self):
@@ -1227,33 +1233,8 @@ class LSNetontwerpDialog(QDialog):
             # added layer which is absent from that list can be selectable but
             # completely invisible. Insert the simplified areas at the exact
             # position of the original areas, always above OpenStreetMap.
-            existing_order = (
-                list(root.customLayerOrder())
-                if root.hasCustomLayerOrder()
-                else list(root.layerOrder())
-            )
-            draw_order = [
-                layer for layer in existing_order
-                if layer.id() != result_layer.id()
-            ]
-            original_index = next(
-                (index for index, layer in enumerate(draw_order) if layer.id() == areas.id()),
-                -1,
-            )
-            if original_index >= 0:
-                draw_order.insert(original_index, result_layer)
-            else:
-                osm_index = next(
-                    (
-                        index
-                        for index, layer in enumerate(draw_order)
-                        if layer.name() == "OpenStreetMap"
-                    ),
-                    len(draw_order),
-                )
-                draw_order.insert(osm_index, result_layer)
-            root.setCustomLayerOrder(draw_order)
-            root.setHasCustomLayerOrder(True)
+            from .project_presentation import place_layer_before
+            place_layer_before(result_layer, areas, project)
             project.write()
             self._areas_progress_update(100, "Vereenvoudigde clustergebieden gereed.")
             self._set_areas_status(
@@ -3220,6 +3201,7 @@ class LSNetontwerpDialog(QDialog):
         self.edit_housing_button.setEnabled(True)
         self.edit_stations_button.setEnabled(True)
         self.station_names_button.setEnabled(True)
+        self.new_buildings_button.setEnabled(True)
         self.cluster_button.setEnabled(True)
         self._refresh_zero_current_count()
         self.status_label.setText(
@@ -3238,7 +3220,12 @@ class LSNetontwerpDialog(QDialog):
             )
         except (TypeError, ValueError):
             current_version = 0
+        from .project_presentation import PRESENTATION_VERSION, repair_generated_project
+        if current_version >= PRESENTATION_VERSION:
+            return
+
         if current_version >= 146:
+            repair_generated_project(project)
             return
 
         layers = list(project.mapLayers().values())
@@ -3313,7 +3300,7 @@ class LSNetontwerpDialog(QDialog):
                 osm_layer,
             )
             project.writeEntry(
-                "LSNetontwerp", "presentation_version", 146
+                "LSNetontwerp", "presentation_version", PRESENTATION_VERSION
             )
             project.write()
         except Exception:
@@ -3332,6 +3319,12 @@ class LSNetontwerpDialog(QDialog):
     def show_connection_sources_page(self):
         self.connection_sources_page.refresh()
         self.page_stack.setCurrentWidget(self.connection_sources_page)
+        self.setWindowTitle("LS Netontwerp Wizard – nieuwbouw")
+
+    def show_station_link_page(self):
+        self.station_link_page.refresh()
+        self.page_stack.setCurrentWidget(self.station_link_page)
+        self.setWindowTitle("LS Netontwerp Wizard – stationskoppeling")
 
     def open_station_names_csv(self, target_layer=None):
         if not self.prepared_state and target_layer is None:
@@ -3928,6 +3921,7 @@ class LSNetontwerpDialog(QDialog):
         update = self._make_progress("Workflow voorbereiden…")
         self.run_button.setEnabled(False)
         self.station_names_button.setEnabled(False)
+        self.new_buildings_button.setEnabled(False)
 
         try:
             from .workflow import WorkflowRunner
@@ -3944,6 +3938,7 @@ class LSNetontwerpDialog(QDialog):
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
             self.station_names_button.setEnabled(True)
+            self.new_buildings_button.setEnabled(True)
             self.cluster_button.setEnabled(True)
             review_layer = next(
                 (
@@ -3995,7 +3990,7 @@ class LSNetontwerpDialog(QDialog):
             info_message = (
                 "Het QGIS-werkproject en de ontwerpstroomlaag zijn gereed.\n\n"
                 "Stationsnamen toevoegen is optioneel: gebruik daarvoor "
-                "'2e. Stationskoppeling & nieuwbouw'.\n\n"
+                "'1.2. Stationskoppeling' en '1.3. Nieuwbouw'.\n\n"
                 "Stroomwaarde handmatig wijzigen:\n"
                 "1. Selecteer één of meer aansluitingen.\n"
                 "2. Gebruik '2a. Stroom aanpassen'.\n\n"
@@ -4047,6 +4042,7 @@ class LSNetontwerpDialog(QDialog):
         self.edit_housing_button.setEnabled(False)
         self.edit_stations_button.setEnabled(False)
         self.station_names_button.setEnabled(False)
+        self.new_buildings_button.setEnabled(False)
         self.cluster_button.setEnabled(False)
         try:
             from .workflow import WorkflowRunner
@@ -4062,12 +4058,14 @@ class LSNetontwerpDialog(QDialog):
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
             self.station_names_button.setEnabled(True)
+            self.new_buildings_button.setEnabled(True)
             self.cluster_button.setEnabled(True)
         else:
             self._finish_progress(100)
             self.status_label.setText(f"Gereed: {result['result_dir']}")
             self.prepared_state = None
             self.station_names_button.setEnabled(False)
+            self.new_buildings_button.setEnabled(False)
             QMessageBox.information(
                 self,
                 "LS-netontwerp gereed",
