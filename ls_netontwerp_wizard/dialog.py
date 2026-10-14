@@ -515,7 +515,7 @@ class LSNetontwerpDialog(QDialog):
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
         )
         self.cluster_button.setEnabled(False)
-        self.cluster_button.clicked.connect(self.run_clustering)
+        self.cluster_button.clicked.connect(self.open_clustering_options)
         self.edit_cluster_button = QPushButton("4. Clustering aanpassen")
         self.edit_cluster_button.setToolTip(
             "Verplaats geselecteerde aansluitingen naar het geselecteerde station "
@@ -3193,9 +3193,23 @@ class LSNetontwerpDialog(QDialog):
         if state.get("status") not in (
             "ontwerpstroom_controleren",
             "clustering_bezig",
+            "gereed",
         ):
             return
         self.prepared_state = state
+        self.plan_edit.setText(str(state["values"].get("plan", "")))
+        self.no_plan.setChecked(not bool(state.get("plan_gpkg")))
+        from .clustering_options import CLUSTER_KEYS
+        for key in CLUSTER_KEYS:
+            if key not in state["values"] or key not in self.widgets:
+                continue
+            widget = self.widgets[key]
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(state["values"][key])
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(state["values"][key]))
+            else:
+                widget.setValue(state["values"][key])
         self._upgrade_prepared_project_presentation()
         self.edit_values_button.setEnabled(True)
         self.edit_housing_button.setEnabled(True)
@@ -4005,7 +4019,7 @@ class LSNetontwerpDialog(QDialog):
                 + zero_message
                 + "Herhaal de correcties zo vaak als nodig en klik daarna op "
                 "'Clustering maken'.\n\n"
-                "Voor de clustering wordt altijd 'Hoogste Trafo' gebruikt.\n\n"
+                "Kies bij stap 3 de ontwerpstroomkolom, het plangebied en de grenzen.\n\n"
                 + f"Werkproject:\n{state['work_project']}"
             )
             QMessageBox.information(self, "Ontwerpstroom controleren", info_message)
@@ -4013,6 +4027,21 @@ class LSNetontwerpDialog(QDialog):
                 self.show_zero_current_page(select_first=True)
         finally:
             self.run_button.setEnabled(True)
+
+    def open_clustering_options(self):
+        if not self.prepared_state:
+            self._restore_prepared_state()
+        if not self.prepared_state:
+            QMessageBox.warning(self, "Ontwerpstroom ontbreekt", "Voer eerst stap 1 uit of open het eerder gemaakte werkproject.")
+            return
+        try:
+            from .clustering_options import ClusteringOptionsDialog
+            options = ClusteringOptionsDialog(self)
+            options.exec()
+            if options.start_requested:
+                self.run_clustering()
+        except Exception as exc:
+            QMessageBox.critical(self, "Clusteringinstellingen", str(exc))
 
     def run_clustering(self):
         if not self.prepared_state:
@@ -4022,20 +4051,6 @@ class LSNetontwerpDialog(QDialog):
                 "Voer eerst stap 1 uit of open het eerder gemaakte werkproject.",
             )
             return
-        reply = QMessageBox.question(
-            self,
-            "Clustering starten",
-            "Zijn Hoogste Trafo, Hoogste Kabel en de bestaande stations "
-            "gecontroleerd?\n\nDe clustering gebruikt Hoogste Trafo en de "
-            "aangepaste trafocapaciteiten.",
-        )
-        try:
-            yes_button = QMessageBox.StandardButton.Yes
-        except AttributeError:
-            yes_button = QMessageBox.Yes
-        if reply != yes_button:
-            return
-
         update = self._make_progress("Clustering voorbereiden…")
         self.run_button.setEnabled(False)
         self.edit_values_button.setEnabled(False)
@@ -4063,7 +4078,7 @@ class LSNetontwerpDialog(QDialog):
         else:
             self._finish_progress(100)
             self.status_label.setText(f"Gereed: {result['result_dir']}")
-            self.prepared_state = None
+            self.cluster_button.setEnabled(True)
             self.station_names_button.setEnabled(False)
             self.new_buildings_button.setEnabled(False)
             QMessageBox.information(

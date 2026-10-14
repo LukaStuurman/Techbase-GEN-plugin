@@ -1041,12 +1041,9 @@ class WorkflowRunner:
             "clustering",
             {
                 "AANSLUITINGEN": self._validate_layer(points_uri, "LS-aansluitingen"),
-                # The review tool edits this exact field. Keep the staged
-                # wizard deterministic even when an older Advanced setting is
-                # still present in QSettings or a saved workflow state.
-                "ONTWERPSTROOM_VELD": "Hoogste Trafo",
+                "ONTWERPSTROOM_VELD": self.v.get("field_design_current", "Hoogste Trafo"),
                 "MULTISTORY_VELD": self.v["field_multistory"],
-                "FLATKASTEN": imported(self.v["layer_flat_cabinets"], "flatkasten"),
+                "FLATKASTEN": imported(self.v["layer_flat_cabinets"], "flatkasten") if self.v.get("use_flat_cabinets", True) else None,
                 "FLATKAST_ID_VELD": self.v["field_flat_id"],
                 "BAG_API_URL": self.v["bag_api_url"],
                 "KABELS": imported(self.v["layer_main_cables"], "LS-kabels"),
@@ -1106,6 +1103,26 @@ class WorkflowRunner:
             "pdf": clustering_result.get("CONTROLEKAART_PDF", ""),
             "png": clustering_result.get("CONTROLEKAART", ""),
         }
+
+    def recover_project(self, state):
+        """Rebuild project/layout from completed outputs without recalculating clusters."""
+        output_dir = Path(state["clustering_dir"])
+        gpkg = output_dir / "clustering_ontwerp.gpkg"
+        if not gpkg.exists() or not (output_dir / "cluster_overzicht.csv").exists():
+            raise QgsProcessingException("Er is nog geen berekende clustering om een project van te herstellen.")
+        algorithm = self._algorithm("clustering")
+        project_runner = ALGORITHM_ROOT / "laagspanning_clustering_lib" / "qgis_project_runner.py"
+        self.progress(10, "Berekende clustering openen voor projectherstel")
+        feedback = StageFeedback(self.progress, 10, 95, "QGIS-project herstellen")
+        project_path, _layout_path = algorithm._create_qgis_project_with_retries(project_runner, output_dir, gpkg, feedback)
+        state["status"] = "gereed"
+        state["final_project"] = str(project_path)
+        if state["values"].get("open_project", True):
+            if not QgsProject.instance().read(str(project_path)):
+                raise QgsProcessingException("Het project is hersteld, maar kon niet worden geopend.")
+        self._write_state(state)
+        self.progress(100, "QGIS-project en printlayout hersteld")
+        return project_path
 
     def run(self):
         """Backward-compatible uninterrupted run for tests and automation."""
