@@ -1,5 +1,11 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.19.1 herstelt het starten van LOVION bij lange projectpaden.
+De werkbestanden staan nu in de korte lokale map `%LOCALAPPDATA%/TechBase/LOVION`,
+zodat Windows PowerShell geen te lange paden uit project- of OneDrive-mappen krijgt.
+Stationsstatussen en koppelingen blijven in het QGIS-project bewaard.
+De tekst op de startknop en de status voor geplande stations is eveneens hersteld.
+
 Versie 1.19.0 integreert de LOVION Aansluiting Extractor in **1.2. Stationskoppeling**.
 
 1. Kies de ontwerpstroomlaag, stationslaag en kolom met het stationsnummer.
@@ -8,7 +14,7 @@ Versie 1.19.0 integreert de LOVION Aansluiting Extractor in **1.2. Stationskoppe
    Een selectie in het plangebied heeft voorrang; zonder selectie worden alle vlakken uit die laag gebruikt.
 3. Voeg desgewenst stationsnummers handmatig toe, met komma's, puntkomma's of nieuwe regels.
 4. Open in LOVION/Citrix de lijst **LS stroomtransformatorgroep** met alleen de eerste rij geselecteerd.
-   Zet LOVION volledig zichtbaar op het linker scherm en kies **LOVION starten — resterende stations**.
+   Zet LOVION volledig zichtbaar op het linker scherm en kies **LOVION starten (resterende stations)**.
    De plugin minimaliseert en geeft vijf seconden voorbereidingstijd. Gebruik tijdens de verwerking
    geen muis of toetsenbord; zelf de muis bewegen stopt de automatisering.
 5. Na afloop koppelt de plugin geverifieerde aansluitingen via **Master Asset ID → Station**.
@@ -28,7 +34,7 @@ resetten en rondes voor andere stations. Een expliciete nieuwe verwerking van da
 kan die handmatige waarde opnieuw koppelen. **Stoppen** vraagt een gecontroleerde stop aan en laat
 de actuele actie afsluiten. Bij een projectwissel wordt de verwerking gestopt en het resultaat niet
 op een ander project toegepast. Rapporten, CSV's en logbestanden blijven bewaard in
-`lovion_extractor` naast het project, of in de lokale QGIS-appgegevens bij een onopgeslagen project.
+`%LOCALAPPDATA%/TechBase/LOVION`, ook bij een opgeslagen project.
 
 De extractor draait met de ingebouwde Windows PowerShell; een losse workbench is niet nodig.
 De bestaande Windows/Citrix/OCR-schermvoorwaarden van LAE v1.4.0 blijven gelden.
@@ -37,7 +43,7 @@ zie `assets/lovion/UPSTREAM.md`. `test_lovion_integration.py` controleert select
 meerdere trafo's, fouten, stoppen, kleuren, herstel en QGZ/GeoPackage-opslag via een gecontroleerde
 testbron zonder echte muis-, toetsenbord-, klembord- of OCR-acties.
 
-Installeer `ls_netontwerp_wizard-1.19.0.zip` en herstart QGIS.
+Installeer `ls_netontwerp_wizard-1.19.1.zip` en herstart QGIS.
 
 Versie 1.18.0 plaatst bij **1. Invoer & ontwerpstroom** drie knoppen:
 **1.1. Ontwerpstroom maken**, **1.2. Stationskoppeling** en **1.3. Nieuwbouw**.

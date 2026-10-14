@@ -15,7 +15,11 @@ from .station_name_csv import find_master_asset_id_column
 
 ACTIVE_WORKERS = set()
 STATUS = {"pending": "Nog te verwerken", "running": "Bezig", "done": "Gekoppeld",
-          "planned": "Gepland â€” geen aansluitingen", "manual": "Handmatige controle nodig", "error": "Niet voltooid"}
+          "planned": "Gepland - geen aansluitingen", "manual": "Handmatige controle nodig", "error": "Niet voltooid"}
+
+
+def run_storage_root():
+    return Path(QStandardPaths.writableLocation(QStandardPaths.GenericDataLocation)) / "TechBase" / "LOVION"
 
 
 class LovionWorker(QObject):
@@ -26,9 +30,10 @@ class LovionWorker(QObject):
         super().__init__(QApplication.instance())
         self.session, self.numbers = session, list(numbers)
         project = QgsProject.instance()
-        base = Path(project.homePath()) if project.fileName() else Path(
-            QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation))
-        folder = base / "lovion_extractor" / session.data["id"] / uuid.uuid4().hex
+        # Windows PowerShell 5 and its .NET file operations cannot reliably
+        # use long paths, even when Python can create the same directories.
+        # Keep worker files independent of project, network and OneDrive paths.
+        folder = run_storage_root() / session.data["id"] / uuid.uuid4().hex[:12]
         folder.mkdir(parents=True, exist_ok=True)
         self.report, self.cancel_file = folder / "result.json", folder / "cancel.flag"
         request = folder / "request.json"
@@ -176,7 +181,7 @@ class LovionStationPanel(QWidget):
         form.addRow(explanation)
         layout.addWidget(self.controls)
         row = QHBoxLayout()
-        self.start_button = self._button(row, "LOVION starten â€” resterende stations", self.start)
+        self.start_button = self._button(row, "LOVION starten (resterende stations)", self.start)
         self.stop_button = self._button(row, "Stoppen", self.stop)
         self.stop_button.setEnabled(False)
         layout.addLayout(row)
@@ -343,7 +348,7 @@ class LovionStationPanel(QWidget):
             number = event.get("station")
             for row in range(self.table.rowCount()):
                 if self.table.item(row, 0).text() == number:
-                    self.table.item(row, 1).setText("Verwerkt — controle na ronde")
+                    self.table.item(row, 1).setText("Verwerkt - controle na ronde")
 
     def on_completed(self, message):
         self.worker = None
