@@ -50,10 +50,13 @@ def main():
     app.initQgis()
     from ls_netontwerp_wizard.lovion_session import (LovionSession, STATE_KEY, station_numbers,
         selected_station_numbers, stations_in_plan, verified_report)
-    from ls_netontwerp_wizard.lovion_panel import LovionWorker
+    from ls_netontwerp_wizard.lovion_panel import LovionWorker, run_storage_root
     from ls_netontwerp_wizard.dashboard_warning_dialog import LSNetontwerpDashboardDialog
     project = QgsProject.instance()
     project.clear()
+    local_root = run_storage_root()
+    assert local_root.is_absolute() and local_root.parts[-2:] == ("TechBase", "LOVION")
+    assert len(str(local_root / ("a" * 32) / ("b" * 12) / "result.json")) < 240
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, patch(
             "ls_netontwerp_wizard.lovion_panel.run_storage_root") as storage_root:
         folder = Path(tmp)

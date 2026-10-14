@@ -19,7 +19,7 @@ STATUS = {"pending": "Nog te verwerken", "running": "Bezig", "done": "Gekoppeld"
 
 
 def run_storage_root():
-    return Path(QStandardPaths.writableLocation(QStandardPaths.GenericDataLocation)) / "TechBase" / "LOVION"
+    return Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)) / "TechBase" / "LOVION"
 
 
 class LovionWorker(QObject):
