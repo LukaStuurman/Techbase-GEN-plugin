@@ -34,7 +34,11 @@ def main():
             path = root / "clustering_ontwerp.gpkg"
             stations = gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:28992")
             stations.drop(columns="Volgnummer").to_file(path, layer="stations_ontwerp", driver="GPKG")
-            stations.to_file(path, layer="aansluitingen_geclusterd", driver="GPKG")
+            connections = stations.copy()
+            connections["Station"] = ["S2", "S1"]
+            connections["Master_asset_id"] = ["asset-1", "asset-2"]
+            connections["Ontwerp_A"] = [10.0, 20.0]
+            connections.to_file(path, layer="aansluitingen_geclusterd", driver="GPKG")
             gpd.GeoDataFrame([{**row, "geometry": Polygon([(155000,462990),(155030,462990),(155030,463010),(155000,463010)])} for row in rows], crs=stations.crs).to_file(path, layer="clustergebieden", driver="GPKG")
             cables = gpd.GeoDataFrame([{**row, "geometry": LineString([(155000,463000),(155030,463000)])} for row in rows], crs=stations.crs)
             cables.to_file(path, layer="sleuven_genood", driver="GPKG")
@@ -50,6 +54,24 @@ def main():
             assert state["status"] == "gereed" and "Poging 1: code 0" in (root / "qgis_project_creation.log").read_text(encoding="utf-8")
         assert project.read(str(project_path))
         layout = project.layoutManager().layoutByName("Clustering overzicht")
+        assert "Clustergebieden" not in [node.layer().name() for node in layout.itemById("legenda").model().rootGroup().findLayers()]
+        scope = project.layoutManager().layoutByName("Scope")
+        assert scope is not None and (root / "scope.qpt").exists()
+        scope_layers = scope.itemById("scopekaart").layers()
+        assert not any(layer.name() in ("Clustergebieden", "Kabelroutes per cluster", "Stations ontwerp") for layer in scope_layers)
+        snapshot = next(layer for layer in scope_layers if layer.name() == "Aansluitingen bestaande stations (Scope)")
+        scope_before = [(f["Station"], f["Master_asset_id"]) for f in snapshot.getFeatures()]
+        assert snapshot.readOnly() and not scope.itemById("scopekaart").layerStyleOverrides()
+        scope_table = scope.itemById("scope_stationsoverzicht")
+        scope_rendered = QgsExpression.replaceExpressionText(scope_table.text(), scope.createExpressionContext())
+        assert "[%" not in scope_rendered
+        if "--input" not in sys.argv:
+            assert scope_before == [("S2", "asset-1"), ("S1", "asset-2")], scope_before
+            clustered = project.mapLayersByName("Aansluitingen geclusterd")[0]
+            clustered.startEditing()
+            clustered.changeAttributeValue(next(clustered.getFeatures()).id(), clustered.fields().lookupField("Cluster"), "S2")
+            assert scope_before == [(f["Station"], f["Master_asset_id"]) for f in snapshot.getFeatures()]
+            clustered.rollBack()
         table = layout.itemById("stationsoverzicht")
         assert table is not None and "aggregate(" in table.text()
         context = layout.createExpressionContext()

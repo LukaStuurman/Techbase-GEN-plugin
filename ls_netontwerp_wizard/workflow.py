@@ -1112,6 +1112,18 @@ class WorkflowRunner:
             raise QgsProcessingException("Er is nog geen berekende clustering om een project van te herstellen.")
         algorithm = self._algorithm("clustering")
         project_runner = ALGORITHM_ROOT / "laagspanning_clustering_lib" / "qgis_project_runner.py"
+        manifest = output_dir / "scope_invoer.json"
+        if not manifest.exists() and state.get("points_gpkg"):
+            scope_context = {
+                "points_uri": self._layer(state["points_gpkg"], state.get("points_layer", Path(state["points_gpkg"]).stem)),
+                "current_field": state["values"].get("field_design_current", "Hoogste Trafo"),
+                "station_csv": state["values"].get("station_names_csv", ""),
+                "station_csv_field": state["values"].get("station_name_csv_field", "SourceFile"),
+            }
+            if state.get("import_gpkg") and state["values"].get("layer_stations"):
+                scope_context["stations_uri"] = self._layer(state["import_gpkg"], state["values"]["layer_stations"])
+                scope_context["station_field"] = state["values"].get("field_station_name", "Station")
+            manifest.write_text(json.dumps(scope_context, ensure_ascii=False, indent=2), encoding="utf-8")
         self.progress(10, "Berekende clustering openen voor projectherstel")
         feedback = StageFeedback(self.progress, 10, 95, "QGIS-project herstellen")
         project_path, _layout_path = algorithm._create_qgis_project_with_retries(project_runner, output_dir, gpkg, feedback)

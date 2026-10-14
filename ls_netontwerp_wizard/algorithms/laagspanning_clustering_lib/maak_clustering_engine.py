@@ -5199,6 +5199,7 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         side_panel_legend_x = 343.5
 
         table_title = QgsLayoutItemLabel(layout)
+        table_title.setId("stationsoverzicht_titel")
         table_title.setText("Stationsoverzicht")
         table_font = QFont("Arial", 9)
         table_font.setBold(True)
@@ -5294,7 +5295,7 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         legend.setFrameEnabled(True)
         legend_root = legend.model().rootGroup()
         legend_root.removeAllChildren()
-        legend_layers = [loaded["clustergebieden"], source_stations]
+        legend_layers = [source_stations]
         if "flatkasten" in loaded:
             legend_layers.append(loaded["flatkasten"])
         if "plangebied" in loaded:
@@ -5328,6 +5329,8 @@ def make_qgis_project(gpkg: Path) -> Path | None:
 
         if not project.layoutManager().addLayout(layout):
             raise RuntimeError("De Print Layout kon niet aan het project worden toegevoegd")
+        from scope_layout import add_scope_layout
+        add_scope_layout(project, layout, loaded, OUT, cluster_rgb)
         if not project.write(str(project_path)):
             raise RuntimeError("QGIS kon het projectbestand niet schrijven")
 
@@ -6762,6 +6765,7 @@ def main(_automatic_retry: bool = False) -> None:
     point_utilization = utilization[point_assignment]
 
     def safe_column(name: str, fallback=None):
+        name = next((column for column in points.columns if column.casefold() == name.casefold()), name)
         if name in points.columns:
             value = points[name]
             if isinstance(value, pd.DataFrame):
@@ -6772,6 +6776,8 @@ def main(_automatic_retry: bool = False) -> None:
     connections = gpd.GeoDataFrame(
         {
             "Orig_ID": safe_column("ID"),
+            "Master_asset_id": safe_column("master_asset_id", ""),
+            "Station": safe_column("Station", ""),
             "Straat": safe_column("Straat", ""),
             "Huisnr": safe_column("Huisnummer"),
             "Toevoeging": safe_column("Toevoeging", ""),

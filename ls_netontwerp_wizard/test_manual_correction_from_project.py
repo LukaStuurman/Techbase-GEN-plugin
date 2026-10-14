@@ -7,6 +7,7 @@ import sys
 from qgis.core import (
     QgsApplication,
     QgsCategorizedSymbolRenderer,
+    QgsExpression,
     QgsLayoutExporter,
     QgsLayoutItemAttributeTable,
     QgsProcessingContext,
@@ -57,6 +58,9 @@ def main():
         routes = layer_by_name("Kabelroutes per cluster")
         cables = layer_by_name("Sleuven geknipt/genood")
         plan = layer_by_name("Plangebied")
+        scope = QgsProject.instance().layoutManager().layoutByName("Scope")
+        scope_points = layer_by_name("Aansluitingen bestaande stations (Scope)") if scope else None
+        scope_before = [(f["Master_asset_id"], f["Station"]) for f in scope_points.getFeatures()] if scope else None
 
         station_features = list(stations.getFeatures())
         connection_features = list(connections.getFeatures())
@@ -155,9 +159,13 @@ def main():
             for frame in layout.multiFrames()
             if isinstance(frame, QgsLayoutItemAttributeTable)
         ]
-        assert len(tables) == 1
-        assert tables[0].vectorLayer().id() == stations.id()
-        assert tables[0].columns()[0].attribute() == '"Volgnummer"'
+        assert not tables
+        table = layout.itemById("stationsoverzicht")
+        assert table is not None and '"Volgnummer"' in table.text()
+        rendered = QgsExpression.replaceExpressionText(table.text(), layout.createExpressionContext())
+        assert "[%" not in rendered and source_cluster not in rendered
+        if scope:
+            assert scope_before == [(f["Master_asset_id"], f["Station"]) for f in scope_points.getFeatures()]
         preview_path = project_path.parent / "layout_after_manual.png"
         settings = QgsLayoutExporter.ImageExportSettings()
         settings.dpi = 150

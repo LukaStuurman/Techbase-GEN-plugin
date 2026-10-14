@@ -50,7 +50,8 @@ def _install_manual_page_reset(dialog_module) -> None:
         return
 
     def run_manual_correction(self, *args, **kwargs):
-        original(self, *args, **kwargs)
+        # Consume Qt's clicked(bool): the underlying action has no arguments.
+        original(self)
 
         message = _success_text(getattr(self, "manual_status_label", None))
         if not message.startswith("Gereed:"):
@@ -104,7 +105,7 @@ def _install_visual_editor_reset(editor_module) -> None:
         return
 
     def apply_change(self, *args, **kwargs):
-        original(self, *args, **kwargs)
+        original(self)
 
         message = _success_text(getattr(self, "status_label", None))
         if not message.startswith("Gereed:"):
