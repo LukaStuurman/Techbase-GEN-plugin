@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import json
 
 from qgis.PyQt.QtCore import QVariant
 from qgis.core import (
@@ -119,7 +120,7 @@ def _address_key(feature, source=False):
 
 
 def add_selected_objects(source, target, housing, household_page,
-                         fallback_type=None, manual_currents=None, station=""):
+                         fallback_type=None, manual_currents=None, station="", skip_existing=False):
     """Build first, then add atomically. Keep apartments distinct by BAG ID."""
     selected = list(source.selectedFeatures())
     if not selected:
@@ -134,11 +135,12 @@ def add_selected_objects(source, target, housing, household_page,
         if len(manual_currents) != 4 or any(not math.isfinite(float(v)) or float(v) < 0 for v in manual_currents):
             raise ValueError("Vul vier geldige, niet-negatieve stroomwaarden in.")
     existing_ids, existing_addresses = set(), set()
-    for feature in target.getFeatures():
-        existing_ids.add(text_value(feature, "BAG_VBO_ID"))
-        key = _address_key(feature)
-        if key:
-            existing_addresses.add(key)
+    if skip_existing:
+        for feature in target.getFeatures():
+            existing_ids.add(text_value(feature, "BAG_VBO_ID"))
+            key = _address_key(feature)
+            if key:
+                existing_addresses.add(key)
 
     buildings = {}
     spatial = QgsSpatialIndex()
@@ -159,7 +161,7 @@ def add_selected_objects(source, target, housing, household_page,
     for original in selected:
         bag_id = text_value(original, "identificatie")
         address = _address_key(original, True)
-        if not bag_id or bag_id in existing_ids or (address and address in existing_addresses):
+        if not bag_id or (skip_existing and (bag_id in existing_ids or (address and address in existing_addresses))):
             skipped += 1
             continue
         geom = QgsGeometry(original.geometry())
@@ -187,6 +189,8 @@ def add_selected_objects(source, target, housing, household_page,
                       "service_connection_type_type": "verblijfsobject",
                       "HerstelHandmatig": "0",
                       "Bron": "PDOK BAG verblijfsobject", "BAG_Status": value(original, "status")})
+        if isinstance(attrs["Gebruiksdoel"], (list, tuple)):
+            attrs["Gebruiksdoel"] = json.dumps(attrs["Gebruiksdoel"], ensure_ascii=False)
         attrs[field_defaults.get("field_usage", "Gebruiksdoel")] = attrs["Gebruiksdoel"]
         attrs[field_defaults.get("field_passthrough", "service_connection_type_type")] = "verblijfsobject"
         inherited = None
@@ -220,6 +224,7 @@ def add_selected_objects(source, target, housing, household_page,
             existing_addresses.add(address)
     if not plans:
         return {"added": 0, "skipped": skipped, "missing": 0}
+    previous_feature_ids = set(target.allFeatureIds())
     _begin(target)
     try:
         _ensure_fields(target, list(plans[0][1]), CURRENT_FIELDS)
@@ -236,7 +241,5 @@ def add_selected_objects(source, target, housing, household_page,
     except Exception:
         target.rollBack()
         raise
-    added_ids = {attrs["BAG_VBO_ID"] for _, attrs in plans}
-    ids = [f.id() for f in target.getFeatures() if text_value(f, "BAG_VBO_ID") in added_ids]
-    target.selectByIds(ids)
+    target.selectByIds(sorted(set(target.allFeatureIds()) - previous_feature_ids))
     return {"added": len(plans), "skipped": skipped, "missing": missing}

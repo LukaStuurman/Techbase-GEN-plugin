@@ -3,7 +3,7 @@ from qgis.PyQt.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
-from qgis.core import QgsProject, QgsWkbTypes
+from qgis.core import QgsApplication, QgsProject, QgsWkbTypes
 
 from .algorithms.woningtype_selectie_herberekenen_tool import HOUSING_CHOICES
 from .connection_sources import add_selected_objects, assign_station, pdok_objects_layer, text_value
@@ -14,6 +14,9 @@ class ConnectionSourcesPage(QWidget):
         super().__init__(host)
         self.host = host
         self.mode = mode
+        self._bag_download = None
+        self._download_project_active = False
+        QgsProject.instance().cleared.connect(self.cancel_bag_download)
         outer = QVBoxLayout(self)
         title = "Stationskoppeling" if mode == "stations" else "Nieuwbouw uit verblijfsobjecten"
         host._add_subpage_header(outer, title, "TechBase • invoer en ontwerpstroom aanvullen")
@@ -70,9 +73,17 @@ class ConnectionSourcesPage(QWidget):
         form = QFormLayout(bag_group)
         if mode != "stations":
             form.addRow("Stationsnummer voor nieuwe adressen", self.station_combo)
-        load = QPushButton("PDOK-verblijfsobjecten laden")
-        load.clicked.connect(self.load_bag)
-        form.addRow(load)
+        row = QHBoxLayout()
+        self.bag_server_button = QPushButton("BAG-serververbinding")
+        self.bag_server_button.clicked.connect(self.load_bag)
+        self.bag_download_button = QPushButton("BAG downloaden (kaartuitsnede)")
+        self.bag_download_button.clicked.connect(self.download_bag)
+        row.addWidget(self.bag_server_button)
+        row.addWidget(self.bag_download_button)
+        form.addRow(row)
+        hint = QLabel("Download maakt een lokale laag van de huidige kaartuitsnede. Deze blijft na het downloaden zonder serververbinding bruikbaar.")
+        hint.setWordWrap(True)
+        form.addRow(hint)
         self.source_combo, self.housing_combo = QComboBox(), QComboBox()
         form.addRow("Verblijfsobjectenlaag", self.source_combo)
         form.addRow("Panden met woningtypen", self.housing_combo)
@@ -92,6 +103,9 @@ class ConnectionSourcesPage(QWidget):
             self.manual.toggled.connect(spin.setEnabled)
             self.currents.append(spin)
             form.addRow(label, spin)
+        self.skip_existing = QCheckBox("Bestaande BAG-objecten en adressen overslaan")
+        self.skip_existing.setChecked(False)
+        form.addRow(self.skip_existing)
         row = QHBoxLayout()
         select = QPushButton("Verblijfsobjecten op kaart selecteren")
         select.clicked.connect(lambda: self.select_on_map(self.source_combo))
@@ -193,6 +207,61 @@ class ConnectionSourcesPage(QWidget):
         except Exception as exc:
             self.status.setText(str(exc))
 
+    def download_bag(self):
+        if self._bag_download:
+            self._bag_download.cancel()
+            self.status.setText("BAG-download wordt gestopt.")
+            return
+        try:
+            from .bag_download import BagDownloadTask, download_path, map_bbox
+            if self.host.iface is None:
+                raise ValueError("Open het QGIS-project en zoom naar het gewenste downloadgebied.")
+            bbox = map_bbox(self.host.iface.mapCanvas())
+            path = download_path()
+            api_url = self.host._workflow_field_defaults().get("bag_api_url", "https://api.pdok.nl/kadaster/bag/ogc/v2")
+            task = BagDownloadTask(api_url, bbox, path, self.bag_download_finished)
+            task.countChanged.connect(lambda count: self.status.setText(f"BAG downloaden: {count} verblijfsobjecten ontvangen."))
+            self._bag_download = task
+            self._download_project_active = True
+            self.bag_server_button.setEnabled(False)
+            self.bag_download_button.setText("BAG-download stoppen")
+            self.status.setText("BAG-verblijfsobjecten voor de huidige kaartuitsnede downloaden...")
+            QgsApplication.taskManager().addTask(task)
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def cancel_bag_download(self):
+        self._download_project_active = False
+        if self._bag_download:
+            self._bag_download.cancel()
+
+    def bag_download_finished(self, task, succeeded):
+        self._bag_download = None
+        self.bag_server_button.setEnabled(True)
+        self.bag_download_button.setText("BAG downloaden (kaartuitsnede)")
+        if not self._download_project_active:
+            self.status.setText("Project gewijzigd; er is geen BAG-laag aan het nieuwe project toegevoegd.")
+            return
+        if not succeeded:
+            self.status.setText(task.error)
+            return
+        if not task.count:
+            self.status.setText("Geen BAG-verblijfsobjecten gevonden binnen de huidige kaartuitsnede.")
+            return
+        try:
+            from .bag_download import local_objects_layer
+            layer = local_objects_layer(task.path, task.bbox)
+            QgsProject.instance().addMapLayer(layer)
+            self.refresh()
+            self.source_combo.setCurrentIndex(self.source_combo.findData(layer.id()))
+            if self.host.iface:
+                self.host.iface.setActiveLayer(layer)
+            from .connection_sources import save_project
+            save_project()
+            self.status.setText(f"{task.count} BAG-verblijfsobjecten lokaal opgeslagen. Selecteer de gewenste adressen. Bestand: {task.path}")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
     def add_objects(self):
         try:
             source, target = self.layer(self.source_combo), self.layer(self.target_combo)
@@ -200,9 +269,11 @@ class ConnectionSourcesPage(QWidget):
                 raise ValueError("Kies de verblijfsobjecten- en ontwerpstroomlaag.")
             currents = [spin.value() for spin in self.currents] if self.manual.isChecked() else None
             result = add_selected_objects(source, target, self.layer(self.housing_combo), self.host.zero_current_page,
-                                          self.type_combo.currentData(), currents, self.station_combo.currentText().strip())
+                                          self.type_combo.currentData(), currents, self.station_combo.currentText().strip(),
+                                          skip_existing=self.skip_existing.isChecked())
             self.host._refresh_zero_current_count()
-            summary = (f"{result['added']} aansluitingen toegevoegd; {result['skipped']} al aanwezig of zonder BAG-ID. "
+            skipped_reason = "al aanwezig of zonder BAG-ID" if self.skip_existing.isChecked() else "zonder BAG-ID"
+            summary = (f"{result['added']} aansluitingen toegevoegd; {result['skipped']} {skipped_reason} overgeslagen. "
                        f"{result['missing']} zonder ontwerpstroom of nog te beoordelen.")
             self.status.setText(summary)
             if self.host.iface is not None:

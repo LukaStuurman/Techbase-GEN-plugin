@@ -1,5 +1,30 @@
 # LS Netontwerp Wizard voor QGIS
 
+Versie 1.20.0 maakt de controle op bestaande nieuwbouw optioneel. Het vinkje
+**Bestaande BAG-objecten en adressen overslaan** staat standaard uit; geselecteerde
+verblijfsobjecten worden ook toegevoegd wanneer BAG-ID of adres al aanwezig is.
+Met het vinkje aan wordt gecontroleerd op BAG-ID en volledig adres, inclusief
+huisletter en toevoeging. Objecten zonder BAG-ID worden altijd overgeslagen.
+Na toevoegen worden alleen de werkelijk nieuwe aansluitingen geselecteerd.
+
+Bij **1.3. Nieuwbouw** staan **BAG-serververbinding** en **BAG downloaden (kaartuitsnede)**
+naast elkaar. Download gebruikt de huidige uitsnede van de QGIS-kaart op het moment
+van klikken, met omzetting van het project-CRS naar de BAG-opvraag. Alle vervolgpagina's
+worden op de achtergrond opgehaald en opgeslagen als lokale GeoJSON-laag naast het
+project. Bij een onopgeslagen project of te lang projectpad wordt de lokale map
+`%LOCALAPPDATA%/TechBase/BAG` gebruikt. De laag heeft daarna geen serververbinding
+nodig en blijft in het opgeslagen project beschikbaar. De knop wordt tijdens het
+downloaden **BAG-download stoppen**. Bij een fout of stop wordt geen onvolledige laag
+toegevoegd; bij projectwissel wordt geen laag in het nieuwe project geplaatst.
+
+Adressen, gebruiksdoel, woningtype en ontwerpstroom gebruiken voor de gedownloade
+laag dezelfde nieuwbouwverwerking als voor de serverlaag. Meerdere gebruiksdoelen
+blijven behouden bij het toevoegen aan de aansluitingenlaag.
+`test_newbouw_download.py` controleert de optionele bestaande-objectcontrole,
+alle API-pagina's, stoppen/fouten, kaart-CRS, lokale opslag, heropenen en de twee knoppen.
+
+Installeer `ls_netontwerp_wizard-1.20.0.zip` en herstart QGIS.
+
 Versie 1.19.1 herstelt het starten van LOVION bij lange projectpaden.
 De werkbestanden staan nu in de korte lokale map `%LOCALAPPDATA%/TechBase/LOVION`,
 zodat Windows PowerShell geen te lange paden uit project- of OneDrive-mappen krijgt.
