@@ -37,7 +37,8 @@ from .current_presets import (
 )
 from .current_inputs import connect_current_edits, set_current_values
 from .bag_current_rules import (
-    NEW_BUILD_FIELD, has_residential_usage, is_bag_object, is_new_build_flag,
+    NEW_BUILD_FIELD, NEW_BUILD_TYPE_FIELD, NEW_BUILD_TYPE_3,
+    has_residential_usage, is_bag_object, is_new_build_flag,
 )
 
 
@@ -731,6 +732,14 @@ class ZeroCurrentPage(QWidget):
                 for name, value in values.items()
                 if indices[name] >= 0
             }
+            # New-build provenance survives manual corrections; the Type 3
+            # description must reflect the chosen low-rise housing category.
+            type_index = layer.fields().lookupField(NEW_BUILD_TYPE_FIELD)
+            if type_index >= 0 and is_new_build_flag(self._field_value(feature, NEW_BUILD_FIELD)):
+                attributes[type_index] = (
+                    NEW_BUILD_TYPE_3 if category == "Huishoudelijk" and house_type
+                    and "appartement" not in str(house_type).casefold() else ""
+                )
             attributes[category_index] = category
             if category == "Huishoudelijk" and layer.fields().lookupField("HerstelType") >= 0:
                 attributes[layer.fields().lookupField("HerstelType")] = house_type
