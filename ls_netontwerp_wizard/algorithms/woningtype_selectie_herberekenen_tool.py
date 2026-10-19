@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from ls_netontwerp_wizard.bag_current_rules import NEW_BUILD_FIELD, is_new_build_flag
+
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
     QgsCoordinateTransform,
@@ -489,11 +491,16 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 gebruik = "woonfunctie" if module.is_bag_object(doorlaat) else "woonhuis"
                 if not module.is_bag_object(doorlaat) and module.parse_doorlaat(doorlaat)[0] == 0:
                     doorlaat = "3 x 25 A"
+            new_build_index = points.fields().lookupField(NEW_BUILD_FIELD)
+            new_build_vbo = (module.is_bag_object(doorlaat) and new_build_index >= 0
+                             and is_new_build_flag(point[new_build_index]))
+            effective_bouwjaar = (max(module.parse_bouwjaar(bouwjaar), int(std_config["DEFAULTS"]["bouwjaar_grens"]))
+                                  if new_build_vbo else bouwjaar)
             normal = module.calculate_ontwerpstroom(
                 doorlaat,
                 gebruik,
                 new_type,
-                bouwjaar,
+                effective_bouwjaar,
                 gas,
                 std_config,
                 point.id(),
@@ -505,7 +512,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 doorlaat,
                 gebruik,
                 new_type,
-                bouwjaar,
+                effective_bouwjaar,
                 gas,
                 cable_config,
                 point.id(),
