@@ -141,6 +141,7 @@ def main():
     assert target.getFeature(chosen_id)["HerstelCat"] == "Zakelijk"
     residential = next(f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000000000000001")
     assert residential["Ontwerpstroom"] > 0 and residential["Gevonden_Woningtype"] == "tussenwoning/geschakeld"
+    assert residential["Nieuwbouw"] == "1" and residential["OntwerpstroomType"].startswith("Type 3:")
 
     # The source page automatically opens review for the explicitly chosen target layer.
     other_target = make_layer("Point", "Andere aansluitingen", [(field.name(), field.type()) for field in target.fields()])
