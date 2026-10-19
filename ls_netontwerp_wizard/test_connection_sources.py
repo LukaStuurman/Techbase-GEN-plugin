@@ -165,6 +165,9 @@ def main():
         dialog.run_housing_edit()
         assert "mislukt" not in dialog.housing_status_label.text().casefold(), dialog.housing_status_label.text()
         assert target.getFeature(first.id())["Ontwerpstroom"] == config[2]["WOONHUIS_2022"]["onbekend"]
+        changed_vbo = next(f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")
+        assert changed_vbo["Nieuwbouw"] == "1"
+        assert changed_vbo["OntwerpstroomType"].startswith("Type 3:")
         assert target.getFeature(first.id())["Gevonden_Woningtype"] == "onbekend"
         # Explicit pand currents win over the category-table calculation.
         housing.dataProvider().addAttributes([QgsField(n, QVariant.Double) for n in CURRENT_FIELDS[:4]])
