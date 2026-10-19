@@ -114,6 +114,7 @@ def main():
         assert [f[n] for n in ("city", "parish", "housenumber", "toevoeging", "zip_code", "huisnummertoevoeging")] == ["Veldhoven", "Zeelst", "12", "A", "5502HC", "1"]
         assert f["Gevonden_Woningtype"] == "appartement"
         assert f["Gevonden_Bouwjaar"] == "2026"
+        assert f["Nieuwbouw"] == "1"
         config = page._household_context()
         assert f["Ontwerpstroom"] == config[2]["WOONHUIS_2022"]["appartement"]
         assert f["Ontwerpstroom kabel"] == config[3]["WOONHUIS_2022"]["appartement"]
@@ -129,6 +130,7 @@ def main():
         reopened = QgsVectorLayer(str(path) + "|layername=connections", "saved", "ogr")
         assert reopened.isValid() and reopened.featureCount() == 5
         assert reopened.fields().lookupField("BAG_VBO_ID") >= 0
+        assert next(f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")["Nieuwbouw"] == "1"
         assert next(f for f in reopened.getFeatures() if f["BAG_VBO_ID"] == "0000010000000001")["service_connection_type_type"] == "verblijfsobject"
         existing_service_index = reopened.fields().lookupField("service_connection_type_type")
         assert reopened.dataProvider().changeAttributeValues({
