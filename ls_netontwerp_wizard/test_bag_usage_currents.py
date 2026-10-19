@@ -52,7 +52,12 @@ def main():
     result = add_selected_objects(source, target, housing, zero, fallback_type="vrijstaande woning", manual_currents=[99]*4)
     assert result == {"added": 9, "skipped": 0, "missing": 5}, result
     by_id = {f["BAG_VBO_ID"]: f for f in target.getFeatures()}
-    assert by_id["0000000000000001"]["Ontwerpstroom"] == 7.5  # all-zero pand recomputed from type
+    assert by_id["0000000000000001"]["Ontwerpstroom"] == 7.0  # new-build VBO uses Type 3 despite original 2000 pand year
+    assert by_id["0000000000000001"]["Nieuwbouw"] == "1"
+    assert by_id["0000000000000001"]["OntwerpstroomType"] == (
+        "Type 3: Laagbouw huishoudens vanaf bouwjaar 2022 met een individuele warmtepomp en tapwaterbuffer"
+    )
+    assert by_id["0000000000000001"]["Gevonden_Bouwjaar"] == "2000"
     assert by_id["0000000000000002"]["Ontwerpstroom"] == 5.3
     assert [by_id["0000000000000003"][name] for name in CURRENT_FIELDS[:4]] == [14, 15, 16, 17]
     for i in range(4, 9):
@@ -93,7 +98,9 @@ def main():
     assert recalculated is not None and recalculated.featureCount() == 9
     assert len(recalculated.fields()) == len(target.fields())
     by_id = {f["BAG_VBO_ID"]: f for f in recalculated.getFeatures()}
-    assert [by_id["0000000000000001"][name] for name in CURRENT_FIELDS] == [7.5, 8.1, 8.9, 9.2, 8.9, 9.2]
+    assert [by_id["0000000000000001"][name] for name in CURRENT_FIELDS] == [7.0, 7.5, 8.9, 9.2, 8.9, 9.2]
+    assert by_id["0000000000000001"]["Nieuwbouw"] == "1"
+    assert by_id["0000000000000001"]["Gevonden_Bouwjaar"] == "2000"
     assert [by_id["0000000000000002"][name] for name in CURRENT_FIELDS] == [5.3, 6.3, 5.7, 5.9, 5.7, 6.3]
     assert [by_id["0000000000000003"][name] for name in CURRENT_FIELDS] == [4.2, 5.1, 0, 0, 4.2, 5.1]
     assert [by_id[chosen["BAG_VBO_ID"]][name] for name in CURRENT_FIELDS] == chosen_currents
@@ -134,6 +141,7 @@ def main():
     assert target.getFeature(chosen_id)["HerstelCat"] == "Zakelijk"
     residential = next(f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000000000000001")
     assert residential["Ontwerpstroom"] > 0 and residential["Gevonden_Woningtype"] == "tussenwoning/geschakeld"
+    assert residential["Nieuwbouw"] == "1" and residential["OntwerpstroomType"].startswith("Type 3:")
 
     # The source page automatically opens review for the explicitly chosen target layer.
     other_target = make_layer("Point", "Andere aansluitingen", [(field.name(), field.type()) for field in target.fields()])
@@ -165,7 +173,8 @@ def main():
     output, ok = alg.run({alg.INPUT_LAYER: other_target, alg.INPUT_PANDEN: housing, alg.OUTPUT: "memory:"}, context, feedback)
     assert ok, output
     no_pand_saved = next(f for f in context.getMapLayer(output[alg.OUTPUT]).getFeatures() if f["BAG_VBO_ID"] == "0000000000000099")
-    assert [no_pand_saved[name] for name in CURRENT_FIELDS] == [5.5, 6.4, 5.7, 5.9, 5.7, 6.4]
+    assert [no_pand_saved[name] for name in CURRENT_FIELDS] == [5.3, 6.3, 5.7, 5.9, 5.7, 6.3]
+    assert no_pand_saved["Nieuwbouw"] == "1"
     if "--preview" in sys.argv:
         from qgis.PyQt.QtGui import QFont, QFontDatabase
         for name in ("segoeui.ttf", "segoeuib.ttf"):

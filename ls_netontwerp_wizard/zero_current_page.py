@@ -36,7 +36,10 @@ from .current_presets import (
     unit_currents, unit_description, category_note,
 )
 from .current_inputs import connect_current_edits, set_current_values
-from .bag_current_rules import has_residential_usage, is_bag_object
+from .bag_current_rules import (
+    NEW_BUILD_FIELD, NEW_BUILD_TYPE_FIELD, NEW_BUILD_TYPE_3,
+    has_residential_usage, is_bag_object, is_new_build_flag,
+)
 
 
 class ZeroCurrentPage(QWidget):
@@ -168,7 +171,8 @@ class ZeroCurrentPage(QWidget):
         self.housing_combo.currentIndexChanged.connect(self._household_changed)
         self.housing_note = QLabel(
             "De ingestelde oude/nieuwbouwtabellen worden per aansluiting gekozen "
-            "op basis van bouwjaar. Bij een onbekend bouwjaar wordt de oude tabel gebruikt."
+            "op basis van bouwjaar. Nieuwbouw-verblijfsobjecten houden altijd de "
+            "nieuwbouwtabel, ook bij een ouder of onbekend pandbouwjaar."
         )
         self.housing_note.setWordWrap(True)
         category_form.addRow("", self.housing_note)
@@ -595,7 +599,10 @@ class ZeroCurrentPage(QWidget):
         except (TypeError, ValueError):
             year = 0
         year_limit = int(standard.get("DEFAULTS", {}).get("bouwjaar_grens", 2022))
-        new_build = year >= year_limit
+        new_build = year >= year_limit or (
+            is_bag_object(self._field_value(feature, values.get("field_passthrough", "service_connection_type_type")))
+            and is_new_build_flag(self._field_value(feature, NEW_BUILD_FIELD))
+        )
         standard_table = standard.get("WOONHUIS_2022") if new_build else standard["WOONHUIS"]
         cable_table = cable.get("WOONHUIS_2022") if new_build else cable["WOONHUIS"]
         normal = float(module.woonhuis_ontwerp(house_type, standard_table))
@@ -725,6 +732,14 @@ class ZeroCurrentPage(QWidget):
                 for name, value in values.items()
                 if indices[name] >= 0
             }
+            # New-build provenance survives manual corrections; the Type 3
+            # description must reflect the chosen low-rise housing category.
+            type_index = layer.fields().lookupField(NEW_BUILD_TYPE_FIELD)
+            if type_index >= 0 and is_new_build_flag(self._field_value(feature, NEW_BUILD_FIELD)):
+                attributes[type_index] = (
+                    NEW_BUILD_TYPE_3 if category == "Huishoudelijk" and house_type
+                    and "appartement" not in str(house_type).casefold() else ""
+                )
             attributes[category_index] = category
             if category == "Huishoudelijk" and layer.fields().lookupField("HerstelType") >= 0:
                 attributes[layer.fields().lookupField("HerstelType")] = house_type
