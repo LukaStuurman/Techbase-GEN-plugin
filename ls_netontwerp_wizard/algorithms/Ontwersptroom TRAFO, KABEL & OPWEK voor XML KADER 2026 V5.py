@@ -168,6 +168,9 @@ def get_gas_advies(gas_cat, el_amp, gas_config):
 def map_gebruiksdoel(gebruiksdoel, type_woning, config):
     g = clean_text(gebruiksdoel)
     tw = clean_text(type_woning)
+    # Huishoudelijk is an explicit GEN usage: never use the business fallback.
+    if g in ("huishoudelijk", "huishoudelijke aansluiting", "huishoudelijk gebruik"):
+        return 1
     if not g or g in ["onbekend", "n.v.t.", "nvt", "null"]:
         if tw and tw not in ["onbekend", "null", ""]: return 1 
         
@@ -368,7 +371,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     limit_fase = config['DEFAULTS'].get('limit_fase', 3)
     limit_amp = config['DEFAULTS'].get('limit_amp', 40)
     
-    is_heavy_woon = (fases > 0 and el_amp > limit_amp)
+    is_heavy_woon = (fases > 0 and el_amp > max(limit_amp, 40))
     
     # Eea-0205.K 3.2: zware woon/appartement-aansluitingen worden via de
     # ampere-/zakelijke tabel berekend. Opwek volgt daar dezelfde waarde als
