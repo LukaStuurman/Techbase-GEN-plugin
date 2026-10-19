@@ -1,3 +1,20 @@
+### Nieuwbouw-VBO en huishoudelijk tot en met 3x40 A
+
+Via **1.3 Nieuwbouw** toegevoegde BAG-verblijfsobjecten bewaren expliciet
+`Nieuwbouw=1`. Laagbouw met woonfunctie krijgt de aanduiding
+`OntwerpstroomType=Type 3: Laagbouw huishoudens vanaf bouwjaar 2022 met een individuele warmtepomp en tapwaterbuffer`.
+Bij een berekening uit woningtype (ook in Nulwaarden herstellen, een algemene
+ontwerpstroomherberekening of na het aanpassen van het pandwoningtype) worden
+de **2022+ tabellen** gebruikt, ook als het oorspronkelijke BAG-pand een ouder
+of onbekend bouwjaar heeft. `Gevonden_Bouwjaar` blijft het echte pandjaar;
+handmatig opgegeven stroomwaarden en bestaande pandwaarden worden niet overschreven
+bij de oorspronkelijke import. Appartementen blijven hun appartementregels volgen.
+
+Aansluitingen met gebruiksdoel `Huishoudelijk` / `woonfunctie` / `woonhuis`
+blijven **tot en met 3x40 A** huishoudelijk, onafhankelijk van gascategorie,
+voor zowel verbruik als opwek en zowel trafo als kabel. Een aansluiting
+**boven 3x40 A** behoudt de bestaande ampère-/zakelijke regels en gasadvies.
+
 # LS Netontwerp Wizard voor QGIS
 
 Versie 1.23.0 versnelt de autoclustering met behoud van de bestaande rekenregels.
