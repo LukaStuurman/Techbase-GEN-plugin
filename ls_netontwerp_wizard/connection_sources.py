@@ -9,7 +9,9 @@ from qgis.core import (
     QgsCoordinateTransform, QgsFeature, QgsField, QgsGeometry, QgsProject,
     QgsSpatialIndex, QgsVectorLayer, QgsWkbTypes, QgsVariantUtils,
 )
-from .bag_current_rules import has_residential_usage
+from .bag_current_rules import (
+    NEW_BUILD_FIELD, NEW_BUILD_TYPE_FIELD, NEW_BUILD_TYPE_3, has_residential_usage,
+)
 from .station_symbology import color_connections_by_station
 
 CURRENT_FIELDS = (
@@ -155,7 +157,10 @@ def add_selected_objects(source, target, housing, household_page,
     config = household_page._household_context()
     field_defaults = config[1]
     calculation_layer = QgsVectorLayer("Point", "calculation", "memory")
-    calculation_layer.dataProvider().addAttributes([QgsField("Gevonden_Bouwjaar", QVariant.String)])
+    calculation_layer.dataProvider().addAttributes([
+        QgsField("Gevonden_Bouwjaar", QVariant.String),
+        QgsField(NEW_BUILD_FIELD, QVariant.String),
+    ])
     calculation_layer.updateFields()
     plans, skipped, missing = [], 0, 0
     for original in selected:
@@ -187,6 +192,9 @@ def add_selected_objects(source, target, housing, household_page,
                       "Gebruiksdoel": value(original, "gebruiksdoel"), "Gevonden_Woningtype": house_type,
                       "Gevonden_Bouwjaar": str(year), "Station": station,
                       "service_connection_type_type": "verblijfsobject",
+                      NEW_BUILD_FIELD: "1",
+                      NEW_BUILD_TYPE_FIELD: (NEW_BUILD_TYPE_3 if residential and house_type and
+                                             "appartement" not in str(house_type).casefold() else ""),
                       "HerstelHandmatig": "0",
                       "Bron": "PDOK BAG verblijfsobject", "BAG_Status": value(original, "status")})
         if isinstance(attrs["Gebruiksdoel"], (list, tuple)):
@@ -205,6 +213,7 @@ def add_selected_objects(source, target, housing, household_page,
         if residential and currents is None and house_type:
             sample = QgsFeature(calculation_layer.fields())
             sample["Gevonden_Bouwjaar"] = str(year)
+            sample[NEW_BUILD_FIELD] = "1"
             currents = household_page._household_currents(calculation_layer, sample, house_type, config)
         if currents is not None and any(not math.isfinite(float(v)) or float(v) < 0 for v in currents):
             currents = None
