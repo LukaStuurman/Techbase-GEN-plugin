@@ -109,6 +109,43 @@ def main():
         assert cable == 85.0
         assert cable_generation == cable
 
+        # Huishoudelijk t/m 3x40A blijft onafhankelijk van de (zware)
+        # gasaansluiting en van de 1-fase-exceptie-instelling.
+        for config, generation_table in ((std_config, opwek_table), (cable_config, opwek_cable_table)):
+            for usage in ("woonhuis", "woonfunctie", "Huishoudelijk"):
+                for phases in (1, 2, 3):
+                    for amp in (25, 40):
+                        connection = f"{phases}x{amp}A"
+                        for one_phase_exception in (False, True):
+                            normal = module.calculate_ontwerpstroom(
+                                connection, usage, "hoekwoning", 2020, "Geen", config,
+                                10, None, one_phase_exception,
+                            )
+                            generation = module.calculate_opwek_ontwerpstroom(
+                                connection, usage, "hoekwoning", "Geen", generation_table,
+                                config, normal, one_phase_exception,
+                            )
+                            for gas in ("G10", "G25", "G40", ">G25"):
+                                actual = module.calculate_ontwerpstroom(
+                                    connection, usage, "hoekwoning", 2020, gas, config,
+                                    10, None, one_phase_exception,
+                                )
+                                actual_generation = module.calculate_opwek_ontwerpstroom(
+                                    connection, usage, "hoekwoning", gas, generation_table,
+                                    config, actual, one_phase_exception,
+                                )
+                                assert actual == normal, (usage, connection, gas, actual, normal)
+                                assert actual_generation == generation, (usage, connection, gas)
+            # Grotere huishoudelijke aansluiting blijft via de ampere/zakelijke
+            # tabel lopen; gasadvies mag daar nog steeds het verbruik verhogen.
+            regular = module.calculate_ontwerpstroom(
+                "3x50A", "Huishoudelijk", "hoekwoning", 2020, "Geen", config, 10, None, False,
+            )
+            gas_adjusted = module.calculate_ontwerpstroom(
+                "3x50A", "Huishoudelijk", "hoekwoning", 2020, "G10", config, 10, None, False,
+            )
+            assert gas_adjusted > regular
+
         # Type 8 kleinzakelijk: kabel en trafo kunnen door de gastabel van
         # elkaar verschillen, maar opwek volgt per netvlak exact verbruik.
         trafo_business = module.calculate_ontwerpstroom(
