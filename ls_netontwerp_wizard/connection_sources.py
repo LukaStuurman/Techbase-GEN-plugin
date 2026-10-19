@@ -157,9 +157,11 @@ def add_selected_objects(source, target, housing, household_page,
     config = household_page._household_context()
     field_defaults = config[1]
     calculation_layer = QgsVectorLayer("Point", "calculation", "memory")
+    pass_field = field_defaults.get("field_passthrough", "service_connection_type_type")
     calculation_layer.dataProvider().addAttributes([
         QgsField("Gevonden_Bouwjaar", QVariant.String),
         QgsField(NEW_BUILD_FIELD, QVariant.String),
+        QgsField(pass_field, QVariant.String),
     ])
     calculation_layer.updateFields()
     plans, skipped, missing = [], 0, 0
@@ -214,6 +216,7 @@ def add_selected_objects(source, target, housing, household_page,
             sample = QgsFeature(calculation_layer.fields())
             sample["Gevonden_Bouwjaar"] = str(year)
             sample[NEW_BUILD_FIELD] = "1"
+            sample[pass_field] = "verblijfsobject"
             currents = household_page._household_currents(calculation_layer, sample, house_type, config)
         if currents is not None and any(not math.isfinite(float(v)) or float(v) < 0 for v in currents):
             currents = None
