@@ -20,7 +20,9 @@ from qgis.core import (QgsProcessing,
                        Qgis)
 import re
 import math
-from ls_netontwerp_wizard.bag_current_rules import has_residential_usage, is_bag_object
+from ls_netontwerp_wizard.bag_current_rules import (
+    NEW_BUILD_FIELD, has_residential_usage, is_bag_object, is_new_build_flag,
+)
 
 # ==============================================================================
 # 1. STANDAARD CONFIGURATIE (DEFAULTS)
@@ -254,7 +256,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
 
     # Boven de ampèregrens wordt een huishoudelijke aansluiting zakelijk gerekend.
     # Voor deze grens tellen 1- en 2-fase als 3-fase; precies 40A blijft huishoudelijk.
-    is_heavy_woon = (fases > 0 and el_amp > limit_amp)
+    # De beleidsgrens 3x40A blijft minimaal huishoudelijk, ook als een
+    # instelbare amperegrens per ongeluk lager staat.
+    is_heavy_woon = (fases > 0 and el_amp > max(limit_amp, 40))
 
     val = 0.0
     
@@ -268,7 +272,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             if type_cfg['use_amp']: 
                 val = amp_to_ontwerp(el_amp, config['AMP_GLOBAL'])
         else:
-            in_band = (fases >= limit_fase and el_amp <= limit_amp) or (fases > 0 and fases < limit_fase)
+            in_band = (fases >= limit_fase and el_amp <= max(limit_amp, 40)) or (fases > 0 and fases < limit_fase)
             if (g_type == 4) or in_band:
                 if type_cfg['use_woon']: 
                     table_to_use = config['WOONHUIS']
@@ -313,6 +317,8 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     # Also ignore it for light single-phase residential connections when the
     # corresponding exception is enabled.
     ignore_gas = (g_type in [8, 9]) or (
+        g_type in [1, 4] and 0 < fases <= 3 and el_amp <= 40
+    ) or (
         use_1fase_exc and g_type in [1, 4] and fases < limit_fase and el_amp <= limit_amp
     )
     
@@ -331,7 +337,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
         if gas_is_heavy and val_gas > val: final_val = val_gas
         else: final_val = val
     else:
-        unknown_ok = (fases >= limit_fase and el_amp <= limit_amp) or (fases > 0 and fases < limit_fase)
+        unknown_ok = (fases >= limit_fase and el_amp <= max(limit_amp, 40)) or (fases > 0 and fases < limit_fase)
         table_fallback = config['WOONHUIS']
         if is_nieuwbouw and 'WOONHUIS_2022' in config and config['WOONHUIS_2022']:
             table_fallback = config['WOONHUIS_2022']
@@ -385,6 +391,8 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
         val_gas = 0.0
         gas_cat = normalize_gas(ld_gas_type)
         ignore_gas = (
+            0 < fases <= 3 and el_amp <= 40
+        ) or (
             use_1fase_exc and g_type == 1 and fases < limit_fase and el_amp <= limit_amp
         )
         
@@ -779,8 +787,16 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                     if not val_bouwjaar and year_index >= 0:
                         val_bouwjaar = parse_bouwjaar(feat[year_index])
 
-            res_std = calculate_ontwerpstroom(val_door, val_gebr, val_woning, val_bouwjaar, val_gas, full_config_std, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
-            res_kabel = calculate_ontwerpstroom(val_door, val_gebr, val_woning, val_bouwjaar, val_gas, full_config_kabel, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
+            # Nieuwe VBO's zijn planmatige nieuwbouw. Bewaar het echte pandjaar,
+            # maar kies voor de berekening altijd de Type 3/2022+ woningtabellen.
+            new_build_index = feat.fields().lookupField(NEW_BUILD_FIELD)
+            new_build_vbo = (is_bag_object(val_door) and new_build_index >= 0
+                             and is_new_build_flag(feat[new_build_index]))
+            effective_bouwjaar = (max(val_bouwjaar, int(full_config_std["DEFAULTS"]["bouwjaar_grens"]))
+                                  if new_build_vbo else val_bouwjaar)
+
+            res_std = calculate_ontwerpstroom(val_door, val_gebr, val_woning, effective_bouwjaar, val_gas, full_config_std, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
+            res_kabel = calculate_ontwerpstroom(val_door, val_gebr, val_woning, effective_bouwjaar, val_gas, full_config_kabel, feat.id(), feedback, use_1fase_exc, default_appartement_zonder_doorlaat)
             
             res_opwek_std = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek, full_config_std, res_std, use_1fase_exc)
             res_opwek_kabel = calculate_opwek_ontwerpstroom(val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel, full_config_kabel, res_kabel, use_1fase_exc)
