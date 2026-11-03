@@ -1031,6 +1031,12 @@ class WorkflowRunner:
         points_layer_name = state.get("points_layer", points_gpkg.stem)
         points_uri = self._layer(points_gpkg, points_layer_name)
         plan_uri = self._layer(plan_gpkg, "plangebied") if plan_gpkg else None
+        housing_gpkg = Path(state["housing_gpkg"]) if state.get("housing_gpkg") else None
+        housing_uri = (
+            self._layer(housing_gpkg, housing_gpkg.stem)
+            if housing_gpkg is not None and housing_gpkg.is_file()
+            else None
+        )
         clustering_dir = Path(state["clustering_dir"])
 
         review_layer = self._project_layer_by_source(points_uri)
@@ -1039,6 +1045,13 @@ class WorkflowRunner:
                 raise QgsProcessingException(
                     "Open bewerkingen in de ontwerpstroomlaag konden niet worden opgeslagen"
                 )
+        if housing_uri is not None:
+            housing_layer = self._project_layer_by_source(housing_uri)
+            if housing_layer is not None and housing_layer.isEditable():
+                if not housing_layer.commitChanges():
+                    raise QgsProcessingException(
+                        "Open bewerkingen in de BAG-woningtypenlaag konden niet worden opgeslagen"
+                    )
         state["status"] = "clustering_bezig"
         self._write_state(state)
 
@@ -1059,6 +1072,10 @@ class WorkflowRunner:
                 "FLATKASTEN": imported(self.v["layer_flat_cabinets"], "flatkasten") if self.v.get("use_flat_cabinets", True) else None,
                 "FLATKAST_ID_VELD": self.v["field_flat_id"],
                 "BAG_API_URL": self.v["bag_api_url"],
+                "BAG_PANDEN": (
+                    self._validate_layer(housing_uri, "BAG-woningtypen")
+                    if housing_uri else None
+                ),
                 "KABELS": imported(self.v["layer_main_cables"], "LS-kabels"),
                 "LS_FUNCTION_VELD": self.v["field_main_function"],
                 "LS_FUNCTION_WOORDEN": self.v["main_function_words"],
