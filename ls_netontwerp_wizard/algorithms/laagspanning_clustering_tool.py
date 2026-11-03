@@ -65,6 +65,7 @@ class LaagspanningClusteringAlgorithm(QgsProcessingAlgorithm):
     FLATKASTEN = "FLATKASTEN"
     FLATKAST_ID_VELD = "FLATKAST_ID_VELD"
     BAG_API_URL = "BAG_API_URL"
+    BAG_PANDEN = "BAG_PANDEN"
     KABELS = "KABELS"
     LS_FUNCTION_VELD = "LS_FUNCTION_VELD"
     LS_FUNCTION_WOORDEN = "LS_FUNCTION_WOORDEN"
@@ -143,8 +144,11 @@ gebracht. Dit is een voorkeur en geen harde grens.
 Voor appartementen kan optioneel een puntenlaag met flatkasten worden gekozen.
 Kies daarbij het koppelveld in de aansluitingen (standaard `multistory`) en het
 ID-veld in de flatkasten (standaard `id`). Aansluitingen en flatkast met dezelfde
-waarde worden met een inpandige sleuf verbonden, mits de BAG OGC API bevestigt
-dat zij bij hetzelfde BAG-pand horen. Ontbreekt een bruikbare flatkastkoppeling,
+waarde worden met een inpandige sleuf verbonden als zij bij hetzelfde BAG-pand
+horen. Een optionele BAG-pandenlaag (standaard uit de eerdere woningtypefase)
+wordt lokaal hergebruikt, zonder tweede API-opvraag. Ontbreekt die laag, dan
+wordt de PDOK OGC API gebruikt met retries bij tijdelijke netwerkproblemen.
+Ontbreekt een bruikbare flatkastkoppeling,
 dan wordt de aansluiting eerst verbonden met de dichtstbijzijnde kabel binnen
 hetzelfde BAG-pand en pas daarna met de dichtstbijzijnde kabel daarbuiten. De
 inpandige sleuven worden wel als echte netwerklijnen opgeslagen en genood, maar
@@ -291,6 +295,14 @@ verzoek zichtbaar worden.
                 self.tr("Flatkast-ID-kolom (leeg = id)"),
                 parentLayerParameterName=self.FLATKASTEN,
                 defaultValue="id",
+                optional=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.BAG_PANDEN,
+                self.tr("BAG-pandgeometrieën (optioneel; hergebruik woningtypenlaag)"),
+                [QgsProcessing.TypeVectorPolygon],
                 optional=True,
             )
         )
@@ -939,6 +951,7 @@ verzoek zichtbaar worden.
             parameters, self.AANSLUITKABELS, context
         )
         flat_cabinets = self.parameterAsSource(parameters, self.FLATKASTEN, context)
+        bag_buildings = self.parameterAsSource(parameters, self.BAG_PANDEN, context)
         stations = self.parameterAsSource(parameters, self.STATIONS, context)
         station_enclosures = self.parameterAsSource(
             parameters, self.STATIONOMTREKKEN, context
@@ -954,6 +967,8 @@ verzoek zichtbaar worden.
             sources_with_crs.append(connection_cables)
         if flat_cabinets is not None:
             sources_with_crs.append(flat_cabinets)
+        if bag_buildings is not None:
+            sources_with_crs.append(bag_buildings)
         if station_enclosures is not None:
             sources_with_crs.append(station_enclosures)
         if distribution_cabinets is not None:
@@ -1061,6 +1076,17 @@ verzoek zichtbaar worden.
                 "Appartementkoppeling: LS-veld "
                 f"'{points.fields()[multistory_index].name()}' naar flatkastveld "
                 f"'{flat_cabinets.fields()[flat_cabinet_id_index].name()}'."
+            )
+        bag_id_index = None
+        bag_status_index = None
+        if bag_buildings is not None:
+            bag_id_index = self._automatic_field_index(
+                bag_buildings, ("identificatie", "BAG_ID", "pand_id"),
+                "BAG-pandidentificatie in de woningtypenlaag",
+            )
+            bag_status_index = self._automatic_field_index(
+                bag_buildings, ("status", "Status"),
+                "BAG-pandstatus in de woningtypenlaag", optional=True,
             )
         label_index = self._automatic_field_index(
             points,
@@ -1357,6 +1383,7 @@ verzoek zichtbaar worden.
             cables_path = work_dir / "ls_kabels.gpkg"
             connection_cables_path = work_dir / "aansluitkabels.gpkg"
             flat_cabinets_path = work_dir / "flatkasten.gpkg"
+            bag_buildings_path = work_dir / "bag_woningtypen.gpkg"
             stations_path = work_dir / "stations.gpkg"
             station_enclosures_path = work_dir / "stationomtrekken.gpkg"
             distribution_cabinets_path = work_dir / "verdeelkasten.gpkg"
@@ -1415,6 +1442,18 @@ verzoek zichtbaar worden.
                     17,
                     18,
                 )
+            if bag_buildings is not None:
+                self._write_clean_source(
+                    bag_buildings,
+                    bag_buildings_path,
+                    "bag_woningtypen",
+                    [
+                        ("BAG_ID", bag_id_index, QVariant.String),
+                        ("Status", bag_status_index, QVariant.String),
+                    ],
+                    context, feedback, 18, 19,
+                )
+                feedback.pushInfo("BAG-pandgeometrie voor clustering lokaal hergebruiken.")
             self._write_clean_source(
                 stations,
                 stations_path,
@@ -1478,6 +1517,9 @@ verzoek zichtbaar worden.
             )
             engine.FLAT_CABINETS_PATH = (
                 flat_cabinets_path if flat_cabinets is not None else None
+            )
+            engine.BAG_BUILDINGS_PATH = (
+                bag_buildings_path if bag_buildings is not None else None
             )
             engine.BAG_API_BASE_URL = (
                 self.parameterAsString(parameters, self.BAG_API_URL, context).strip()
