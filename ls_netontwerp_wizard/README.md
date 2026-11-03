@@ -715,6 +715,10 @@ clusteringbibliotheek. De losse scripts hoeven daarom niet apart geïnstalleerd
 te zijn.
 
 
+## Versie 1.25.3 — stations laten vervallen direct in QGIS-menu
+
+Gebruik na stap 3 **Plugins → LS Netontwerp → 4a. Station laten vervallen (na clustering)** of **Vector → LS Netontwerp → 4a. Station laten vervallen (na clustering)**. Deze menuactie opent rechtstreeks de bestaande pagina **Clustering aanpassen** met de stationslijst. Kies daar het bestaande station, een doelstation of **Automatisch verdelen**, klik op **Station laten vervallen**, controleer met **Voorstel controleren**, en bevestig met **Alles toepassen**. De oorspronkelijke bronstations blijven behouden en krijgen bij uitfasering de status **Te verwijderen**.
+
 ## Versie 1.25.0 — clustering aanpassen en stationsbeheer
 
 Stap 4a opent een stationslijst en een wachtrij voor wijzigingen. Selecteer aansluitingen en kies een doelstation, of kies een station in de lijst en zet ‘Station laten vervallen’ klaar. Bij automatisch verdelen zoekt de plugin overnames per kabeltak; capaciteit, routelengte en exclusieve routes blijven gecontroleerd. ‘Voorstel controleren’ controleert capaciteit en routes zonder het ontwerp te wijzigen. ‘Alles toepassen’ controleert ook de nieuwe gebieden en verwerkt de hele wachtrij met één gebiedsopbouw. Alle vier de resultaatlagen worden in één database-transactie opgeslagen. De laatste toepassing kan inclusief stationskeuzes worden teruggezet, ook na opnieuw openen van het project.
