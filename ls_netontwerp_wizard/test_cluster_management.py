@@ -60,6 +60,41 @@ def main():
     else:
         raise AssertionError('Protected station was removed')
     assert frames['connections'].Cluster.tolist() == ['A','B','C']
+    # Relocating a new station must modify its actual geometry and route, never
+    # just its map symbol. The route solver must use the selected cable vertex.
+    from shapely.geometry import LineString
+    relocation_input = fixture_frames()
+    relocation_input['cables'].at[2, 'geometry'] = LineString(
+        [(20, 0), (20, 5), (20, 10)]
+    )
+    relocation = [{'kind':'relocate','source':'C','x':20.0,'y':5.0}]
+    moved_state, changed = calculate(engine, relocation_input, relocation, 850)
+    moved_station = moved_state[1].loc[moved_state[1].Cluster=='C'].iloc[0]
+    moved_route = moved_state[3].loc[moved_state[3].Cluster=='C'].iloc[0].geometry
+    assert moved_station.geometry.distance(relocation_input['stations'].iloc[2].geometry)==5.0
+    assert moved_station.geometry.y == 5.0
+    assert moved_route.distance(moved_station.geometry) < 0.02
+    assert moved_state[0].loc[moved_state[0].Cluster=='C','Route_m'].iloc[0] <= 5.01
+    assert changed['relocated_stations']==['C']
+    assert changed['station_rules']['C']['protected'] is True
+    assert relocation_input['stations'].iloc[2].geometry.y == 0.0
+    before_preview = relocation_input['stations'].geometry.copy()
+    _preview_state, preview_change = calculate(
+        engine, relocation_input, relocation, 850, preview=True
+    )
+    assert preview_change['relocated_stations']==['C']
+    assert relocation_input['stations'].geometry.equals(before_preview)
+    for forbidden, expected_error in (
+        ([{'kind':'relocate','source':'A','x':0.0,'y':5.0}], 'nieuw geplaatste'),
+        ([{'kind':'relocate','source':'C','x':10.0,'y':10.0}], 'buiten het clustergebied'),
+        ([{'kind':'relocate','source':'C','x':20.0,'y':6.0}], 'netwerkknoop'),
+    ):
+        try:
+            calculate(engine, relocation_input, forbidden, 850, preview=True)
+        except ValueError as exc:
+            assert expected_error in str(exc), (expected_error, str(exc))
+        else:
+            raise AssertionError(f"Unsafe relocation was allowed: {forbidden}")
     # Capacity failure must reject a complete queue without mutating inputs.
     too_small=fixture_frames()
     too_small['stations'].loc[too_small['stations'].Cluster=='B','KVA']=10
@@ -144,7 +179,7 @@ def main():
         page.execute(True)
         assert 'tussentijds' in page.status.text(),page.status.text()
         project.clear()
-    print('CLUSTER_MANAGEMENT_TEST_OK (batch, auto redistribution, protection, capacity, transaction rollback, exact undo, project reload, stale queue)',flush=True)
+    print('CLUSTER_MANAGEMENT_TEST_OK (batch, station relocation, strict route rebuild, auto redistribution, protection, capacity, rollback, exact undo, stale queue)',flush=True)
     os._exit(0)
 
 
