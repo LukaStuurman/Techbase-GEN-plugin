@@ -715,6 +715,18 @@ clusteringbibliotheek. De losse scripts hoeven daarom niet apart geïnstalleerd
 te zijn.
 
 
+## Versie 1.25.4 — zichtbare knop voor bestaande stations op het hoofdscherm
+
+In het **gekleurde Werkstappen-dashboard** (de daadwerkelijke hoofdinterface)
+staat onder **4. Clustering aanpassen** nu de extra knop
+**4c. Bestaand station laten vervallen**, naast 4a en 4b.
+De oude groep 'Stappen in het ontwerp' wordt door het dashboard verborgen,
+dus alleen een knop in die oude groep of in het QGIS-menu toevoegen is niet
+voldoende. Deze knop opent direct de bestaande stationsbeheerpagina, waar je
+een station kiest en met **Station laten vervallen**, **Voorstel controleren** en
+**Alles toepassen** de status **Te verwijderen** vastlegt terwijl de
+broninventaris behouden blijft.
+
 ## Versie 1.25.3 — stations laten vervallen direct in QGIS-menu
 
 Gebruik na stap 3 **Plugins → LS Netontwerp → 4a. Station laten vervallen (na clustering)** of **Vector → LS Netontwerp → 4a. Station laten vervallen (na clustering)**. Deze menuactie opent rechtstreeks de bestaande pagina **Clustering aanpassen** met de stationslijst. Kies daar het bestaande station, een doelstation of **Automatisch verdelen**, klik op **Station laten vervallen**, controleer met **Voorstel controleren**, en bevestig met **Alles toepassen**. De oorspronkelijke bronstations blijven behouden en krijgen bij uitfasering de status **Te verwijderen**.

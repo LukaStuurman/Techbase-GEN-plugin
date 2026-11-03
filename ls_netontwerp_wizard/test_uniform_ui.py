@@ -26,6 +26,28 @@ def main():
     dialog = LSNetontwerpDashboardDialog(None)
     assert dialog.styleSheet() == STYLE
     assert len({p["main"] for p in dialog.STEP_PALETTES.values()}) == 1
+
+    # Step 4 uses the *colored* dashboard: the old actions_group is hidden.
+    # Regression: 4c must be visible and open the real station-retirement page.
+    dialog.show_home_page()
+    dialog.show()
+    app.processEvents()
+    retire = dialog.retire_station_dashboard_button
+    assert retire.objectName() == "retireExistingStationDashboardButton"
+    assert retire.text() == "4c. Bestaand station laten vervallen"
+    assert retire.isVisible() and retire.isEnabled()
+    assert retire in dialog._dashboard_widget.findChildren(QPushButton)
+    retire.click()
+    app.processEvents()
+    assert dialog.page_stack.currentWidget() is dialog.cluster_management_page
+    assert any(
+        button.text() == "Station laten vervallen"
+        for button in dialog.cluster_management_page.findChildren(QPushButton)
+    )
+    dialog.show_home_page()
+    app.processEvents()
+    assert retire.isVisible() and retire.isEnabled()
+
     captures = Path(sys.argv[sys.argv.index("--captures") + 1]) if "--captures" in sys.argv else None
     if captures:
         captures.mkdir(parents=True, exist_ok=True)
