@@ -1,6 +1,7 @@
 """Queue cluster changes and retire stations without editing source records."""
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from qgis.PyQt.QtCore import Qt
@@ -9,12 +10,39 @@ from qgis.PyQt.QtWidgets import (
     QPushButton, QComboBox, QDoubleSpinBox, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
 )
-from qgis.core import QgsProject, QgsProcessingFeedback
+from qgis.core import (QgsProject, QgsProcessingFeedback, QgsCoordinateTransform,
+                       QgsFeatureRequest, QgsGeometry, QgsPointXY)
+from qgis.gui import QgsMapTool
 
 from .batch_editing import run_batch, apply_snapshot, station_rules, save_station_rules
 from .station_policy import show_retired_stations
 
 ROLE = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+LEFT_BUTTON = Qt.MouseButton.LeftButton if hasattr(Qt, "MouseButton") else Qt.LeftButton
+RIGHT_BUTTON = Qt.MouseButton.RightButton if hasattr(Qt, "MouseButton") else Qt.RightButton
+ESCAPE_KEY = Qt.Key.Key_Escape if hasattr(Qt, "Key") else Qt.Key_Escape
+
+
+class _StationRelocationMapTool(QgsMapTool):
+    """One-shot map picker; right-click or Escape cancels without editing."""
+
+    def __init__(self, canvas, clicked, canceled):
+        super().__init__(canvas)
+        self._clicked = clicked
+        self._canceled = canceled
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == RIGHT_BUTTON:
+            self._canceled()
+        elif event.button() == LEFT_BUTTON:
+            self._clicked(self.toMapCoordinates(event.pos()))
+
+    def keyPressEvent(self, event):
+        if event.key() == ESCAPE_KEY:
+            self._canceled()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 def layer_source(layer):
@@ -45,6 +73,11 @@ class ClusterManagementPage(QWidget):
         self.layers = {}
         self.signature = None
         self.feedback = None
+        self._location_tool = None
+        self._previous_map_tool = None
+        self._relocation_station = None
+        self._relocation_candidate = None
+        host.finished.connect(lambda *_: self._leave_location_mode(False))
         layout = QVBoxLayout(self)
         host._add_subpage_header(layout, "Clustering aanpassen",
                                 "Wijzigingen klaarzetten • stationsbeheer • gezamenlijk toepassen")
@@ -93,6 +126,32 @@ class ClusterManagementPage(QWidget):
         note.setWordWrap(True)
         form.addRow(note)
         layout.addWidget(group)
+
+        self.relocation_group = QGroupBox("Nieuw station verplaatsen op een sleuf")
+        self.relocation_group.setObjectName("stationRelocationGroup")
+        location_layout = QVBoxLayout(self.relocation_group)
+        location_note = QLabel(
+            "Selecteer in de stationslijst een station van type Nieuw. Klik op de kaart "
+            "op een sleuf binnen zijn eigen cluster. De locatie wordt gesnapt naar "
+            "een bestaande netwerkknoop, zodat de routes correct kunnen worden herberekend."
+        )
+        location_note.setWordWrap(True)
+        location_layout.addWidget(location_note)
+        self.location_status = QLabel("Nog geen nieuwe stationslocatie gekozen.")
+        self.location_status.setWordWrap(True)
+        location_layout.addWidget(self.location_status)
+        location_actions = QHBoxLayout()
+        self.pick_location_button = self._button(
+            location_actions, "Nieuwe locatie op kaart kiezen", self.start_station_relocation
+        )
+        self.pick_location_button.setProperty("uiExplicitRole", "map")
+        self.queue_location_button = self._button(
+            location_actions, "Stationsverplaatsing klaarzetten", self.queue_station_relocation
+        )
+        self.queue_location_button.setProperty("uiExplicitRole", "primary")
+        self.queue_location_button.setEnabled(False)
+        location_layout.addLayout(location_actions)
+        layout.addWidget(self.relocation_group)
         self.queue = QListWidget()
         self.queue.setMinimumHeight(80)
         self.queue.setMaximumHeight(145)
@@ -116,7 +175,12 @@ class ClusterManagementPage(QWidget):
         self.apply_button.setProperty("uiExplicitRole", "primary")
         self.undo_button = self._button(row, "Laatste toepassing ongedaan maken", self.undo)
         self.undo_button.setProperty("uiExplicitRole", "secondary")
-        self.cancel = self._button(row, "Stop", self.stop)
+        self.cancel = self._button(row, "Bewerking stoppen", self.stop)
+        # The generic compact 'stop' role is intended for the tiny progress
+        # bar X, not a full-size action button in this page's footer.
+        self.cancel.setProperty("uiExplicitRole", "danger")
+        self.cancel.setMinimumWidth(148)
+        self.cancel.setToolTip("Annuleer de lopende berekening; alleen actief tijdens verwerken.")
         self.cancel.setEnabled(False)
         layout.addLayout(row)
 
