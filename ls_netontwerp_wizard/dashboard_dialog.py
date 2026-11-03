@@ -158,51 +158,7 @@ class LSNetontwerpDashboardDialog(_ThemedDashboardDialog):
             return False, str(exc)
 
     def run_preparation(self):
-        """Start stap 1 met een expliciete 3DBAG-offlinekeuze."""
-        try:
-            values = self.values()
-        except Exception:
-            # Laat de bestaande validatie/foutafhandeling verantwoordelijk zijn
-            # als het uitlezen van de invoer zelf al mislukt.
-            return super().run_preparation()
-
-        if not bool(values.get("use_3dbag", False)):
-            return super().run_preparation()
-
-        reachable, reason = self._three_d_bag_server_status()
-        if reachable:
-            return super().run_preparation()
-
-        message = (
-            "3DBAG LoD 2.2 is aangevinkt, maar de 3DBAG-server kan momenteel "
-            "niet worden bereikt.\n\n"
-            "Wil je stap 1 direct verder uitvoeren zonder de 3DBAG LoD 2.2-"
-            "controle? De gewone BAG-woningtypen worden dan wel gewoon verwerkt."
-        )
-        if reason:
-            message += f"\n\nTechnische melding: {reason}"
-
-        reply = QMessageBox.question(
-            self,
-            "3DBAG LoD 2.2 niet bereikbaar",
-            message,
-        )
-        try:
-            yes_button = QMessageBox.StandardButton.Yes
-        except AttributeError:  # QGIS 3 / PyQt5
-            yes_button = QMessageBox.Yes
-        if reply != yes_button:
-            return
-
-        use_3dbag_widget = self.widgets.get("use_3dbag")
-        if use_3dbag_widget is not None and hasattr(use_3dbag_widget, "setChecked"):
-            use_3dbag_widget.setChecked(False)
-
-        self.progress_summary.setText("3DBAG overgeslagen; stap 1 start met BAG-data")
-        self.progress_summary.setToolTip(
-            "3DBAG LoD 2.2 was niet bereikbaar en is voor deze uitvoering uitgezet."
-        )
-        QApplication.processEvents()
+        """De standaard dakcontrole gebruikt AHN en vraagt 3DBAG nooit op."""
         return super().run_preparation()
 
     def _rename_manual_clustering_route(self):
