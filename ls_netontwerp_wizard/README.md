@@ -715,6 +715,33 @@ clusteringbibliotheek. De losse scripts hoeven daarom niet apart geïnstalleerd
 te zijn.
 
 
+## Versie 1.25.5 — nieuwe stations op eigen sleuven verplaatsen
+
+Het gekleurde dashboard bevat onder **4. Clustering aanpassen** de nieuwe knop
+**4d. Nieuw station verplaatsen**. Deze opent stationsbeheer direct bij de
+nieuwe sectie **Nieuw station verplaatsen op een sleuf**.
+
+1. Open eerst het clusteringresultaat (stap 3) en kies via **4d** een
+   station van type **Nieuw** in de stationslijst.
+2. Klik **Nieuwe locatie op kaart kiezen**. Klik op een sleuf **binnen het
+   clustergebied van dat station**. De plugin zoekt de dichtstbijzijnde
+   **bestaande netwerkknoop** binnen het eigen cluster (maximaal 30 m vanaf
+   de klik); rechtsklikken of Esc annuleert.
+3. Controleer de getoonde RD-coördinaten en klik **Stationsverplaatsing
+   klaarzetten**, gevolgd door **Voorstel controleren** en **Alles toepassen**.
+   De verplaatsing blijft ongewijzigd als de route-, capaciteits- of
+   gebiedscontrole niet slaagt. De hele bewerking kan via **Laatste toepassing
+   ongedaan maken** worden teruggedraaid.
+
+Voor een punt op een lang sleufsegment zonder netwerkknoop moet eerst via
+**5. Sleuven/routes** een geschikt knooppunt worden gemaakt. De opgeslagen
+nieuwe locatie en route worden samen bijgewerkt en het verplaatste station
+wordt voor een volgende automatische clustering **vastgelegd/beschermd**.
+
+De knop **Bewerking stoppen** onderaan stationsbeheer gebruikt nu dezelfde
+normale knophoogte en rustige rode omlijning als de overige actieknoppen;
+de kleine rode stop-/kruisstijl blijft alleen voor de compacte voortgangsbalk.
+
 ## Versie 1.25.4 — zichtbare knop voor bestaande stations op het hoofdscherm
 
 In het **gekleurde Werkstappen-dashboard** (de daadwerkelijke hoofdinterface)
