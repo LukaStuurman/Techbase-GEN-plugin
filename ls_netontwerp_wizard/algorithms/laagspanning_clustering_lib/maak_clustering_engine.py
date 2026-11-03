@@ -9,11 +9,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 from pathlib import Path
 from threading import Lock
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -54,6 +56,7 @@ STATION_ENCLOSURES_PATH: Path | None = None
 DISTRIBUTION_CABINETS_PATH: Path | None = None
 PLANGEBIED_PATH: Path | None = None
 BAG_API_BASE_URL = "https://api.pdok.nl/kadaster/bag/ogc/v2"
+BAG_BUILDINGS_PATH: Path | None = None  # Prefer the previously calculated BAG housing layer.
 ONLY_WITHIN_PLAN_AREA = True
 LS_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
 CONNECTION_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
@@ -376,8 +379,89 @@ def make_equipment_network_links(
     return gpd.GeoDataFrame(records, geometry="geometry", crs=CRS_RD)
 
 
+def _load_local_bag_buildings(
+    bounds: tuple[float, float, float, float],
+) -> gpd.GeoDataFrame:
+    """Reuse the complete BAG footprints already saved by the housing-type step.
+
+    This avoids fetching a second, potentially inconsistent BAG snapshot from PDOK.
+    Incomplete or invalid local data must fail visibly rather than silently dropping
+    apartment connections.
+    """
+    try:
+        buildings = gpd.read_file(BAG_BUILDINGS_PATH)
+        if buildings.crs is None:
+            raise ValueError("De lokale BAG-pandenlaag heeft geen CRS")
+        buildings = buildings.to_crs(CRS_RD)
+        if "BAG_ID" not in buildings.columns:
+            raise ValueError("De lokale BAG-pandenlaag mist de identificatiekolom BAG_ID")
+        if "Status" not in buildings.columns:
+            buildings["Status"] = ""
+        buildings = buildings.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]].copy()
+        buildings = buildings.loc[
+            buildings.geometry.notna()
+            & ~buildings.geometry.is_empty
+            & ~buildings["Status"].fillna("").astype(str).str.casefold().str.contains("gesloopt", regex=False)
+        ].copy()
+        if buildings.empty:
+            raise ValueError("Geen BAG-pandcontouren in het benodigde appartementgebied")
+        buildings["BAG_ID"] = buildings["BAG_ID"].fillna("").astype(str)
+        buildings = buildings.loc[buildings["BAG_ID"].str.strip().ne("")].copy()
+        if buildings.empty:
+            raise ValueError("Geen geldige BAG-pandidentificaties in de lokale laag")
+        buildings = buildings.drop_duplicates(subset=["BAG_ID"]).reset_index(drop=True)
+    except Exception as exc:
+        raise RuntimeError(
+            "De lokale woningtypenlaag kon niet als BAG-pandgeometrie worden "
+            f"gebruikt: {exc}. Controleer de laag 'Woningtypen BAG/3DBAG'."
+        ) from exc
+    log(
+        f"BAG woningtypenlaag: {len(buildings):,} lokale pandgeometrieën "
+        "hergebruikt; geen nieuwe PDOK-aanvraag nodig."
+    )
+    return buildings
+
+
+def _fetch_bag_page(url: str, max_attempts: int = 3) -> dict:
+    """Retry transient OGC/network failures; never add records from a failed page."""
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/geo+json, application/json",
+            "User-Agent": "QGIS-Laagspanning-Clustering/1.0",
+        },
+    )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urlopen(request, timeout=45) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("features"), list):
+                raise ValueError("BAG OGC API stuurde geen geldige FeatureCollection")
+            return payload
+        except Exception as exc:
+            retryable = (
+                exc.code in (429, 500, 502, 503, 504)
+                if isinstance(exc, HTTPError)
+                else isinstance(exc, (TimeoutError, ConnectionError, URLError, OSError))
+            )
+            if not retryable or attempt == max_attempts:
+                raise RuntimeError(
+                    "De BAG-pandgeometrie kon niet via de ingestelde OGC API "
+                    f"worden opgehaald (poging {attempt}/{max_attempts}): {exc}"
+                ) from exc
+            pause = min(2 ** (attempt - 1), 4)
+            log(
+                f"BAG OGC API reageert niet (poging {attempt}/{max_attempts}): "
+                f"{exc}; opnieuw proberen over {pause} s."
+            )
+            time.sleep(pause)
+    raise AssertionError("Onbereikbaar: BAG-opvraag zonder resultaat")
+
+
 def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDataFrame:
-    """Fetch BAG pand polygons in RD New from the official PDOK OGC API."""
+    """Fetch RD New BAG footprints, preferring the existing local housing layer."""
+    if BAG_BUILDINGS_PATH is not None:
+        return _load_local_bag_buildings(bounds)
     crs_uri = "http://www.opengis.net/def/crs/EPSG/0/28992"
     parameters = {
         "f": "json",
@@ -393,25 +477,13 @@ def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDat
     )
     records: list[dict] = []
     page_count = 0
+    visited_urls: set[str] = set()
     while next_url:
         page_count += 1
-        if page_count > 100:
-            raise RuntimeError("BAG OGC API gaf onverwacht meer dan 100 pagina's")
-        request = Request(
-            next_url,
-            headers={
-                "Accept": "application/geo+json, application/json",
-                "User-Agent": "QGIS-Laagspanning-Clustering/1.0",
-            },
-        )
-        try:
-            with urlopen(request, timeout=45) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:
-            raise RuntimeError(
-                "De BAG-pandgeometrie kon niet via de ingestelde OGC API "
-                f"worden opgehaald: {exc}"
-            ) from exc
+        if page_count > 100 or next_url in visited_urls:
+            raise RuntimeError("BAG OGC API gaf een ongeldige of cyclische paginering")
+        visited_urls.add(next_url)
+        payload = _fetch_bag_page(next_url)
         for feature in payload.get("features", []):
             geometry_payload = feature.get("geometry")
             if not geometry_payload:
@@ -453,7 +525,6 @@ def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDat
     buildings = buildings.drop_duplicates(subset=["BAG_ID"]).reset_index(drop=True)
     log(f"BAG OGC API: {len(buildings):,} actuele pandgeometrieën opgehaald.")
     return buildings
-
 
 BAG_POINT_TOLERANCE_M = 0.35
 
