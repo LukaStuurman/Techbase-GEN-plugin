@@ -879,7 +879,11 @@ class WorkflowRunner:
                 "PROCESSING_EXTENT": housing_extent,
                 "TILE_SIZE": 10000,
                 "BUFFER": 0.2,
-                "USE_3DBAG_LOD22": self.v["use_3dbag"],
+                # Historische instellingnaam behouden voor bestaande projecten.
+                # Standaard bepaalt AHN DSM dakcontacten volledig lokaal.
+                "ROOF_SOURCE": 0 if self.v["use_3dbag"] else 1,
+                "AHN_OFFLINE_ONLY": False,
+                "AHN_REFRESH_CACHE": False,
                 "USE_MT": True,
                 "CORES": cpu_threads,
                 "OUTPUT": str(housing_gpkg),
