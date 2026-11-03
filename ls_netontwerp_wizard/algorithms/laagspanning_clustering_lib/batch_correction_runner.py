@@ -209,7 +209,9 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
                 distance, position = cKDTree(np.asarray(nodes, dtype=float)).query(
                     [cable_point.x, cable_point.y]
                 )
-                if distance > 0.02:
+                # build_network deliberately rounds each graph vertex to 0.1 m;
+                # a real QGIS trench vertex can be up to ~0.071 m from it.
+                if distance > 0.08:
                     raise ValueError(
                         "De locatie ligt niet op een bestaande netwerkknoop van een sleuf. "
                         "Kies een gesnapte sleufknoop binnen het cluster."
