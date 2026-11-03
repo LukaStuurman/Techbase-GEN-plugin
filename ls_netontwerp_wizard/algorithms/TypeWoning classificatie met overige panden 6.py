@@ -34,6 +34,8 @@ from qgis.core import (QgsProcessing,
 import concurrent.futures
 import math
 
+from ls_netontwerp_wizard.ahn_roof_contact import AhnRoofContact
+
 
 PDOK_BAG_WFS_URL = "https://service.pdok.nl/kadaster/bag/wfs/v2_0"
 PDOK_BAG_TYPENAME = "bag:pand"
@@ -176,22 +178,22 @@ def top_geometries_connected(geoms_a, geoms_b, tolerance):
 
 def count_connected_top_neighbors(item, neighbor_ids, local_map, tolerance):
     top_geoms = item.get('lod22_top_geoms', [])
-    if not top_geoms:
-        return 0, 0
-
+    ahn_links = item.get('ahn_roof_links', {})
     checked_top_neighbors = 0
     connected_top_neighbors = 0
-
     for neighbor_id in neighbor_ids:
+        if neighbor_id in ahn_links:
+            checked_top_neighbors += 1
+            if ahn_links[neighbor_id]:
+                connected_top_neighbors += 1
+            continue
         neighbor = local_map[neighbor_id]
         neighbor_top_geoms = neighbor.get('lod22_top_geoms', [])
-        if not neighbor_top_geoms:
+        if not top_geoms or not neighbor_top_geoms:
             continue
-
         checked_top_neighbors += 1
         if top_geometries_connected(top_geoms, neighbor_top_geoms, tolerance):
             connected_top_neighbors += 1
-
     return checked_top_neighbors, connected_top_neighbors
 
 
@@ -423,7 +425,11 @@ def calculate_tile_worker(tile_data, tile_rect_coords, buffer_dist):
         result_item = {
             'geom': item['geom'],
             'attrs': item['attrs'],
-            'woningtype': item.get('woningtype', "")
+            'woningtype': item.get('woningtype', ""),
+            'dakbron': item.get('dakbron', 'BAG'),
+            'dakcontacten': len(item.get('ahn_roof_links', {})),
+            'dakverbindingen': sum(bool(v) for v in item.get('ahn_roof_links', {}).values()),
+            'dakonzeker': item.get('ahn_unknown_count', 0),
         }
 
         if result_item['woningtype']:
@@ -436,6 +442,9 @@ def calculate_tile_worker(tile_data, tile_rect_coords, buffer_dist):
 
 class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
     FETCH_MODE = 'FETCH_MODE'
+    ROOF_SOURCE = 'ROOF_SOURCE'
+    AHN_OFFLINE_ONLY = 'AHN_OFFLINE_ONLY'
+    AHN_REFRESH_CACHE = 'AHN_REFRESH_CACHE'
     PROCESSING_EXTENT = 'PROCESSING_EXTENT'
     TILE_SIZE = 'TILE_SIZE'
     BUFFER = 'BUFFER'
@@ -488,7 +497,27 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterNumber(self.TILE_SIZE, 'Tegelgrootte (meters)', type=QgsProcessingParameterNumber.Integer, defaultValue=10000, minValue=100))
 
         self.addParameter(QgsProcessingParameterNumber(self.BUFFER, 'Buffer afstand (meters)', type=QgsProcessingParameterNumber.Double, defaultValue=0.20, minValue=0.0, maxValue=10.0))
-        self.addParameter(QgsProcessingParameterBoolean(self.USE_3DBAG_LOD22, 'Controleer rijtjeshuizen met 3DBAG LoD 2.2 2D', defaultValue=True))
+        self.addParameter(QgsProcessingParameterEnum(
+            self.ROOF_SOURCE,
+            'Dakcontrole (AHN is onafhankelijk van 3DBAG)',
+            options=['AHN DSM lokaal afleiden + cachen (aanbevolen)',
+                     'Alleen BAG-pandcontouren (geen dakhoogtes)',
+                     '3DBAG LoD2.2 (oude methode, optioneel)'],
+            defaultValue=0
+        ))
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.AHN_OFFLINE_ONLY, 'AHN: alleen lokaal opgeslagen DSM-tegels gebruiken',
+            defaultValue=False
+        ))
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.AHN_REFRESH_CACHE, 'AHN: opgeslagen DSM-tegels opnieuw downloaden',
+            defaultValue=False
+        ))
+        # Compatibiliteitsparameter voor oudere Processing-aanroepen.
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.USE_3DBAG_LOD22, 'Compatibiliteit: oude 3DBAG-optie',
+            defaultValue=False
+        ))
         self.addParameter(QgsProcessingParameterBoolean(self.USE_MT, 'Gebruik Multithreading', defaultValue=True))
         self.addParameter(QgsProcessingParameterNumber(self.CORES, 'Aantal Threads', type=QgsProcessingParameterNumber.Integer, defaultValue=4, minValue=1, maxValue=32))
 
@@ -635,7 +664,13 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
         fetch_mode = self.parameterAsEnum(parameters, self.FETCH_MODE, context)
         tile_size = self.parameterAsInt(parameters, self.TILE_SIZE, context)
         buffer_dist = self.parameterAsDouble(parameters, self.BUFFER, context)
-        use_3dbag_lod22 = self.parameterAsBool(parameters, self.USE_3DBAG_LOD22, context)
+        roof_source = self.parameterAsEnum(parameters, self.ROOF_SOURCE, context)
+        if self.ROOF_SOURCE not in parameters and self.USE_3DBAG_LOD22 in parameters:
+            roof_source = (2 if self.parameterAsBool(
+                parameters, self.USE_3DBAG_LOD22, context) else 1)
+        use_3dbag_lod22 = roof_source == 2
+        ahn_offline = self.parameterAsBool(parameters, self.AHN_OFFLINE_ONLY, context)
+        ahn_refresh = self.parameterAsBool(parameters, self.AHN_REFRESH_CACHE, context)
         use_mt = self.parameterAsBool(parameters, self.USE_MT, context)
         num_cores = self.parameterAsInt(parameters, self.CORES, context)
 
@@ -644,6 +679,10 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException("PDOK BAG panden-laag ongeldig.")
 
         lod22_layer = self.create_3dbag_lod22_layer() if use_3dbag_lod22 else None
+        ahn_roofs = (AhnRoofContact(feedback, offline_only=ahn_offline,
+                                    refresh=ahn_refresh) if roof_source == 0 else None)
+        if ahn_roofs is not None:
+            feedback.pushInfo('Dakcontrole: AHN DSM (PDOK) met lokale cache, zonder 3DBAG.')
         if lod22_layer is not None:
             feedback.pushInfo(
                 f"3DBAG controle actief: {BAG3D_LOD22_TYPENAME}, hoogste panddeel op basis van {BAG3D_TOP_HEIGHT_FIELD}."
@@ -660,6 +699,10 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
         if output_fields.indexOf(output_field_name) >= 0:
             output_field_name = "Woningtype_calc"
         output_fields.append(QgsField(output_field_name, QVariant.String))
+        output_fields.append(QgsField('Dakbron', QVariant.String))
+        output_fields.append(QgsField('Dakcontacten', QVariant.Int))
+        output_fields.append(QgsField('Dakverbindingen', QVariant.Int))
+        output_fields.append(QgsField('DakOnzeker', QVariant.Int))
         self._output_field_name = output_field_name
 
         (sink, dest_id) = self.parameterAsSink(
@@ -728,7 +771,8 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
                 new_feat = QgsFeature()
                 new_feat.setGeometry(res['geom'])
                 attrs = list(res['attrs'])
-                attrs.append(res['woningtype'])
+                attrs.extend((res['woningtype'], res['dakbron'], res['dakcontacten'],
+                              res['dakverbindingen'], res['dakonzeker']))
                 new_feat.setAttributes(attrs)
                 feats_to_add.append(new_feat)
 
@@ -795,7 +839,9 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
                             'has_woon': has_woon,
                             'is_app': is_appartement,
                             'ignore_neighbor': ignore_neighbor,
-                            'lod22_top_geoms': []
+                            'lod22_top_geoms': [],
+                            'dakbron': ('AHN lokaal' if roof_source == 0 else
+                                        '3DBAG' if roof_source == 2 else 'BAG alleen'),
                         })
 
                     if not tile_data:
@@ -814,6 +860,15 @@ class WoningTyperingSortedAlgorithm(QgsProcessingAlgorithm):
                             for item in tile_data:
                                 item['lod22_top_geoms'] = lod22_top_geoms.get(item['bag_id'], [])
 
+                    if ahn_roofs is not None:
+                        ahn_roofs.populate_tile(tile_data, buffer_dist)
+                        for item in tile_data:
+                            tested = len(item.get('ahn_roof_links', {}))
+                            uncertain = item.get('ahn_unknown_count', 0)
+                            if uncertain:
+                                item['dakbron'] = 'AHN deels onzeker / BAG fallback'
+                            elif not tested:
+                                item['dakbron'] = 'BAG (geen toetsbaar dakcontact)'
                     rect_coords = (t_xmin, t_ymin, t_xmax, t_ymax)
                     future = executor.submit(calculate_tile_worker, tile_data, rect_coords, buffer_dist)
                     futures.append(future)
