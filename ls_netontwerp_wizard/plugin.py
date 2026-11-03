@@ -51,6 +51,21 @@ class LSNetontwerpPlugin:
         self.iface.addPluginToVectorMenu("LS Netontwerp", self.action)
         self.iface.addToolBarIcon(self.action)
 
+        # The retirement workflow was previously reachable only from a
+        # secondary wizard page, making it appear missing from the QGIS menu.
+        # Put a direct shortcut in both places where users look for tools.
+        self.manual_action = QAction(
+            icon, "4a. Station laten vervallen (na clustering)", self.iface.mainWindow()
+        )
+        self.manual_action.setObjectName("lsNetontwerpRetireStationAction")
+        self.manual_action.setToolTip(
+            "Open stationsbeheer: kies een bestaand station, controleer de "
+            "overname en geef het de status Te verwijderen."
+        )
+        self.manual_action.triggered.connect(self.open_manual_tool)
+        self.iface.addPluginToVectorMenu("LS Netontwerp", self.manual_action)
+        self.iface.addPluginToMenu("LS Netontwerp", self.manual_action)
+
     def unload(self):
         from .lovion_panel import stop_active_workers
         stop_active_workers()
@@ -76,6 +91,8 @@ class LSNetontwerpPlugin:
         ):
             if action is not None:
                 self.iface.removePluginVectorMenu("LS Netontwerp", action)
+                if action is self.manual_action:
+                    self.iface.removePluginMenu("LS Netontwerp", action)
                 self.iface.removeToolBarIcon(action)
                 action.deleteLater()
         if self.provider is not None:
