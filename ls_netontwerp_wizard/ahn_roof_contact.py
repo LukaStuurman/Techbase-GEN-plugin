@@ -116,6 +116,7 @@ class AhnRoofContact:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._rasters = OrderedDict()
         self._failed = set()
+        self._refreshed = set()
         self._errors = 0
         self._downloads = 0
         self._warned = False
@@ -155,7 +156,7 @@ class AhnRoofContact:
                     output.write(chunk)
             with part.open("rb") as f:
                 signature = f.read(4)
-            if signature not in (b"II*\\x00", b"MM\\x00*", b"II+\\x00", b"MM\\x00+"):
+            if signature not in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
                 raise ValueError("De AHN WCS gaf geen TIFF terug")
             part.replace(path)
             self._downloads += 1
@@ -187,10 +188,11 @@ class AhnRoofContact:
             self._rasters.move_to_end(key)
             return self._rasters[key]
         path = self._tile_path(key)
-        if self.refresh or not path.is_file():
+        if (self.refresh and key not in self._refreshed) or not path.is_file():
             if not self._download(key, path):
                 self._failed.add(key)
                 return None
+            self._refreshed.add(key)
         raster = QgsRasterLayer(str(path), "AHN lokale DSM", "gdal")
         if not raster.isValid():
             self._failed.add(key)
