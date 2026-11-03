@@ -253,6 +253,12 @@ class ClusterManagementPage(QWidget):
         self._ready()
         if operation.get("target") and any(op.get("kind") == "retire" and op.get("source") == operation["target"] for op in self.operations()):
             raise ValueError("Dit doelstation is al klaargezet om te vervallen. Kies een ander station of wijzig de volgorde.")
+        if operation.get("kind") == "relocate" and any(
+            op.get("kind") in ("relocate", "retire") and
+            op.get("source") == operation["source"]
+            for op in self.operations()
+        ):
+            raise ValueError("Dit station staat al in de wachtrij. Pas die wijziging eerst toe.")
         if not self.queue.count():
             self.signature = fingerprint(self.layers)
         item = QListWidgetItem(label)
@@ -260,6 +266,202 @@ class ClusterManagementPage(QWidget):
         self.queue.addItem(item)
         self.preview_capacity()
         self.status.setText(f"{self.queue.count()} wijziging(en) klaar; het ontwerp is nog niet aangepast.")
+
+    def _station_for_relocation(self):
+        """Require an active new station (never change the source inventory)."""
+        name = self.selected_station()
+        station = next(
+            (feature for feature in self.layers["stations"].getFeatures()
+             if str(feature["Cluster"]).strip() == name),
+            None,
+        )
+        if station is None:
+            raise ValueError("Selecteer een station dat nog in het ontwerp staat.")
+        if not str(station["Type"]).strip().casefold().startswith("nieuw"):
+            raise ValueError(
+                "Dit is een bestaand station. Alleen nieuw geplaatste stations "
+                "kunnen op een andere sleuflocatie worden gezet."
+            )
+        return name, station
+
+    def _leave_location_mode(self, restore_window=True):
+        tool = self._location_tool
+        if tool is None:
+            return
+        self._location_tool = None
+        previous = self._previous_map_tool
+        self._previous_map_tool = None
+        self._relocation_station = None
+        iface = self.host.iface
+        if iface is not None:
+            canvas = iface.mapCanvas()
+            if canvas.mapTool() is tool:
+                if previous is not None and previous is not tool:
+                    canvas.setMapTool(previous)
+                else:
+                    canvas.unsetMapTool(tool)
+        if restore_window:
+            self.host.show()
+            self.host.raise_()
+            self.host.activateWindow()
+
+    def start_station_relocation(self):
+        try:
+            self._ready()
+            name, _station = self._station_for_relocation()
+            if self.queue.count():
+                raise ValueError(
+                    "Pas eerst de wijzigingen in de wachtrij toe of verwijder ze. "
+                    "Daarna kun je een nieuwe stationslocatie kiezen."
+                )
+            if self.host.iface is None:
+                raise ValueError("Een stationslocatie kiezen kan alleen in QGIS Desktop.")
+            if self._location_tool is not None:
+                raise ValueError("Er is al een kaartselectie actief.")
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self._relocation_station = name
+            canvas = self.host.iface.mapCanvas()
+            self._previous_map_tool = canvas.mapTool()
+            self._location_tool = _StationRelocationMapTool(
+                canvas, self._station_location_clicked, self._station_location_canceled
+            )
+            canvas.setMapTool(self._location_tool)
+            self.location_status.setText(
+                f"Klik op een sleuf binnen het cluster van {name}. "
+                "Rechtsklik of druk Esc om te annuleren."
+            )
+            self.host.hide()
+        except Exception as exc:
+            self.location_status.setText(str(exc))
+
+    def _station_location_canceled(self):
+        self._leave_location_mode()
+        self.location_status.setText("Het kiezen van een stationslocatie is geannuleerd.")
+
+    def _station_location_clicked(self, map_point):
+        name = self._relocation_station
+        self._leave_location_mode()
+        if not name:
+            return
+        try:
+            candidate, snap_distance = self._snap_to_cluster_trench_node(name, map_point)
+            self._relocation_candidate = {
+                "kind": "relocate", "source": name,
+                "x": float(candidate.x()), "y": float(candidate.y()),
+            }
+            self.queue_location_button.setEnabled(True)
+            self.location_status.setText(
+                f"Nieuwe locatie voor {name}: X {candidate.x():.2f}, "
+                f"Y {candidate.y():.2f} "
+                f"(gesnapt naar netwerkknoop, {snap_distance:.1f} m vanaf de klik). "
+                "Klik op 'Stationsverplaatsing klaarzetten'."
+            )
+        except Exception as exc:
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self.location_status.setText(str(exc))
+
+    def _snap_to_cluster_trench_node(self, name, map_point):
+        """Return a real cable vertex *inside* the same cluster, not an arbitrary pixel."""
+        areas = self.layers["areas"]
+        cables = self.layers["cables"]
+        stations = self.layers["stations"]
+        if areas is None or cables is None or stations is None:
+            raise ValueError("De clustergebieden, sleuven of stationslaag ontbreken.")
+        if areas.crs().isGeographic() or cables.crs().isGeographic():
+            raise ValueError("Voor stationsverplaatsing zijn geprojecteerde meter-CRS'en nodig.")
+        region = next(
+            (feature for feature in areas.getFeatures()
+             if str(feature["Cluster"]).strip() == name),
+            None,
+        )
+        if region is None or not region.hasGeometry():
+            raise ValueError(f"Er is geen geldig clustergebied voor {name}.")
+        polygon = QgsGeometry(region.geometry())
+        if areas.crs() != cables.crs():
+            polygon.transform(QgsCoordinateTransform(
+                areas.crs(), cables.crs(), QgsProject.instance()
+            ))
+        query = QgsGeometry.fromPointXY(QgsPointXY(map_point))
+        canvas_crs = self.host.iface.mapCanvas().mapSettings().destinationCrs()
+        if canvas_crs != cables.crs():
+            query.transform(QgsCoordinateTransform(
+                canvas_crs, cables.crs(), QgsProject.instance()
+            ))
+        if not polygon.buffer(0.05, 8).covers(query):
+            raise ValueError(
+                f"De aangeklikte locatie ligt buiten het clustergebied van {name}."
+            )
+
+        clicked = query.asPoint()
+        best = None
+        best_distance = float("inf")
+        request = QgsFeatureRequest().setFilterRect(polygon.boundingBox())
+        expanded_region = polygon.buffer(0.05, 8)
+        for cable in cables.getFeatures(request):
+            if not cable.hasGeometry():
+                continue
+            line = cable.geometry()
+            if not line.intersects(polygon):
+                continue
+            for vertex in line.vertices():
+                point = QgsPointXY(vertex)
+                distance = math.hypot(point.x() - clicked.x(), point.y() - clicked.y())
+                if distance >= best_distance:
+                    continue
+                if not expanded_region.covers(QgsGeometry.fromPointXY(point)):
+                    continue
+                best = point
+                best_distance = distance
+        if best is None or best_distance > 30.0:
+            raise ValueError(
+                "Geen bestaande netwerkknoop op een sleuf binnen 30 m van de klik. "
+                "Klik dichter bij een sleufknooppunt of voeg eerst een knooppunt "
+                "toe via stap 5 (Sleuven/routes)."
+            )
+
+        candidate = QgsGeometry.fromPointXY(best)
+        if cables.crs() != stations.crs():
+            candidate.transform(QgsCoordinateTransform(
+                cables.crs(), stations.crs(), QgsProject.instance()
+            ))
+        point = candidate.asPoint()
+        new_xy = QgsPointXY(point)
+        for station in stations.getFeatures():
+            if str(station["Cluster"]).strip() == name or not station.hasGeometry():
+                continue
+            if station.geometry().distance(candidate) < 1.0:
+                raise ValueError(
+                    "De gesnapte locatie ligt te dicht bij een ander station. "
+                    "Kies een ander netwerkknooppunt."
+                )
+        return new_xy, best_distance
+
+    def queue_station_relocation(self):
+        try:
+            self._ready()
+            operation = self._relocation_candidate
+            if operation is None:
+                raise ValueError("Kies eerst een nieuwe locatie op de kaart.")
+            name, _station = self._station_for_relocation()
+            if name != operation["source"]:
+                raise ValueError(
+                    "De geselecteerde stationsregel is gewijzigd. Kies de nieuwe locatie opnieuw."
+                )
+            self.add_operation(
+                dict(operation),
+                f"{name} verplaatsen naar sleufknoop "
+                f"({operation['x']:.2f}, {operation['y']:.2f})",
+            )
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self.location_status.setText(
+                f"Verplaatsing van {name} staat in de wachtrij. "
+                "Controleer het voorstel en klik daarna op Alles toepassen."
+            )
+        except Exception as exc:
+            self.location_status.setText(str(exc))
 
     def queue_move(self):
         try:
