@@ -361,10 +361,26 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                 ),
             ],
         )
+        # The old '4. Clustering aanpassen' button belongs to a hidden legacy
+        # action group. Expose station retirement on the visible color dashboard
+        # so users can find it after running step 3a/3b.
+        self.retire_station_dashboard_button = self._dashboard_button(
+            "4c. Bestaand station laten vervallen",
+            4,
+            callback=lambda: self.show_manual_page(False),
+            secondary=True,
+        )
+        self.retire_station_dashboard_button.setObjectName(
+            "retireExistingStationDashboardButton"
+        )
+        self.retire_station_dashboard_button.setToolTip(
+            "Open stationsbeheer om een bestaand station de status 'Te verwijderen' "
+            "te geven. Aansluitingen worden eerst gecontroleerd en herverdeeld."
+        )
         step4 = self._make_step_card(
             4,
             "Clustering aanpassen",
-            "Wijzig bestaande clusters of gebruik de visuele lasso-editor voor nieuwe stations en clusters.",
+            "Herverdeel aansluitingen, maak eigen clusters of zet een bestaand station op Te verwijderen.",
             [
                 self._dashboard_button(
                     "4a. Aansluitingen herverdelen", 4,
@@ -376,6 +392,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     callback=lambda: self._open_visual_cluster_editor("result", "new"),
                     secondary=True,
                 ),
+                self.retire_station_dashboard_button,
             ],
         )
         step5 = self._make_step_card(
