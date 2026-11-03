@@ -468,7 +468,8 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "Selecteer een station van type Nieuw in de stationslijst en klik "
             "op 'Nieuwe locatie op kaart kiezen'."
         )
-        page.pick_location_button.setFocus()
+        # Keep the station list visible first: the user must select the new
+        # source station before scrolling to the map-location controls.
 
     def _open_visual_cluster_editor(self, requested_mode, action=None):
         if self._dashboard_visual_cluster_dialog is None:
