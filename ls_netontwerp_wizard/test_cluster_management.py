@@ -15,7 +15,9 @@ def fixture_frames():
     'stations':gpd.GeoDataFrame(summary,geometry=[Point(x,0) for x in (0,10,20)],crs=crs),
     'areas':gpd.GeoDataFrame(summary,geometry=[box(-5,-5,5,15),box(5,-5,15,15),box(15,-5,25,15)],crs=crs),
     'routes':gpd.GeoDataFrame(summary,geometry=[LineString([(x,0),(x,10)]) for x in (0,10,20)],crs=crs),
-    'cables':gpd.GeoDataFrame({'__src_fid':[1,2,3,4,5]},geometry=[LineString([(x,0),(x,10)]) for x in (0,10,20)]+[LineString([(0,10),(10,10)]),LineString([(10,10),(20,10)])],crs=crs)}
+    'cables':gpd.GeoDataFrame({'__src_fid':[1,2,3,4,5]},geometry=[LineString([(0,0),(0,10)]), LineString([(10,0),(10,10)]),
+            LineString([(20,0),(20,5),(20,10)]),
+            LineString([(0,10),(10,10)]), LineString([(10,10),(20,10)])],crs=crs)}
     for name, values in {"Stat_type":["Bestaand","Bestaand","Nieuw"], "Stat_KVA":[630.]*3,
                          "Max_A":[630/.23/3]*3,"Clust_A":[10.]*3,"Benut_pct":[1.]*3,"Snap_m":[0.]*3}.items():
         frames['connections'][name]=values
@@ -60,6 +62,41 @@ def main():
     else:
         raise AssertionError('Protected station was removed')
     assert frames['connections'].Cluster.tolist() == ['A','B','C']
+    # Relocating a new station must modify its actual geometry and route, never
+    # just its map symbol. The route solver must use the selected cable vertex.
+    from shapely.geometry import LineString
+    relocation_input = fixture_frames()
+    relocation_input['cables'].at[2, 'geometry'] = LineString(
+        [(20, 0), (20, 5), (20, 10)]
+    )
+    relocation = [{'kind':'relocate','source':'C','x':20.0,'y':5.0}]
+    moved_state, changed = calculate(engine, relocation_input, relocation, 850)
+    moved_station = moved_state[1].loc[moved_state[1].Cluster=='C'].iloc[0]
+    moved_route = moved_state[3].loc[moved_state[3].Cluster=='C'].iloc[0].geometry
+    assert moved_station.geometry.distance(relocation_input['stations'].iloc[2].geometry)==5.0
+    assert moved_station.geometry.y == 5.0
+    assert moved_route.distance(moved_station.geometry) < 0.02
+    assert moved_state[0].loc[moved_state[0].Cluster=='C','Route_m'].iloc[0] <= 5.01
+    assert changed['relocated_stations']==['C']
+    assert changed['station_rules']['C']['protected'] is True
+    assert relocation_input['stations'].iloc[2].geometry.y == 0.0
+    before_preview = relocation_input['stations'].geometry.copy()
+    _preview_state, preview_change = calculate(
+        engine, relocation_input, relocation, 850, preview=True
+    )
+    assert preview_change['relocated_stations']==['C']
+    assert relocation_input['stations'].geometry.equals(before_preview)
+    for forbidden, expected_error in (
+        ([{'kind':'relocate','source':'A','x':0.0,'y':5.0}], 'nieuw geplaatste'),
+        ([{'kind':'relocate','source':'C','x':10.0,'y':10.0}], 'buiten het clustergebied'),
+        ([{'kind':'relocate','source':'C','x':20.0,'y':6.0}], 'netwerkknoop'),
+    ):
+        try:
+            calculate(engine, relocation_input, forbidden, 850, preview=True)
+        except ValueError as exc:
+            assert expected_error in str(exc), (expected_error, str(exc))
+        else:
+            raise AssertionError(f"Unsafe relocation was allowed: {forbidden}")
     # Capacity failure must reject a complete queue without mutating inputs.
     too_small=fixture_frames()
     too_small['stations'].loc[too_small['stations'].Cluster=='B','KVA']=10
@@ -94,6 +131,19 @@ def main():
         assert layers['stations'].featureCount()==1
         apply_snapshot(layers,backup)
         assert fingerprint(layers)==before
+        # Geometry and routes are written together, and an exact snapshot
+        # restores both the moved station and its old cable route.
+        new_position = [{'kind':'relocate','source':'C','x':20.0,'y':5.0}]
+        relocation_summary, relocation_backup, _result = run_batch(
+            layers, new_position, directory, 850, False, QgsProcessingFeedback()
+        )
+        assert relocation_summary['relocated_stations'] == ['C']
+        station_c = next(f for f in layers['stations'].getFeatures() if f['Cluster']=='C')
+        assert abs(station_c.geometry().asPoint().y()-5.0) < 0.02
+        route_c = next(f for f in layers['routes'].getFeatures() if f['Cluster']=='C')
+        assert route_c.geometry().distance(station_c.geometry()) < 0.02
+        apply_snapshot(layers, relocation_backup)
+        assert fingerprint(layers) == before
         # Roll back every table when a later write is rejected by SQLite.
         import sqlite3
         connection=sqlite3.connect(source)
@@ -144,7 +194,7 @@ def main():
         page.execute(True)
         assert 'tussentijds' in page.status.text(),page.status.text()
         project.clear()
-    print('CLUSTER_MANAGEMENT_TEST_OK (batch, auto redistribution, protection, capacity, transaction rollback, exact undo, project reload, stale queue)',flush=True)
+    print('CLUSTER_MANAGEMENT_TEST_OK (batch, station relocation, strict route rebuild, auto redistribution, protection, capacity, rollback, exact undo, stale queue)',flush=True)
     os._exit(0)
 
 

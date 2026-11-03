@@ -380,7 +380,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         step4 = self._make_step_card(
             4,
             "Clustering aanpassen",
-            "Herverdeel aansluitingen, maak eigen clusters of zet een bestaand station op Te verwijderen.",
+            "Herverdeel aansluitingen, maak eigen clusters, faseer stations uit of verplaats nieuwe stations op een sleuf.",
             [
                 self._dashboard_button(
                     "4a. Aansluitingen herverdelen", 4,
@@ -393,6 +393,12 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     secondary=True,
                 ),
                 self.retire_station_dashboard_button,
+                self._dashboard_button(
+                    "4d. Nieuw station verplaatsen",
+                    4,
+                    callback=self.show_station_relocation_page,
+                    secondary=True,
+                ),
             ],
         )
         step5 = self._make_step_card(
@@ -453,6 +459,17 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             self.actions_group.setVisible(False)
         if self._dashboard_widget is not None:
             self._dashboard_widget.setVisible(not enabled)
+
+    def show_station_relocation_page(self):
+        """Open the existing transaction-safe editor from the visible dashboard."""
+        self.show_manual_page(False)
+        page = self.cluster_management_page
+        page.location_status.setText(
+            "Selecteer een station van type Nieuw in de stationslijst en klik "
+            "op 'Nieuwe locatie op kaart kiezen'."
+        )
+        # Keep the station list visible first: the user must select the new
+        # source station before scrolling to the map-location controls.
 
     def _open_visual_cluster_editor(self, requested_mode, action=None):
         if self._dashboard_visual_cluster_dialog is None:

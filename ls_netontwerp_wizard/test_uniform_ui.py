@@ -48,6 +48,29 @@ def main():
     app.processEvents()
     assert retire.isVisible() and retire.isEnabled()
 
+    # The real dashboard must also expose relocation of new stations, and the
+    # station-management footer stop control must use normal button sizing.
+    relocate_buttons = [
+        button for button in dialog._dashboard_widget.findChildren(QPushButton)
+        if button.text() == "4d. Nieuw station verplaatsen"
+    ]
+    assert len(relocate_buttons) == 1
+    relocate = relocate_buttons[0]
+    assert relocate.isVisible() and relocate.isEnabled()
+    relocate.click()
+    app.processEvents()
+    assert dialog.page_stack.currentWidget() is dialog.cluster_management_page
+    page = dialog.cluster_management_page
+    assert page.relocation_group.isVisible()
+    assert page.pick_location_button.isVisible()
+    assert page.pick_location_button.text() == "Nieuwe locatie op kaart kiezen"
+    assert page.queue_location_button.isEnabled() is False
+    assert page.cancel.property("uiRole") == "danger"
+    assert page.cancel.minimumHeight() >= 34
+    assert page.cancel.text() == "Bewerking stoppen"
+    dialog.show_home_page()
+    app.processEvents()
+
     captures = Path(sys.argv[sys.argv.index("--captures") + 1]) if "--captures" in sys.argv else None
     if captures:
         captures.mkdir(parents=True, exist_ok=True)

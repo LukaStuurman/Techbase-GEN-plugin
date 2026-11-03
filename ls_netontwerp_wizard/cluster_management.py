@@ -1,6 +1,7 @@
 """Queue cluster changes and retire stations without editing source records."""
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from qgis.PyQt.QtCore import Qt
@@ -9,12 +10,39 @@ from qgis.PyQt.QtWidgets import (
     QPushButton, QComboBox, QDoubleSpinBox, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
 )
-from qgis.core import QgsProject, QgsProcessingFeedback
+from qgis.core import (QgsProject, QgsProcessingFeedback, QgsCoordinateTransform,
+                       QgsFeatureRequest, QgsGeometry, QgsPointXY)
+from qgis.gui import QgsMapTool
 
 from .batch_editing import run_batch, apply_snapshot, station_rules, save_station_rules
 from .station_policy import show_retired_stations
 
 ROLE = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+LEFT_BUTTON = Qt.MouseButton.LeftButton if hasattr(Qt, "MouseButton") else Qt.LeftButton
+RIGHT_BUTTON = Qt.MouseButton.RightButton if hasattr(Qt, "MouseButton") else Qt.RightButton
+ESCAPE_KEY = Qt.Key.Key_Escape if hasattr(Qt, "Key") else Qt.Key_Escape
+
+
+class _StationRelocationMapTool(QgsMapTool):
+    """One-shot map picker; right-click or Escape cancels without editing."""
+
+    def __init__(self, canvas, clicked, canceled):
+        super().__init__(canvas)
+        self._clicked = clicked
+        self._canceled = canceled
+
+    def canvasReleaseEvent(self, event):
+        if event.button() == RIGHT_BUTTON:
+            self._canceled()
+        elif event.button() == LEFT_BUTTON:
+            self._clicked(self.toMapCoordinates(event.pos()))
+
+    def keyPressEvent(self, event):
+        if event.key() == ESCAPE_KEY:
+            self._canceled()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
 
 def layer_source(layer):
@@ -45,6 +73,11 @@ class ClusterManagementPage(QWidget):
         self.layers = {}
         self.signature = None
         self.feedback = None
+        self._location_tool = None
+        self._previous_map_tool = None
+        self._relocation_station = None
+        self._relocation_candidate = None
+        host.finished.connect(lambda *_: self._leave_location_mode(False))
         layout = QVBoxLayout(self)
         host._add_subpage_header(layout, "Clustering aanpassen",
                                 "Wijzigingen klaarzetten • stationsbeheer • gezamenlijk toepassen")
@@ -93,6 +126,32 @@ class ClusterManagementPage(QWidget):
         note.setWordWrap(True)
         form.addRow(note)
         layout.addWidget(group)
+
+        self.relocation_group = QGroupBox("Nieuw station verplaatsen op een sleuf")
+        self.relocation_group.setObjectName("stationRelocationGroup")
+        location_layout = QVBoxLayout(self.relocation_group)
+        location_note = QLabel(
+            "Selecteer in de stationslijst een station van type Nieuw. Klik op de kaart "
+            "op een sleuf binnen zijn eigen cluster. De locatie wordt gesnapt naar "
+            "een bestaande netwerkknoop, zodat de routes correct kunnen worden herberekend."
+        )
+        location_note.setWordWrap(True)
+        location_layout.addWidget(location_note)
+        self.location_status = QLabel("Nog geen nieuwe stationslocatie gekozen.")
+        self.location_status.setWordWrap(True)
+        location_layout.addWidget(self.location_status)
+        location_actions = QHBoxLayout()
+        self.pick_location_button = self._button(
+            location_actions, "Nieuwe locatie op kaart kiezen", self.start_station_relocation
+        )
+        self.pick_location_button.setProperty("uiExplicitRole", "map")
+        self.queue_location_button = self._button(
+            location_actions, "Stationsverplaatsing klaarzetten", self.queue_station_relocation
+        )
+        self.queue_location_button.setProperty("uiExplicitRole", "primary")
+        self.queue_location_button.setEnabled(False)
+        location_layout.addLayout(location_actions)
+        layout.addWidget(self.relocation_group)
         self.queue = QListWidget()
         self.queue.setMinimumHeight(80)
         self.queue.setMaximumHeight(145)
@@ -116,7 +175,12 @@ class ClusterManagementPage(QWidget):
         self.apply_button.setProperty("uiExplicitRole", "primary")
         self.undo_button = self._button(row, "Laatste toepassing ongedaan maken", self.undo)
         self.undo_button.setProperty("uiExplicitRole", "secondary")
-        self.cancel = self._button(row, "Stop", self.stop)
+        self.cancel = self._button(row, "Bewerking stoppen", self.stop)
+        # The generic compact 'stop' role is intended for the tiny progress
+        # bar X, not a full-size action button in this page's footer.
+        self.cancel.setProperty("uiExplicitRole", "danger")
+        self.cancel.setMinimumWidth(148)
+        self.cancel.setToolTip("Annuleer de lopende berekening; alleen actief tijdens verwerken.")
         self.cancel.setEnabled(False)
         layout.addLayout(row)
 
@@ -189,6 +253,12 @@ class ClusterManagementPage(QWidget):
         self._ready()
         if operation.get("target") and any(op.get("kind") == "retire" and op.get("source") == operation["target"] for op in self.operations()):
             raise ValueError("Dit doelstation is al klaargezet om te vervallen. Kies een ander station of wijzig de volgorde.")
+        if operation.get("kind") == "relocate" and any(
+            op.get("kind") in ("relocate", "retire") and
+            op.get("source") == operation["source"]
+            for op in self.operations()
+        ):
+            raise ValueError("Dit station staat al in de wachtrij. Pas die wijziging eerst toe.")
         if not self.queue.count():
             self.signature = fingerprint(self.layers)
         item = QListWidgetItem(label)
@@ -196,6 +266,202 @@ class ClusterManagementPage(QWidget):
         self.queue.addItem(item)
         self.preview_capacity()
         self.status.setText(f"{self.queue.count()} wijziging(en) klaar; het ontwerp is nog niet aangepast.")
+
+    def _station_for_relocation(self):
+        """Require an active new station (never change the source inventory)."""
+        name = self.selected_station()
+        station = next(
+            (feature for feature in self.layers["stations"].getFeatures()
+             if str(feature["Cluster"]).strip() == name),
+            None,
+        )
+        if station is None:
+            raise ValueError("Selecteer een station dat nog in het ontwerp staat.")
+        if not str(station["Type"]).strip().casefold().startswith("nieuw"):
+            raise ValueError(
+                "Dit is een bestaand station. Alleen nieuw geplaatste stations "
+                "kunnen op een andere sleuflocatie worden gezet."
+            )
+        return name, station
+
+    def _leave_location_mode(self, restore_window=True):
+        tool = self._location_tool
+        if tool is None:
+            return
+        self._location_tool = None
+        previous = self._previous_map_tool
+        self._previous_map_tool = None
+        self._relocation_station = None
+        iface = self.host.iface
+        if iface is not None:
+            canvas = iface.mapCanvas()
+            if canvas.mapTool() is tool:
+                if previous is not None and previous is not tool:
+                    canvas.setMapTool(previous)
+                else:
+                    canvas.unsetMapTool(tool)
+        if restore_window:
+            self.host.show()
+            self.host.raise_()
+            self.host.activateWindow()
+
+    def start_station_relocation(self):
+        try:
+            self._ready()
+            name, _station = self._station_for_relocation()
+            if self.queue.count():
+                raise ValueError(
+                    "Pas eerst de wijzigingen in de wachtrij toe of verwijder ze. "
+                    "Daarna kun je een nieuwe stationslocatie kiezen."
+                )
+            if self.host.iface is None:
+                raise ValueError("Een stationslocatie kiezen kan alleen in QGIS Desktop.")
+            if self._location_tool is not None:
+                raise ValueError("Er is al een kaartselectie actief.")
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self._relocation_station = name
+            canvas = self.host.iface.mapCanvas()
+            self._previous_map_tool = canvas.mapTool()
+            self._location_tool = _StationRelocationMapTool(
+                canvas, self._station_location_clicked, self._station_location_canceled
+            )
+            canvas.setMapTool(self._location_tool)
+            self.location_status.setText(
+                f"Klik op een sleuf binnen het cluster van {name}. "
+                "Rechtsklik of druk Esc om te annuleren."
+            )
+            self.host.hide()
+        except Exception as exc:
+            self.location_status.setText(str(exc))
+
+    def _station_location_canceled(self):
+        self._leave_location_mode()
+        self.location_status.setText("Het kiezen van een stationslocatie is geannuleerd.")
+
+    def _station_location_clicked(self, map_point):
+        name = self._relocation_station
+        self._leave_location_mode()
+        if not name:
+            return
+        try:
+            candidate, snap_distance = self._snap_to_cluster_trench_node(name, map_point)
+            self._relocation_candidate = {
+                "kind": "relocate", "source": name,
+                "x": float(candidate.x()), "y": float(candidate.y()),
+            }
+            self.queue_location_button.setEnabled(True)
+            self.location_status.setText(
+                f"Nieuwe locatie voor {name}: X {candidate.x():.2f}, "
+                f"Y {candidate.y():.2f} "
+                f"(gesnapt naar netwerkknoop, {snap_distance:.1f} m vanaf de klik). "
+                "Klik op 'Stationsverplaatsing klaarzetten'."
+            )
+        except Exception as exc:
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self.location_status.setText(str(exc))
+
+    def _snap_to_cluster_trench_node(self, name, map_point):
+        """Return a real cable vertex *inside* the same cluster, not an arbitrary pixel."""
+        areas = self.layers["areas"]
+        cables = self.layers["cables"]
+        stations = self.layers["stations"]
+        if areas is None or cables is None or stations is None:
+            raise ValueError("De clustergebieden, sleuven of stationslaag ontbreken.")
+        if areas.crs().isGeographic() or cables.crs().isGeographic():
+            raise ValueError("Voor stationsverplaatsing zijn geprojecteerde meter-CRS'en nodig.")
+        region = next(
+            (feature for feature in areas.getFeatures()
+             if str(feature["Cluster"]).strip() == name),
+            None,
+        )
+        if region is None or not region.hasGeometry():
+            raise ValueError(f"Er is geen geldig clustergebied voor {name}.")
+        polygon = QgsGeometry(region.geometry())
+        if areas.crs() != cables.crs():
+            polygon.transform(QgsCoordinateTransform(
+                areas.crs(), cables.crs(), QgsProject.instance()
+            ))
+        query = QgsGeometry.fromPointXY(QgsPointXY(map_point))
+        canvas_crs = self.host.iface.mapCanvas().mapSettings().destinationCrs()
+        if canvas_crs != cables.crs():
+            query.transform(QgsCoordinateTransform(
+                canvas_crs, cables.crs(), QgsProject.instance()
+            ))
+        if not polygon.buffer(0.05, 8).intersects(query):
+            raise ValueError(
+                f"De aangeklikte locatie ligt buiten het clustergebied van {name}."
+            )
+
+        clicked = query.asPoint()
+        best = None
+        best_distance = float("inf")
+        request = QgsFeatureRequest().setFilterRect(polygon.boundingBox())
+        expanded_region = polygon.buffer(0.05, 8)
+        for cable in cables.getFeatures(request):
+            if not cable.hasGeometry():
+                continue
+            line = cable.geometry()
+            if not line.intersects(polygon):
+                continue
+            for vertex in line.vertices():
+                point = QgsPointXY(vertex)
+                distance = math.hypot(point.x() - clicked.x(), point.y() - clicked.y())
+                if distance >= best_distance:
+                    continue
+                if not expanded_region.intersects(QgsGeometry.fromPointXY(point)):
+                    continue
+                best = point
+                best_distance = distance
+        if best is None or best_distance > 30.0:
+            raise ValueError(
+                "Geen bestaande netwerkknoop op een sleuf binnen 30 m van de klik. "
+                "Klik dichter bij een sleufknooppunt of voeg eerst een knooppunt "
+                "toe via stap 5 (Sleuven/routes)."
+            )
+
+        candidate = QgsGeometry.fromPointXY(best)
+        if cables.crs() != stations.crs():
+            candidate.transform(QgsCoordinateTransform(
+                cables.crs(), stations.crs(), QgsProject.instance()
+            ))
+        point = candidate.asPoint()
+        new_xy = QgsPointXY(point)
+        for station in stations.getFeatures():
+            if str(station["Cluster"]).strip() == name or not station.hasGeometry():
+                continue
+            if station.geometry().distance(candidate) < 1.0:
+                raise ValueError(
+                    "De gesnapte locatie ligt te dicht bij een ander station. "
+                    "Kies een ander netwerkknooppunt."
+                )
+        return new_xy, best_distance
+
+    def queue_station_relocation(self):
+        try:
+            self._ready()
+            operation = self._relocation_candidate
+            if operation is None:
+                raise ValueError("Kies eerst een nieuwe locatie op de kaart.")
+            name, _station = self._station_for_relocation()
+            if name != operation["source"]:
+                raise ValueError(
+                    "De geselecteerde stationsregel is gewijzigd. Kies de nieuwe locatie opnieuw."
+                )
+            self.add_operation(
+                dict(operation),
+                f"{name} verplaatsen naar sleufknoop "
+                f"({operation['x']:.2f}, {operation['y']:.2f})",
+            )
+            self._relocation_candidate = None
+            self.queue_location_button.setEnabled(False)
+            self.location_status.setText(
+                f"Verplaatsing van {name} staat in de wachtrij. "
+                "Controleer het voorstel en klik daarna op Alles toepassen."
+            )
+        except Exception as exc:
+            self.location_status.setText(str(exc))
 
     def queue_move(self):
         try:
@@ -322,7 +588,17 @@ class ClusterManagementPage(QWidget):
             self.status.setText("Voorstel en kabelroutes worden gecontroleerd…" if preview else "Alle wijzigingen worden gezamenlijk berekend…")
             summary, backup, result = run_batch(self.layers, operations, self.directory(), self.maximum_route.value(), preview, self.feedback, rules_before)
             if preview:
-                self.status.setText(f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), {len(summary['removed_source_clusters'])} station(s) laten vervallen. Langste route: {summary['maximum_route_m']:.1f} m. Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd.")
+                moved = summary.get("relocated_stations", [])
+                description = (
+                    f" Nieuw station verplaatst: {', '.join(moved)}."
+                    if moved else ""
+                )
+                self.status.setText(
+                    f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), "
+                    f"{len(summary['removed_source_clusters'])} station(s) laten vervallen."
+                    f"{description} Langste route: {summary['maximum_route_m']:.1f} m. "
+                    "Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd."
+                )
             else:
                 try:
                     save_station_rules(summary["station_rules"])
@@ -352,7 +628,17 @@ class ClusterManagementPage(QWidget):
                 self.refresh()
                 if project.fileName():
                     project.write()
-                self.status.setText(f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; {len(summary['removed_source_clusters'])} station(s) vervallen. Gebieden één keer opgebouwd. De toepassing kan ongedaan gemaakt worden.")
+                moved = summary.get("relocated_stations", [])
+                description = (
+                    f" Nieuw station verplaatst: {', '.join(moved)}."
+                    if moved else ""
+                )
+                self.status.setText(
+                    f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; "
+                    f"{len(summary['removed_source_clusters'])} station(s) vervallen."
+                    f"{description} Routes en gebieden bijgewerkt. "
+                    "De toepassing kan ongedaan gemaakt worden."
+                )
         except Exception as exc:
             self.status.setText(str(exc))
         finally:
@@ -397,6 +683,7 @@ class ClusterManagementPage(QWidget):
             self.status.setText(str(exc))
 
     def stop(self):
+        self._leave_location_mode(False)
         if self.feedback is not None:
             self.feedback.cancel()
             self.status.setText("Bewerking stoppen…")
