@@ -137,6 +137,9 @@ class WorkflowRunner:
     def _run_algorithm(self, key, parameters, start, end, title):
         self.progress(start, title)
         feedback = StageFeedback(self.progress, start, end, title)
+        if key == "clustering":
+            from .station_policy import apply_input_policy
+            parameters = apply_input_policy(parameters)
         result = self._algorithm(key).processAlgorithm(
             parameters, self.context, feedback
         )
@@ -715,6 +718,8 @@ class WorkflowRunner:
         project = QgsProject.instance()
         project.writeEntry("LSNetontwerp", "state_file", str(state_file))
         project.writeEntry("LSNetontwerp", "fase", state["status"])
+        if "station_rules" in state:
+            project.writeEntry("LSNetontwerp", "station_rules", json.dumps(state["station_rules"], ensure_ascii=False))
         project.write()
         return state
 
@@ -1014,6 +1019,9 @@ class WorkflowRunner:
     def cluster(self, state):
         if not state:
             raise QgsProcessingException("Er is geen voorbereide ontwerpstroomfase")
+        from .batch_editing import station_rules
+        state["station_rules"] = station_rules() or state.get("station_rules", {})
+        QgsProject.instance().writeEntry("LSNetontwerp", "station_rules", json.dumps(state["station_rules"], ensure_ascii=False))
         self.v = dict(state["values"])
         cpu_threads = self._configure_cpu_threads()
         result_dir = Path(state["result_dir"])
@@ -1033,6 +1041,11 @@ class WorkflowRunner:
                 )
         state["status"] = "clustering_bezig"
         self._write_state(state)
+
+        if state.get("station_rules") and self.v.get("open_project", True):
+            from .station_policy import show_retired_stations
+            show_retired_stations(state["station_rules"], clustering_dir)
+            QgsProject.instance().write()
 
         def imported(name, label):
             return self._validate_layer(self._layer(import_gpkg, name), label)

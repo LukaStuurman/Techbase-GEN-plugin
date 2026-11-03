@@ -83,7 +83,7 @@ def main():
     # are still exercised twice through the wizard page.
     dialog_module.processing.run = run_manual_algorithm
     dialog = LSNetontwerpDialog()
-    dialog.show_manual_page(False)
+    dialog._show_classic_manual_page(False)
     assert dialog.page_stack.currentWidget() is dialog.manual_page
     assert dialog.manual_advanced_container.isHidden()
     dialog.manual_advanced_toggle.setChecked(True)
@@ -108,7 +108,7 @@ def main():
         assert stations.featureCount() == before - 1
         dialog.show_home_page()
         assert dialog.page_stack.currentWidget() is dialog.main_page
-        dialog.show_manual_page(False)
+        dialog._show_classic_manual_page(False)
         dialog.manual_advanced_toggle.setChecked(True)
         dialog.manual_allow_all.setChecked(True)
         dialog.manual_remove_cluster.setChecked(True)

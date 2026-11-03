@@ -32,6 +32,6 @@ def connect_current_edits(spins, manual_checkbox):
         spin.lineEdit().installEventFilter(spin._current_commit_filter)
 
 
-def has_manual_currents(feature):
-    index = feature.fields().lookupField("HerstelHandmatig")
-    return index >= 0 and str(feature[index]) == "1"
+def has_manual_currents(feature, layer=None):
+    from .current_edit_metadata import current_choice
+    return current_choice(layer, feature, "HerstelHandmatig") == "1"

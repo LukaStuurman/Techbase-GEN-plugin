@@ -3089,6 +3089,8 @@ def recalculate_manual_assignment(
     safety_checks_enabled: bool | None = None,
     refresh_all_routes: bool = False,
     refresh_cluster_names: set[str] | None = None,
+    defer_area_rebuild: bool = False,
+    preserve_all_routes: bool = False,
 ) -> tuple[
     gpd.GeoDataFrame,
     gpd.GeoDataFrame,
@@ -3369,7 +3371,11 @@ def recalculate_manual_assignment(
         errors="coerce",
     ).fillna(0.0).to_numpy(dtype=float)
     try:
-        if refresh_all_routes:
+        if preserve_all_routes:
+            route_geometries = list(routes_rd.geometry)
+            route_lengths = pd.to_numeric(routes_rd["Route_km"], errors="raise").to_numpy(float) * 1000.0
+            point_route_m = previous_route_m.copy()
+        elif refresh_all_routes:
             route_geometries, route_lengths, point_route_m = (
                 build_refreshed_fixed_routes(
                     graph,
@@ -3477,35 +3483,39 @@ def recalculate_manual_assignment(
         if explicit_study_area is not None
         else unary_union(list(areas_rd.geometry)).buffer(0)
     )
-    log("Aaneengesloten clustergebieden opnieuw opbouwen...")
-    cluster_polygons, _ = make_cable_based_cluster_polygons(
-        route_geometries,
-        point_xy,
-        np.asarray(point_nodes, dtype=float),
-        point_assignment,
-        station_xy,
-        np.asarray(station_nodes, dtype=float),
-        station_count,
-        study_area_override=study_area,
-    )
-    disconnected = [
-        station_names[index]
-        for index, polygon in enumerate(cluster_polygons)
-        if polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1
-    ]
-    if check_shared_routes_and_branches and disconnected:
-        raise RuntimeError(
-            "De handmatige herberekening maakt exclaves in: "
-            + ", ".join(disconnected)
+    if defer_area_rebuild:
+        cluster_polygons = list(areas_rd.geometry)
+    else:
+        log("Aaneengesloten clustergebieden opnieuw opbouwen...")
+        cluster_polygons, _ = make_cable_based_cluster_polygons(
+            route_geometries,
+            point_xy,
+            np.asarray(point_nodes, dtype=float),
+            point_assignment,
+            station_xy,
+            np.asarray(station_nodes, dtype=float),
+            station_count,
+            study_area_override=study_area,
         )
-    outside_area = sum(
-        float(polygon.difference(study_area.buffer(0.01)).area)
-        for polygon in cluster_polygons
-    )
-    if outside_area > 0.01:
-        raise RuntimeError(
-            f"Clustergebieden vallen {outside_area:.2f} m² buiten het plangebied"
+        disconnected = [
+            station_names[index]
+            for index, polygon in enumerate(cluster_polygons)
+            if polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1
+        ]
+        if check_shared_routes_and_branches and disconnected:
+            raise RuntimeError(
+                "De handmatige herberekening maakt exclaves in: "
+                + ", ".join(disconnected)
+            )
+        outside_area = sum(
+            float(polygon.difference(study_area.buffer(0.01)).area)
+            for polygon in cluster_polygons
         )
+
+        if outside_area > 0.01:
+            raise RuntimeError(
+                f"Clustergebieden vallen {outside_area:.2f} m² buiten het plangebied"
+            )
 
     point_counts = np.bincount(point_assignment, minlength=station_count)
     max_route = np.asarray(
@@ -5433,6 +5443,28 @@ def ensure_canonical_function_column(frame: gpd.GeoDataFrame) -> gpd.GeoDataFram
     return prepared
 
 
+def excluded_station_mask(node_xy, records):
+    excluded = np.zeros(len(node_xy), dtype=bool)
+    for record in records:
+        distances = np.linalg.norm(node_xy - np.asarray([record["x"], record["y"]]), axis=1)
+        excluded |= distances <= float(record.get("radius", 20.0))
+    return excluded
+
+
+def include_pinned_stations(stations, records):
+    existing_names = set(stations["Stationsnaa"].astype(str))
+    additions = []
+    for record in records:
+        if record["name"] in existing_names:
+            continue
+        additions.append({"Stationsnaa": record["name"], "Status": f"Nieuw {record['kva']:g}Kva",
+                          "KVA": float(record["kva"]), "geometry": Point(record["x"], record["y"])})
+        existing_names.add(record["name"])
+    if not additions:
+        return stations
+    return gpd.GeoDataFrame(pd.concat([stations, gpd.GeoDataFrame(additions, crs=stations.crs)], ignore_index=True), geometry="geometry", crs=stations.crs)
+
+
 def main(_automatic_retry: bool = False) -> None:
     global N_NEW, _AUTO_COUNTS_TRIED, _AUTO_TOPOLOGY_MINIMUM_NEW
 
@@ -5505,6 +5537,7 @@ def main(_automatic_retry: bool = False) -> None:
             "onderlinge kruisingen en T-aansluitingen worden gezamenlijk genood."
         )
     stations = gpd.read_file(STATIONS_PATH).to_crs(CRS_RD)
+    stations = include_pinned_stations(stations, globals().get("PINNED_NEW_STATIONS", []))
     flat_cabinets = None
     if FLAT_CABINETS_PATH is not None:
         flat_cabinets = gpd.read_file(FLAT_CABINETS_PATH).to_crs(CRS_RD)
@@ -5881,6 +5914,8 @@ def main(_automatic_retry: bool = False) -> None:
     # Components without any main cable receive a safe routing anchor on their
     # own cable component; their displayed station is offset beside that cable.
     safe_node_mask = point_clearance_m >= NEW_STATION_POINT_CLEARANCE_M
+    excluded_node_mask = excluded_station_mask(node_xy, globals().get("EXCLUDED_STATION_AREAS", []))
+    safe_node_mask &= ~excluded_node_mask
     regular_node_indices_list: list[int] = []
     graph_component_by_node_index = np.full(len(node_list), -1, dtype=int)
     regular_indices_by_component: dict[int, np.ndarray] = {}
@@ -5912,12 +5947,15 @@ def main(_automatic_retry: bool = False) -> None:
         else:
             component_regular = component_indices[safe_node_mask[component_indices]]
             if not len(component_regular):
+                allowed_indices = component_indices[~excluded_node_mask[component_indices]]
+                if not len(allowed_indices):
+                    raise RuntimeError("Een kabelcomponent heeft geen stationslocatie buiten de uitgesloten locaties.")
                 # Retain a deterministic last-resort routing anchor, choosing
                 # the node with the largest possible separation. The displayed
                 # station will still be placed beside the cable and away from
                 # the connection point below.
                 component_regular = np.asarray(
-                    [component_indices[int(np.argmax(point_clearance_m[component_indices]))]],
+                    [allowed_indices[int(np.argmax(point_clearance_m[allowed_indices]))]],
                     dtype=int,
                 )
         regular_indices_by_component[component_index] = component_regular
@@ -6595,14 +6633,14 @@ def main(_automatic_retry: bool = False) -> None:
     new_order = sorted(
         range(N_NEW), key=lambda i: (-new_nodes[i][1], new_nodes[i][0])
     )
-    new_name_by_index = {
-        old_index: f"N-{new_number:02d}"
-        for new_number, old_index in enumerate(new_order, start=1)
-    }
+    reserved_names = set(stations["Stationsnaa"].astype(str)) | set(globals().get("RESERVED_STATION_NAMES", set()))
+    free_names = (f"N-{number:02d}" for number in range(1, 1000000) if f"N-{number:02d}" not in reserved_names)
+    new_name_by_index = {old_index: next(free_names) for old_index in new_order}
     cluster_names = stations["Stationsnaa"].astype(str).tolist() + [
         new_name_by_index[i] for i in range(N_NEW)
     ]
-    cluster_types = ["Bestaand"] * existing_count + ["Nieuw"] * N_NEW
+    pinned_names = {record["name"] for record in globals().get("PINNED_NEW_STATIONS", [])}
+    cluster_types = ["Nieuw" if name in pinned_names else "Bestaand" for name in stations["Stationsnaa"].astype(str)] + ["Nieuw"] * N_NEW
     point_assignment = final_assignment[point_to_unit]
 
     # Determine the actual displayed/physical new-station position separately
@@ -6825,7 +6863,7 @@ def main(_automatic_retry: bool = False) -> None:
     ] * N_NEW
     station_kva = stations["KVA"].to_numpy(float).tolist() + [NEW_KVA] * N_NEW
     candidate_origins = [""] * existing_count + selected_legacy_labels
-    placement_types = ["Bestaand"] * existing_count + new_station_placement_types
+    placement_types = ["Vastgelegd nieuw" if name in pinned_names else "Bestaand" for name in stations["Stationsnaa"].astype(str)] + new_station_placement_types
     network_anchor_x = [geometry.x for geometry in stations.geometry] + [
         float(node[0]) for node in new_nodes
     ]

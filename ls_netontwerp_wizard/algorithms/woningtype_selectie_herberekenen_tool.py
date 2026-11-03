@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from ls_netontwerp_wizard.current_edit_metadata import clear_current_choices
 from pathlib import Path
 
 from ls_netontwerp_wizard.bag_current_rules import (
@@ -573,6 +574,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(
                 "Het woningtype is aangepast, maar de ontwerpstroom kon niet worden opgeslagen"
             )
+        clear_current_choices(points, point_changes)
         housing.triggerRepaint()
         points.triggerRepaint()
         project = QgsProject.instance()

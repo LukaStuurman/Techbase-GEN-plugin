@@ -105,6 +105,7 @@ def main():
     project.addMapLayer(stations)
 
     import ls_netontwerp_wizard.dialog as dialog_module
+    from ls_netontwerp_wizard.current_edit_metadata import current_choice
     from ls_netontwerp_wizard.algorithms.hoogste_waarden_selectie_tool import (
         HoogsteWaardenSelectieAlgorithm,
     )
@@ -164,7 +165,7 @@ def main():
     assert abs(float(changed["Kabel opwek ontwerpstroom"]) - 18.9) < 1e-9
     assert abs(float(changed["Hoogste Trafo"]) - 16.7) < 1e-9
     assert abs(float(changed["Hoogste Kabel"]) - 18.9) < 1e-9
-    assert changed["HerstelCat"] == "Zakelijk"
+    assert current_choice(points, changed, "HerstelCat") == "Zakelijk"
     assert dialog.value_status_label.text().startswith("Gereed:")
 
     zero_fields = {

@@ -39,7 +39,8 @@ def main():
         ("05-nulwaarden", lambda: dialog.show_zero_current_page(select_first=False), dialog.zero_current_page),
         ("06-lovion-nieuwbouw", dialog.show_connection_sources_page, dialog.connection_sources_page),
         ("06a-stationskoppeling", dialog.show_station_link_page, dialog.station_link_page),
-        ("07-clustercorrectie", dialog.show_manual_page, dialog.manual_page),
+        ("07-clustercorrectie", dialog.show_manual_page, dialog.cluster_management_page),
+        ("07a-klassiek", dialog._show_classic_manual_page, dialog.manual_page),
         ("08-sleuven-routes", dialog.show_network_page, dialog.network_page),
         ("09-clustergebieden", dialog.show_areas_page, dialog.areas_page),
     )
@@ -108,7 +109,7 @@ def main():
     for attr in ("value_advanced_toggle", "housing_advanced_toggle", "station_advanced_toggle", "manual_advanced_toggle", "network_advanced_toggle", "areas_advanced_toggle"):
         toggle = getattr(dialog, attr)
         show = {"value_advanced_toggle": dialog.show_value_page, "housing_advanced_toggle": dialog.show_housing_page,
-                "station_advanced_toggle": dialog.show_station_page, "manual_advanced_toggle": dialog.show_manual_page,
+                "station_advanced_toggle": dialog.show_station_page, "manual_advanced_toggle": dialog._show_classic_manual_page,
                 "network_advanced_toggle": dialog.show_network_page, "areas_advanced_toggle": dialog.show_areas_page}[attr]
         show()
         assert toggle.text() == "Geavanceerde opties"

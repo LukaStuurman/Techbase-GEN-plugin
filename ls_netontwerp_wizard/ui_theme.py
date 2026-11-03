@@ -121,6 +121,8 @@ def role(widget, name):
 
 
 def _button_role(button):
+    if button.property("uiExplicitRole"):
+        return str(button.property("uiExplicitRole"))
     name = button.text().strip().casefold()
     if button.objectName() == "dangerButton" or ("verwijderen" in name and "selectie wissen" not in name):
         return "danger"

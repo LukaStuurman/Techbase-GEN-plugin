@@ -40,7 +40,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         self._ui_pages = (
             self.main_page, self.value_page, self.housing_page, self.station_page,
             self.zero_current_page, self.connection_sources_page, self.station_link_page, self.manual_page,
-            self.network_page, self.areas_page,
+            self.network_page, self.areas_page, self.cluster_management_page,
         )
         action_sets = (
             (self.value_page, (self.value_run_button,)),
@@ -50,6 +50,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             (self.connection_sources_page, ()),
             (self.station_link_page, ()),
             (self.manual_page, (self.manual_run_button,)),
+            (self.cluster_management_page, (self.cluster_management_page.check_button, self.cluster_management_page.apply_button, self.cluster_management_page.undo_button, self.cluster_management_page.cancel)),
             (self.network_page, (self.network_draw_button, self.network_refresh_button, self.network_selected_refresh_button)),
             (self.areas_page, (self.areas_create_button, self.areas_draw_button)),
         )
@@ -508,7 +509,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         return super().show_zero_current_page(_checked, select_first, review_layer)
 
     def show_manual_page(self, unrestricted=False):
-        self._prepare_fixed_subpage(self.manual_page)
+        self._prepare_fixed_subpage(self.manual_page if unrestricted else self.cluster_management_page)
         return super().show_manual_page(unrestricted)
 
     def show_network_page(self):
@@ -695,7 +696,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
         right_angles = mode == "right_angles"
         self.areas_right_angles.setChecked(right_angles)
         self.areas_min_width.setEnabled(right_angles)
-        self.areas_junction_tolerance.setEnabled(right_angles)
+        self.areas_junction_tolerance.setEnabled(False)
         if right_angles:
             self.areas_create_button.setText("Rechte clustergebieden maken")
             self.areas_tolerance.setToolTip(

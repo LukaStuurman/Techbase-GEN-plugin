@@ -11,6 +11,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     app = QgsApplication([], False)
     app.initQgis()
+    from ls_netontwerp_wizard.current_edit_metadata import current_choice
     from ls_netontwerp_wizard.current_presets import GAS_CHOICES, UNIT_CHOICES, current_context, unit_currents
     from ls_netontwerp_wizard.dashboard_warning_dialog import LSNetontwerpDashboardDialog
     from ls_netontwerp_wizard.dialog import FRAMEWORK_31_STREET_MATRIX
@@ -63,7 +64,7 @@ def main():
     saved = next(layer.getFeatures())
     assert [saved[name] for name in CURRENT_FIELDS] == [138, 65, 138, 65, 138, 65]
     assert saved["G_Type"] == "G10-G25"
-    assert saved["HerstelType"] == "Huidige aansluitwaarde: 3x63A"
+    assert current_choice(layer, saved, "HerstelType") == "Huidige aansluitwaarde: 3x63A"
     dialog.show_home_page()
     dialog.show_value_page()
     assert dialog.value_unit_combo.currentData() == "63"
@@ -78,7 +79,7 @@ def main():
     dialog.run_value_edit()
     saved = next(layer.getFeatures())
     assert [saved[name] for name in CURRENT_FIELDS] == [123, 124, 125, 126, 125, 126]
-    assert saved["HerstelType"] == "Zelf invullen"
+    assert current_choice(layer, saved, "HerstelType") == "Zelf invullen"
     # Same presets in the zero-current repair page, with a different gas choice.
     zero = dialog.zero_current_page
     zero.category_combo.setCurrentIndex(zero.category_combo.findData("Zakelijk"))

@@ -2,6 +2,7 @@ from qgis.PyQt.QtCore import QCoreApplication, QVariant
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
+    QgsProcessingException,
     QgsProcessingParameterFile,
     QgsProcessingParameterString,
     QgsProcessingParameterFileDestination,
@@ -911,8 +912,16 @@ class ImportSmallworldLayersWithCSV_V45_RelationIds(QgsProcessingAlgorithm):
             else:
                 options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
             
-            QgsVectorFileWriter.writeAsVectorFormatV3(vl, gpkg_path, context.transformContext(), options)
+            result = QgsVectorFileWriter.writeAsVectorFormatV3(
+                vl, gpkg_path, context.transformContext(), options
+            )
+            if result[0] != QgsVectorFileWriter.NoError:
+                raise QgsProcessingException(
+                    f"Laag '{layer_name}' schrijven mislukt: {result[1]}"
+                )
             
+        # Open readers after all GeoPackage schema changes are finished.
+        for layer_name in layers_data:
             uri = f"{gpkg_path}|layername={layer_name}"
             gpkg_layer = QgsVectorLayer(uri, layer_name, "ogr")
             if gpkg_layer.isValid():

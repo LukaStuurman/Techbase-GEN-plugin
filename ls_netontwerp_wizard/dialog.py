@@ -49,6 +49,7 @@ from qgis.core import (
 from qgis import processing
 
 from .zero_current_page import ZeroCurrentPage
+from .current_edit_metadata import current_choice
 from .current_inputs import connect_current_edits, set_current_values, has_manual_currents
 from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
@@ -295,6 +296,8 @@ class LSNetontwerpDialog(QDialog):
     def __init__(self, iface=None, parent=None):
         super().__init__(parent)
         self.iface = iface
+        self._plan_draw_session = None
+        self.finished.connect(self.cancel_plan_drawing)
         self.prepared_state = None
         self.setWindowTitle("LS Netontwerp Wizard")
         self.setWindowIcon(
@@ -314,6 +317,10 @@ class LSNetontwerpDialog(QDialog):
         self._build_ui()
         self._restore_settings()
         self._restore_prepared_state()
+        from .cluster_management import ClusterManagementPage
+        self.cluster_management_page = ClusterManagementPage(self)
+        self.finished.connect(self.cluster_management_page.stop)
+        self.page_stack.addWidget(self.cluster_management_page)
         apply_theme(self)
         install_dialog_theme(self)
 
@@ -1157,43 +1164,37 @@ class LSNetontwerpDialog(QDialog):
         if not str(base_folder):
             self._set_areas_status("Het project heeft nog geen geldige opslagmap.", True)
             return
-        output_path = base_folder / "clustergebieden_vereenvoudigd.gpkg"
-        if source_path == output_path:
-            original = next(
-                (
-                    layer
-                    for layer in QgsProject.instance().mapLayers().values()
-                    if isinstance(layer, QgsVectorLayer)
-                    and layer.name() == "Clustergebieden"
-                ),
-                None,
-            )
-            if original is None:
-                self._set_areas_status(
-                    "Kies voor opnieuw maken eerst de oorspronkelijke laag Clustergebieden.",
-                    True,
-                )
+        # Each run writes to a fresh file. Keep the last good result and its
+        # open OGR handles untouched until the replacement is fully verified.
+        from uuid import uuid4
+        selected_area_id = areas.id()
+        base_uri = str(areas.customProperty("LSNetontwerp/areas_base_uri", areas.source()))
+        base_id = str(areas.customProperty("LSNetontwerp/areas_base_id", areas.id()))
+        if areas.customProperty("LSNetontwerp/simplified_cluster_areas", False):
+            if not areas.customProperty("LSNetontwerp/areas_base_uri", ""):
+                baseline = next((layer for layer in QgsProject.instance().mapLayers().values()
+                                 if isinstance(layer, QgsVectorLayer) and layer.name() == "Clustergebieden"), None)
+                if baseline is not None:
+                    base_uri, base_id = baseline.source(), baseline.id()
+            baseline = QgsProject.instance().mapLayer(base_id)
+            if baseline is None:
+                baseline = QgsVectorLayer(base_uri, "Bron clustergebieden", "ogr")
+            if not baseline.isValid():
+                self._set_areas_status("De oorspronkelijke gebiedenlaag kan niet worden geopend.", True)
                 return
-            areas = original
-        # Release an older result before overwriting it, while keeping a backup.
-        old_layers = [
-            layer for layer in QgsProject.instance().mapLayers().values()
-            if isinstance(layer, QgsVectorLayer)
-            and self._persistent_layer_path(layer) == output_path
-        ]
-        for layer in old_layers:
-            QgsProject.instance().removeMapLayer(layer.id())
-        old_layers.clear()
-        QApplication.processEvents()
-        if output_path.exists():
-            backup_folder = base_folder / "gebiedscorrecties"
-            backup_folder.mkdir(parents=True, exist_ok=True)
-            backup = backup_folder / f"clustergebieden_vereenvoudigd_backup_{datetime.now():%Y%m%d_%H%M%S_%f}.gpkg"
-            output_path.replace(backup)
+            areas = baseline
+        output_path = base_folder / f"clustergebieden_vereenvoudigd_{uuid4().hex[:12]}.gpkg"
+        old_layers = [layer for layer in QgsProject.instance().mapLayers().values()
+                      if isinstance(layer, QgsVectorLayer)
+                      and layer.customProperty("LSNetontwerp/simplified_cluster_areas", False)
+                      and (str(layer.customProperty("LSNetontwerp/areas_base_uri", "")) == base_uri or layer.id() == selected_area_id)]
         self.areas_progress_group.setVisible(True)
         self.areas_progress_details.clear()
         self.areas_create_button.setEnabled(False)
         self.areas_draw_button.setEnabled(False)
+        shape_group = getattr(self, "areas_shape_group", None)
+        if shape_group is not None:
+            shape_group.setEnabled(False)
         feedback = InlineProcessingFeedback(self._areas_progress_update)
         try:
             result = processing.run(
@@ -1206,16 +1207,18 @@ class LSNetontwerpDialog(QDialog):
                     "MAX_TOLERANTIE_M": self.areas_tolerance.value(),
                     "RECHTE_HOEKEN": self.areas_right_angles.isChecked(),
                     "MIN_BREEDTE_M": self.areas_min_width.value(),
-                    "KNOOP_AFSCHUINING_M": self.areas_junction_tolerance.value(),
+                    "KNOOP_AFSCHUINING_M": (0.0 if self.areas_right_angles.isChecked() else self.areas_junction_tolerance.value()),
                     "OUTPUT": str(output_path),
                 },
                 feedback=feedback,
             )
             result_path = str(result.get("OUTPUT") or output_path)
             result_layer = QgsVectorLayer(result_path, "Clustergebieden vereenvoudigd", "ogr")
-            if not result_layer.isValid():
+            if not result_layer.isValid() or result_layer.featureCount() != areas.featureCount():
                 raise RuntimeError("De gemaakte gebiedenlaag kon niet worden geopend.")
             result_layer.setCustomProperty("LSNetontwerp/simplified_cluster_areas", True)
+            result_layer.setCustomProperty("LSNetontwerp/areas_base_uri", base_uri)
+            result_layer.setCustomProperty("LSNetontwerp/areas_base_id", base_id)
             if areas.renderer() is not None:
                 result_layer.setRenderer(areas.renderer().clone())
             result_layer.setOpacity(1.0)
@@ -1235,6 +1238,8 @@ class LSNetontwerpDialog(QDialog):
             # position of the original areas, always above OpenStreetMap.
             from .project_presentation import place_layer_before
             place_layer_before(result_layer, areas, project)
+            for old_layer in old_layers:
+                project.removeMapLayer(old_layer.id())
             project.write()
             self._areas_progress_update(100, "Vereenvoudigde clustergebieden gereed.")
             self._set_areas_status(
@@ -1247,6 +1252,8 @@ class LSNetontwerpDialog(QDialog):
         except Exception as exc:
             self._set_areas_status(f"Vereenvoudigen mislukt: {exc}", True)
         finally:
+            if shape_group is not None:
+                shape_group.setEnabled(True)
             self.areas_create_button.setEnabled(True)
             self.areas_draw_button.setEnabled(True)
             if self.iface is not None:
@@ -1748,6 +1755,14 @@ class LSNetontwerpDialog(QDialog):
                 self.iface.mapCanvas().refresh()
 
     def show_manual_page(self, unrestricted=False):
+        if unrestricted:
+            return self._show_classic_manual_page(unrestricted)
+        self.cluster_management_page.refresh()
+        self.page_stack.setCurrentWidget(self.cluster_management_page)
+        self.setWindowTitle("LS Netontwerp Wizard – clustering aanpassen en stationsbeheer")
+        self.resize(1180, 920)
+
+    def _show_classic_manual_page(self, unrestricted=False):
         self._refresh_manual_layer_choices()
         self.manual_allow_all.setChecked(bool(unrestricted))
         if not unrestricted:
@@ -2304,7 +2319,7 @@ class LSNetontwerpDialog(QDialog):
             return "" if value is None else str(value).strip().casefold()
 
         sample = selected[0]
-        stored_category = self.zero_current_page._field_value(sample, "HerstelCat")
+        stored_category = current_choice(layer, sample, "HerstelCat")
         use = " ".join(
             text_value(sample, field_name)
             for field_name in ("Gebruiksdoel", "Gevonden_Woningtype", "G_Type")
@@ -2345,7 +2360,7 @@ class LSNetontwerpDialog(QDialog):
             if index >= 0:
                 self.value_housing_combo.setCurrentIndex(index)
         if category != "Huishoudelijk":
-            stored_unit = text_value(sample, "HerstelType")
+            stored_unit = current_choice(layer, sample, "HerstelType").casefold()
             index = next((i for i in range(self.value_unit_combo.count()) if self.value_unit_combo.itemText(i).casefold() == stored_unit), -1)
             if index >= 0:
                 self.value_unit_combo.setCurrentIndex(index)
@@ -2472,7 +2487,7 @@ class LSNetontwerpDialog(QDialog):
                         continue
                 loaded.append(max(values) if values else 0.0)
             set_current_values(self._value_current_spins(), loaded)
-            self.value_manual_checkbox.setChecked(all(has_manual_currents(feature) for feature in selected))
+            self.value_manual_checkbox.setChecked(all(has_manual_currents(feature, layer) for feature in selected))
             self._update_value_highest_preview()
         return bool(selected)
 
@@ -2761,8 +2776,30 @@ class LSNetontwerpDialog(QDialog):
         button.clicked.connect(lambda: self._browse(edit, kind))
         row.addWidget(edit, 1)
         row.addWidget(button)
+        if kind == "plan":
+            self.draw_plan_button = QPushButton("Tekenen…")
+            self.draw_plan_button.setToolTip("Teken een nieuw plangebied op de QGIS-kaart en maak de laag automatisch aan.")
+            self.draw_plan_button.setEnabled(self.iface is not None)
+            self.draw_plan_button.clicked.connect(self.draw_plan_area)
+            row.addWidget(self.draw_plan_button)
         form.addRow(label, row)
         return edit
+
+    def draw_plan_area(self):
+        if self.iface is None:
+            return
+        if self._plan_draw_session is not None:
+            self._plan_draw_session.cancel()
+        if not self.iface.mapCanvas().mapSettings().destinationCrs().isValid():
+            QMessageBox.warning(self, "Plangebied tekenen", "Stel eerst een geldig coördinatenstelsel voor de kaart in.")
+            return
+        from .plan_area_drawing import PlanAreaDrawingSession
+        self._plan_draw_session = PlanAreaDrawingSession(self)
+        self._plan_draw_session.start()
+
+    def cancel_plan_drawing(self, *_args):
+        if self._plan_draw_session is not None:
+            self._plan_draw_session.cancel(restore_window=False)
 
     def _toggle_plan(self, without_plan):
         self.plan_edit.setEnabled(not without_plan)

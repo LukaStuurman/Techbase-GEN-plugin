@@ -35,6 +35,7 @@ from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, GAS_CHOICES, fill_gas_combo, fill_unit_combo,
     unit_currents, unit_description, category_note,
 )
+from .current_edit_metadata import current_choice, save_current_choices
 from .current_inputs import connect_current_edits, set_current_values
 from .bag_current_rules import (
     NEW_BUILD_FIELD, NEW_BUILD_TYPE_FIELD, NEW_BUILD_TYPE_3,
@@ -298,7 +299,7 @@ class ZeroCurrentPage(QWidget):
             unreviewed_object = (
                 is_bag_object(self._field_value(feature, defaults.get("field_passthrough", "service_connection_type_type")))
                 and not has_residential_usage(self._field_value(feature, defaults.get("field_usage", "Gebruiksdoel")))
-                and not self._field_value(feature, "HerstelCat")
+                and not current_choice(layer, feature, "HerstelCat")
             )
             if unreviewed_object or value is None or value <= 0.0:
                 result.append(feature)
@@ -565,20 +566,6 @@ class ZeroCurrentPage(QWidget):
         canvas.refresh()
         self.status_label.setText(f"Kaart ingezoomd op {len(ids)} aansluiting(en).")
 
-    def _ensure_category_field(self, provider, layer=None):
-        layer = layer or self.layer
-        field_index = layer.fields().lookupField(self.CATEGORY_FIELD)
-        if field_index >= 0:
-            return field_index
-        if not provider.capabilities() & QgsVectorDataProvider.AddAttributes:
-            return -1
-        if not provider.addAttributes(
-            [QgsField(self.CATEGORY_FIELD, QVariant.String, len=20)]
-        ):
-            return -1
-        layer.updateFields()
-        return layer.fields().lookupField(self.CATEGORY_FIELD)
-
     def _household_context(self):
         from .algorithms.woningtype_selectie_herberekenen_tool import (
             _configurations,
@@ -667,24 +654,22 @@ class ZeroCurrentPage(QWidget):
             raise ValueError(
                 "De laag mist een of meer verbruiks-, opwek- of hoogste stroomvelden."
             )
-        category_index = self._ensure_category_field(provider, layer)
-        if category_index < 0:
-            raise ValueError("Het categorieveld 'HerstelCat' kan niet worden opgeslagen.")
-
         if category == "Huishoudelijk" and house_type is None:
             raise ValueError("Kies eerst een woningtype.")
         if category != "Huishoudelijk" or manual_override:
             if any(not math.isfinite(float(value)) or float(value) < 0 for value in currents.values()):
                 raise ValueError("Vul geldige stroomwaarden van 0 A of hoger in.")
-        metadata = {"HerstelHandmatig": "1" if manual_override else "0"}
+        metadata = {"HerstelCat": category, "HerstelType": str(house_type or unit_name or ""),
+                    "HerstelHandmatig": "1" if manual_override else "0"}
+        original_updates = {}
         if unit_name is not None and category != "Huishoudelijk":
             metadata["HerstelType"] = str(unit_name)
         if gas_category is not None and category == "Zakelijk":
             if gas_category not in {stored for _, stored, _ in GAS_CHOICES}:
                 raise ValueError("Kies een geldige gasaansluitcategorie.")
             gas_field = self.host._workflow_field_defaults().get("field_gas", "G_Type")
-            metadata[gas_field] = gas_category
-        for name in metadata:
+            original_updates[gas_field] = gas_category
+        for name in original_updates:
             if layer.fields().lookupField(name) < 0:
                 if not provider.addAttributes([QgsField(name, QVariant.String)]):
                     raise ValueError(f"Kolom '{name}' kon niet worden opgeslagen.")
@@ -740,16 +725,15 @@ class ZeroCurrentPage(QWidget):
                     NEW_BUILD_TYPE_3 if category == "Huishoudelijk" and house_type
                     and "appartement" not in str(house_type).casefold() else ""
                 )
-            attributes[category_index] = category
-            if category == "Huishoudelijk" and layer.fields().lookupField("HerstelType") >= 0:
-                attributes[layer.fields().lookupField("HerstelType")] = house_type
-            attributes.update({layer.fields().lookupField(name): val for name, val in metadata.items()})
+            attributes.update({layer.fields().lookupField(name): val
+                               for name, val in original_updates.items()})
             changes[int(feature.id())] = attributes
 
         if not changes:
             raise ValueError("De geselecteerde aansluitingen zijn niet meer beschikbaar.")
         if not provider.changeAttributeValues(changes):
             raise ValueError("De ontwerpstroomwaarden konden niet worden opgeslagen.")
+        save_current_choices(layer, changes, metadata)
         layer.updateFields()
         layer.triggerRepaint()
         project = QgsProject.instance()

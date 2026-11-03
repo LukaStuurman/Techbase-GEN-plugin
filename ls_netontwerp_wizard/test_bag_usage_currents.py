@@ -12,6 +12,7 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     app = QgsApplication([], False)
     app.initQgis()
+    from ls_netontwerp_wizard.current_edit_metadata import current_choice
     from ls_netontwerp_wizard.test_connection_sources import make_layer, add
     from ls_netontwerp_wizard.connection_sources import add_selected_objects, CURRENT_FIELDS
     from ls_netontwerp_wizard.bag_current_rules import has_residential_usage
@@ -79,7 +80,7 @@ def main():
     zero.gas_combo.setCurrentIndex(zero.gas_combo.findData("G10-G25"))
     zero.apply_category()
     chosen = target.getFeature(chosen_id)
-    assert chosen["HerstelCat"] == "Zakelijk" and chosen["G_Type"] == "G10-G25"
+    assert current_choice(target, chosen, "HerstelCat") == "Zakelijk" and chosen["G_Type"] == "G10-G25"
     chosen_currents = [chosen[name] for name in CURRENT_FIELDS]
     assert zero.table.rowCount() == 4
 
@@ -138,7 +139,7 @@ def main():
                                 housing_alg.NIEUW_WONINGTYPE: 3}, context, feedback)
     assert ok, output
     assert [target.getFeature(chosen_id)[name] for name in CURRENT_FIELDS] == chosen_currents
-    assert target.getFeature(chosen_id)["HerstelCat"] == "Zakelijk"
+    assert current_choice(target, target.getFeature(chosen_id), "HerstelCat") == "Zakelijk"
     residential = next(f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000000000000001")
     assert residential["Ontwerpstroom"] > 0 and residential["Gevonden_Woningtype"] == "tussenwoning/geschakeld"
     assert residential["Nieuwbouw"] == "1" and residential["OntwerpstroomType"].startswith("Type 3:")
@@ -164,7 +165,7 @@ def main():
     result = add_selected_objects(source, other_target, None, zero, manual_currents=[10, 11, 12, 13])
     assert result == {"added": 1, "skipped": 0, "missing": 0}
     no_pand_manual = next(f for f in other_target.getFeatures() if f["BAG_VBO_ID"] == "0000000000000099")
-    assert no_pand_manual["HerstelHandmatig"] == "1"
+    assert current_choice(other_target, no_pand_manual, "HerstelHandmatig") == "1"
     output, ok = alg.run({alg.INPUT_LAYER: other_target, alg.INPUT_PANDEN: housing, alg.OUTPUT: "memory:"}, context, feedback)
     assert ok, output
     no_pand_saved = next(f for f in context.getMapLayer(output[alg.OUTPUT]).getFeatures() if f["BAG_VBO_ID"] == "0000000000000099")

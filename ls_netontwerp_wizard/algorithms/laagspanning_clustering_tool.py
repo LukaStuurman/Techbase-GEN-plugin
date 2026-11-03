@@ -32,6 +32,7 @@ from qgis.core import (
     QgsProcessingParameterString,
     QgsProviderRegistry,
     QgsVectorFileWriter,
+    QgsVectorLayer,
     QgsVariantUtils,
 )
 
@@ -787,22 +788,40 @@ verzoek zichtbaar worden.
 
     @staticmethod
     def _qgis_python_command():
-        executable = Path(sys.executable)
-        if "python" in executable.stem.casefold():
-            return [str(executable)]
+        # An embedded QGIS session can report a python.exe without exporting
+        # its QGIS sys.path to children. Prefer the active installation's launcher.
+        prefix = Path(QgsApplication.prefixPath())
         candidates = []
+        if len(prefix.parents) >= 2:
+            candidates.extend(prefix.parents[1] / "bin" / name
+                              for name in ("python-qgis.bat", "python-qgis-ltr.bat"))
         osgeo_root = os.environ.get("OSGEO4W_ROOT")
         if osgeo_root:
             candidates.append(Path(osgeo_root) / "bin" / "python-qgis.bat")
-        prefix = Path(QgsApplication.prefixPath())
-        if len(prefix.parents) >= 2:
-            candidates.append(prefix.parents[1] / "bin" / "python-qgis.bat")
         for candidate in candidates:
-            if candidate.exists():
+            if candidate.is_file():
                 return [str(candidate)]
+        executable = Path(sys.executable)
+        if "python" in executable.stem.casefold() and executable.is_file():
+            return [str(executable)]
         raise QgsProcessingException(
             "De aparte QGIS-Pythonomgeving voor het project is niet gevonden."
         )
+
+    @staticmethod
+    def _qgis_python_environment():
+        import qgis
+
+        environment = os.environ.copy()
+        # Desktop adds these module paths in-process; subprocesses need them
+        # explicitly even when PYTHONPATH was absent at application startup.
+        python_root = Path(qgis.__file__).resolve().parent.parent
+        paths = [str(python_root), str(python_root / "plugins")]
+        if environment.get("PYTHONPATH"):
+            paths.append(environment["PYTHONPATH"])
+        environment["PYTHONPATH"] = os.pathsep.join(paths)
+        environment["QGIS_PREFIX_PATH"] = QgsApplication.prefixPath()
+        return environment
 
     @staticmethod
     def _project_artifacts_valid(project_path, layout_path):
@@ -863,6 +882,7 @@ verzoek zichtbaar worden.
                     str(output_dir),
                     str(copied_gpkg),
                 ],
+                env=self._qgis_python_environment(),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -1470,6 +1490,13 @@ verzoek zichtbaar worden.
                 connection_cables is not None
                 and connection_function_index is not None
             )
+            from ls_netontwerp_wizard.batch_editing import station_rules
+            policies = station_rules()
+            engine.EXCLUDED_STATION_AREAS = [rule for rule in policies.values()
+                                             if rule.get("status") == "Vervallen"]
+            engine.PINNED_NEW_STATIONS = [{**rule, "name": name} for name, rule in policies.items()
+                                          if rule.get("protected") and rule.get("type", "").casefold() == "nieuw"]
+            engine.RESERVED_STATION_NAMES = set(policies)
             engine.STATIONS_PATH = stations_path
             engine.STATION_ENCLOSURES_PATH = (
                 station_enclosures_path if station_enclosures is not None else None
@@ -1507,7 +1534,18 @@ verzoek zichtbaar worden.
             # Keep every existing station available for the current-situation
             # layout, including stations not used in the final design.
             scope_stations = output_dir / "scope_stations_bron.gpkg"
-            shutil.copy2(stations_path, scope_stations)
+            source_layer = self.parameterAsVectorLayer(parameters, self.STATIONS, context)
+            original_uri = str(source_layer.customProperty("LSNetontwerp/source_station_uri", "")) if source_layer is not None else ""
+            if original_uri:
+                original_stations = QgsVectorLayer(original_uri, "Bestaande stations bron", "ogr")
+                if not original_stations.isValid():
+                    raise QgsProcessingException("De oorspronkelijke stationsinventaris kon niet worden geopend voor de bestaande situatie.")
+                self._write_clean_source(original_stations, scope_stations, "stations",
+                                         [("Stationsnaa", station_name_index, QVariant.String),
+                                          ("Status", status_index, QVariant.String)],
+                                         context, feedback, 95, 95)
+            else:
+                shutil.copy2(stations_path, scope_stations)
             scope_source = self.parameterAsVectorLayer(parameters, self.AANSLUITINGEN, context)
             try:
                 station_colors = json.loads(str(scope_source.customProperty("LSNetontwerp/station_colors", "{}"))) if scope_source is not None else {}

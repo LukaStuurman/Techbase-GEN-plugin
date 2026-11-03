@@ -713,3 +713,12 @@ installeren` wanneer de plugin nog niet automatisch actief is.
 De plugin bevat eigen kopieën van de vier Processing-tools en de volledige
 clusteringbibliotheek. De losse scripts hoeven daarom niet apart geïnstalleerd
 te zijn.
+
+
+## Versie 1.25.0 — clustering aanpassen en stationsbeheer
+
+Stap 4a opent een stationslijst en een wachtrij voor wijzigingen. Selecteer aansluitingen en kies een doelstation, of kies een station in de lijst en zet ‘Station laten vervallen’ klaar. Bij automatisch verdelen zoekt de plugin overnames per kabeltak; capaciteit, routelengte en exclusieve routes blijven gecontroleerd. ‘Voorstel controleren’ controleert capaciteit en routes zonder het ontwerp te wijzigen. ‘Alles toepassen’ controleert ook de nieuwe gebieden en verwerkt de hele wachtrij met één gebiedsopbouw. Alle vier de resultaatlagen worden in één database-transactie opgeslagen. De laatste toepassing kan inclusief stationskeuzes worden teruggezet, ook na opnieuw openen van het project.
+
+Bestaande stations krijgen de status ‘Te verwijderen’ in een aparte kaartlaag en blijven behouden in de broninventaris. Nieuwe stations vervallen uit het ontwerp; de gekozen uitsluitingsstraal geldt bij een volgende automatische clustering. Beschermde nieuwe stations worden bij een nieuwe berekening op hun vastgelegde positie meegenomen. ‘Station weer toestaan’ heft een eerdere keuze voor volgende berekeningen op. Automatische verdeling zoekt naar een geldige oplossing; als die niet wordt gevonden blijft het ontwerp ongewijzigd. Via ‘Klassieke correctiepagina’ blijft de eerdere werkwijze beschikbaar.
+
+Stap 6 kan herhaaldelijk worden uitgevoerd. Iedere poging schrijft eerst een nieuw resultaatbestand en gebruikt de oorspronkelijke gebieden als basis. De laatst geslaagde laag blijft beschikbaar als een volgende poging mislukt. Er kan afwisselend gekozen worden voor minimale vertices met schuine grenzen en voor rechte blokken. In de rechte-hoekmodus wordt geen schuine afschuining achteraf toegepast. De buitenrand, topologie en eigen aansluitingen blijven bewaakt.

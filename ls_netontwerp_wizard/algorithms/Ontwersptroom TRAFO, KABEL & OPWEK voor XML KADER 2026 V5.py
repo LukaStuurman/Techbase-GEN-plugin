@@ -20,6 +20,7 @@ from qgis.core import (QgsProcessing,
                        Qgis)
 import re
 import math
+from ls_netontwerp_wizard.current_edit_metadata import current_choice
 from ls_netontwerp_wizard.bag_current_rules import (
     NEW_BUILD_FIELD, has_residential_usage, is_bag_object, is_new_build_flag,
 )
@@ -698,6 +699,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         full_config_kabel['LAAD'] = cfg_laad_k
         full_config_kabel['GAS_ADVIES'] = cfg_gas_k 
 
+        choice_layer = self.parameterAsVectorLayer(parameters, self.INPUT_LAYER, context)
         source_points = self.parameterAsSource(parameters, self.INPUT_LAYER, context)
         source_panden = self.parameterAsSource(parameters, self.INPUT_PANDEN, context)
         
@@ -808,8 +810,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             # table choice still follows the current pand unless manually overridden.
             if is_bag_object(val_door):
                 def saved_text(name):
-                    index = feat.fields().lookupField(name)
-                    return str(feat[index]).strip() if index >= 0 else ""
+                    return current_choice(choice_layer, feat, name)
                 keep_choice = saved_text("HerstelHandmatig") == "1" or (
                     not has_residential_usage(val_gebr) and saved_text("HerstelCat") in
                     ("Huishoudelijk", "Zakelijk", "Oplaadpunt", "Straatmeubilair")

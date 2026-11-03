@@ -55,6 +55,8 @@ class LSNetontwerpPlugin:
         from .lovion_panel import stop_active_workers
         stop_active_workers()
         if self.dialog is not None:
+            self.dialog.cancel_plan_drawing()
+            self.dialog.cluster_management_page.stop()
             self.dialog.connection_sources_page.cancel_bag_download()
             self.dialog.station_link_page.cancel_bag_download()
         try:
@@ -90,6 +92,11 @@ class LSNetontwerpPlugin:
 
     def _repair_project_presentation(self, *_args):
         repair_generated_project()
+
+        from .layout_repairs import repair_scope_layouts
+        project = QgsProject.instance()
+        if repair_scope_layouts(project) and project.fileName():
+            project.write()
 
     def open_dialog(self):
         self._repair_project_presentation()

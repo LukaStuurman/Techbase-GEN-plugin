@@ -200,6 +200,12 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     if "plangebied" in loaded:
         legend.model().rootGroup().addLayer(loaded["plangebied"])
     legend.updateLegend()
+    # duplicateLayout() creates an unsupported QgsLayoutItemHtml frame from
+    # the source HTML label in QGIS 4, underneath the replacement label.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from ls_netontwerp_wizard.layout_repairs import repair_scope_html_frames
+    repair_scope_html_frames(scope)
     scope.refresh()
     if not scope.saveAsTemplate(str(output_dir / "scope.qpt"), QgsReadWriteContext()):
         raise RuntimeError("De Scope-layouttemplate kon niet worden opgeslagen.")

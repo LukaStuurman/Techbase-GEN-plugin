@@ -17,6 +17,7 @@ def main():
     for name in ("segoeui.ttf", "segoeuib.ttf"):
         QFontDatabase.addApplicationFont(str(Path("C:/Windows/Fonts") / name))
     app.setFont(QFont("Segoe UI", 10))
+    from ls_netontwerp_wizard.current_edit_metadata import current_choice
     from ls_netontwerp_wizard.connection_sources import CURRENT_FIELDS
     from ls_netontwerp_wizard.dashboard_warning_dialog import LSNetontwerpDashboardDialog
 
@@ -35,6 +36,7 @@ def main():
         layer.dataProvider().addFeature(feature)
     layer.setCustomProperty("LSNetontwerp/review_current_layer", True)
     QgsProject.instance().addMapLayer(layer)
+    original_fields = [f.name() for f in layer.fields()]
     layer.selectAll()
     dialog = LSNetontwerpDashboardDialog(None)
     dialog.show_value_page()
@@ -59,7 +61,7 @@ def main():
     dialog.run_value_edit()
     expected = [11.125, 12.5, 0, 14.75, 11.125, 14.75]
     assert all([f[n] for n in CURRENT_FIELDS] == expected for f in layer.getFeatures())
-    assert all(f["HerstelHandmatig"] == "1" for f in layer.getFeatures())
+    assert all(current_choice(layer, f, "HerstelHandmatig") == "1" for f in layer.getFeatures())
     dialog.show_home_page()
     dialog.show_value_page()
     assert dialog.value_manual_checkbox.isChecked()
@@ -67,7 +69,7 @@ def main():
     dialog.value_manual_checkbox.setChecked(False)
     dialog.run_value_edit()
     assert [[f[n] for n in CURRENT_FIELDS] for f in layer.getFeatures()] == automatic
-    assert all(f["HerstelHandmatig"] == "0" for f in layer.getFeatures())
+    assert all(current_choice(layer, f, "HerstelHandmatig") == "0" for f in layer.getFeatures())
 
     # Zero is a deliberate, valid manual value, including for the whole selection.
     dialog.value_manual_checkbox.setChecked(True)
@@ -118,6 +120,8 @@ def main():
         scroll.ensureWidgetVisible(zero.unit_combo)
         app.processEvents()
         assert dialog.grab().save(sys.argv[sys.argv.index("--preview") + 1])
+    assert [f.name() for f in layer.fields()] == original_fields
+    assert not any(f.name().startswith("Herstel") for f in layer.fields())
     print("MANUAL_CURRENTS_TEST_OK (actual typing, four categories, old/new household, saved overrides, preset reset, business zero repair)", flush=True)
     os._exit(0)
 
