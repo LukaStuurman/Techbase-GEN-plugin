@@ -389,7 +389,7 @@ class ClusterManagementPage(QWidget):
             query.transform(QgsCoordinateTransform(
                 canvas_crs, cables.crs(), QgsProject.instance()
             ))
-        if not polygon.buffer(0.05, 8).covers(query):
+        if not polygon.buffer(0.05, 8).intersects(query):
             raise ValueError(
                 f"De aangeklikte locatie ligt buiten het clustergebied van {name}."
             )
@@ -410,7 +410,7 @@ class ClusterManagementPage(QWidget):
                 distance = math.hypot(point.x() - clicked.x(), point.y() - clicked.y())
                 if distance >= best_distance:
                     continue
-                if not expanded_region.covers(QgsGeometry.fromPointXY(point)):
+                if not expanded_region.intersects(QgsGeometry.fromPointXY(point)):
                     continue
                 best = point
                 best_distance = distance
@@ -588,7 +588,17 @@ class ClusterManagementPage(QWidget):
             self.status.setText("Voorstel en kabelroutes worden gecontroleerd…" if preview else "Alle wijzigingen worden gezamenlijk berekend…")
             summary, backup, result = run_batch(self.layers, operations, self.directory(), self.maximum_route.value(), preview, self.feedback, rules_before)
             if preview:
-                self.status.setText(f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), {len(summary['removed_source_clusters'])} station(s) laten vervallen. Langste route: {summary['maximum_route_m']:.1f} m. Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd.")
+                moved = summary.get("relocated_stations", [])
+                description = (
+                    f" Nieuw station verplaatst: {', '.join(moved)}."
+                    if moved else ""
+                )
+                self.status.setText(
+                    f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), "
+                    f"{len(summary['removed_source_clusters'])} station(s) laten vervallen."
+                    f"{description} Langste route: {summary['maximum_route_m']:.1f} m. "
+                    "Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd."
+                )
             else:
                 try:
                     save_station_rules(summary["station_rules"])
@@ -618,7 +628,17 @@ class ClusterManagementPage(QWidget):
                 self.refresh()
                 if project.fileName():
                     project.write()
-                self.status.setText(f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; {len(summary['removed_source_clusters'])} station(s) vervallen. Gebieden één keer opgebouwd. De toepassing kan ongedaan gemaakt worden.")
+                moved = summary.get("relocated_stations", [])
+                description = (
+                    f" Nieuw station verplaatst: {', '.join(moved)}."
+                    if moved else ""
+                )
+                self.status.setText(
+                    f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; "
+                    f"{len(summary['removed_source_clusters'])} station(s) vervallen."
+                    f"{description} Routes en gebieden bijgewerkt. "
+                    "De toepassing kan ongedaan gemaakt worden."
+                )
         except Exception as exc:
             self.status.setText(str(exc))
         finally:
@@ -663,6 +683,7 @@ class ClusterManagementPage(QWidget):
             self.status.setText(str(exc))
 
     def stop(self):
+        self._leave_location_mode(False)
         if self.feedback is not None:
             self.feedback.cancel()
             self.status.setText("Bewerking stoppen…")
