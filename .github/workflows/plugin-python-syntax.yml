@@ -1,0 +1,28 @@
+name: Python syntax check (QGIS plugin)
+
+on:
+  pull_request:
+    paths:
+      - "ls_netontwerp_wizard/**"
+      - ".github/workflows/plugin-python-syntax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile all plugin Python sources
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          files = sorted(Path("ls_netontwerp_wizard").rglob("*.py"))
+          assert files, "No plugin Python sources found"
+          for file in files:
+              ast.parse(file.read_text(encoding="utf-8-sig"), filename=str(file))
+          print(f"Syntax OK: {len(files)} Python source files")
+          PY
