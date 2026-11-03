@@ -114,7 +114,7 @@ FRAMEWORK_31_STREET_MATRIX = [
 
 BOOL_OPTIONS = {
     "auto_cpu_threads": ("CPU-threads automatisch bepalen", True),
-    "use_3dbag": ("3DBAG LoD 2.2-controle gebruiken", True),
+    "use_3dbag": ("AHN dakcontrole zelf berekenen (lokaal cachen, zonder 3DBAG)", True),
     "default_apartment": ("Appartement zonder doorlaat: standaardwaarde", True),
     "one_phase_exception": ("1-/2-fase woonhuis: tabelwaarde", True),
     "node_trenches": ("Kabels knippen/noden", True),
