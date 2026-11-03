@@ -2796,6 +2796,7 @@ def build_refreshed_fixed_routes(
     refresh_station_indices: set[int] | None = None,
     previous_point_route_distance: np.ndarray | None = None,
     preserved_station_indices: set[int] | None = None,
+    relocated_station_indices: set[int] | None = None,
 ) -> tuple[list[object], np.ndarray, np.ndarray]:
     """Rebuild every fixed cluster on shortest available exclusive cable paths.
 
@@ -2880,7 +2881,12 @@ def build_refreshed_fixed_routes(
         _distance, source_position = own_tree.query(
             np.asarray(source_nodes[station_index], dtype=float), k=1
         )
-        source_nodes[station_index] = own_node_list[int(source_position)]
+        # Normally a refresh anchors the station to its former route to avoid
+        # accidentally jumping onto another cluster's parallel service cable.
+        # A user-relocated station has already been placed on a verified
+        # network vertex: preserve that precise location instead.
+        if station_index not in (relocated_station_indices or set()):
+            source_nodes[station_index] = own_node_list[int(source_position)]
         member_indices = np.flatnonzero(point_assignment == station_index)
         if len(member_indices):
             _distances, target_positions = own_tree.query(
@@ -3162,6 +3168,7 @@ def recalculate_manual_assignment(
     refresh_cluster_names: set[str] | None = None,
     defer_area_rebuild: bool = False,
     preserve_all_routes: bool = False,
+    relocated_station_names: set[str] | None = None,
 ) -> tuple[
     gpd.GeoDataFrame,
     gpd.GeoDataFrame,
@@ -3462,6 +3469,11 @@ def recalculate_manual_assignment(
                     refresh_station_indices=refresh_station_indices,
                     previous_point_route_distance=previous_route_m,
                     preserved_station_indices=preserved_route_indices,
+                    relocated_station_indices={
+                        station_index[name]
+                        for name in (relocated_station_names or set())
+                        if name in station_index
+                    },
                 )
             )
         else:
