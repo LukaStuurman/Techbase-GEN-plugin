@@ -42,6 +42,7 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
     created = []
     capacity_changed = []
     refreshed = []
+    current_changed = set()
     route_summaries = []
 
     def active_station(name):
@@ -237,6 +238,18 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
                                "protected": rules.get(name, {}).get("protected", False) or str(station.Type).casefold() == "nieuw",
                                "capacity_override": True}
                 capacity_changed.append(name)
+                continue
+            if kind == "current":
+                ids = {int(fid) for fid in operation["point_ids"]}
+                value = float(operation["amps"])
+                if not np.isfinite(value) or value < 0:
+                    raise ValueError("Vul een geldige ontwerpstroom van 0 A of hoger in.")
+                mask = state[0].__src_fid.isin(ids)
+                if not ids or int(mask.sum()) != len(ids):
+                    raise ValueError("Een geselecteerde aansluiting ontbreekt; vernieuw de wachtrij.")
+                state[0].loc[mask, "Ontwerp_A"] = value
+                recalculate(preserve=True)
+                current_changed.update(ids)
                 continue
             if kind == "rebuild":
                 names = {str(name) for name in operation.get("stations", [])}
@@ -448,6 +461,7 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
                        "relocated_stations": relocated,
                        "created_stations": created, "capacity_changed": capacity_changed,
                        "refreshed_stations": sorted(set(refreshed)),
+                       "current_changed_count": len(current_changed),
                        "maximum_route_m": float(state[0].Route_m.max()) if len(state[0]) else 0,
                        "target_cluster": "meerdere stations",
                        "station_overview": [{"cluster": str(row.Cluster), "load": float(state[0].loc[state[0].Cluster.astype(str)==str(row.Cluster),"Ontwerp_A"].sum()), "capacity": float(row.KVA)/.23/3} for _,row in state[1].iterrows()]}

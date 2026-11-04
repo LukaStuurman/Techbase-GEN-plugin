@@ -211,6 +211,23 @@ class ClusterManagementPage(QWidget):
         ):
             self._button(validation_layout, text, callback)
         layout.addWidget(self.validation_group)
+        self.current_group = QGroupBox("Ontwerpstroom na clustering aanpassen")
+        current_form = QFormLayout(self.current_group)
+        current_note = QLabel("Selecteer aansluitingen in 'Aansluitingen geclusterd'. De waarde hieronder "
+                              "wijzigt Ontwerp_A voor de clusterbelasting. Stationsbelasting, benutting en "
+                              "capaciteitscontroles worden bijgewerkt; toewijzingen en routes blijven behouden. "
+                              "De oorspronkelijke verbruiks- en opwekvelden uit stap 2a veranderen niet. "
+                              "Een volgende automatische clustering gebruikt die bronvelden opnieuw.")
+        current_note.setWordWrap(True)
+        current_form.addRow(current_note)
+        self.design_current = QDoubleSpinBox()
+        self.design_current.setRange(0, 100000)
+        self.design_current.setDecimals(3)
+        self.design_current.setSuffix(" A per geselecteerde aansluiting")
+        current_form.addRow("Nieuwe ontwerpstroom", self.design_current)
+        self._button(current_form, "Aansluitingen voor ontwerpstroom selecteren", self.select_on_map)
+        self._button(current_form, "Ontwerpstroomwijziging klaarzetten", self.queue_current)
+        layout.addWidget(self.current_group)
         self.queue = QListWidget()
         self.queue.setMinimumHeight(80)
         self.queue.setMaximumHeight(145)
@@ -555,6 +572,18 @@ class ClusterManagementPage(QWidget):
         except Exception as exc:
             self.status.setText(str(exc))
 
+    def queue_current(self):
+        try:
+            self._ready()
+            ids = list(self.layers["connections"].selectedFeatureIds())
+            if not ids:
+                raise ValueError("Selecteer eerst aansluitingen in de geclusterde resultaatlaag.")
+            amps = self.design_current.value()
+            self.add_operation({"kind": "current", "point_ids": ids, "amps": amps},
+                               f"{len(ids)} aansluiting(en): ontwerpstroom → {amps:g} A per aansluiting")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
     def queue_merge(self):
         if not self.target.currentData():
             self.status.setText("Kies één doelstation om clusters samen te voegen.")
@@ -732,6 +761,12 @@ class ClusterManagementPage(QWidget):
         changed_targets = set()
         automatic = False
         for operation in self.operations():
+            if operation["kind"] == "current":
+                for fid in operation["point_ids"]:
+                    if fid in points:
+                        points[fid][1] = operation["amps"]
+                        changed_targets.add(points[fid][0])
+                continue
             if operation["kind"] == "capacity":
                 capacities[operation["station"]] = operation["kva"]/.23/3
                 changed_targets.add(operation["station"])
@@ -790,7 +825,7 @@ class ClusterManagementPage(QWidget):
             self.exclusion_radius.setEnabled(False)
             self.table.setEnabled(False)
             self.queue.setEnabled(False)
-            for widget in (self.capacity, self.new_capacity, self.new_name):
+            for widget in (self.capacity, self.new_capacity, self.new_name, self.design_current):
                 widget.setEnabled(False)
             self.cancel.setEnabled(True)
             self.status.setText("Voorstel en kabelroutes worden gecontroleerd…" if preview else "Alle wijzigingen worden gezamenlijk berekend…")
@@ -805,6 +840,7 @@ class ClusterManagementPage(QWidget):
                     f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), "
                     f"{len(summary['removed_source_clusters'])} station(s) laten vervallen."
                     f"{description} Langste route: {summary['maximum_route_m']:.1f} m. "
+                    f"Ontwerpstroom gewijzigd: {summary.get('current_changed_count', 0)} aansluiting(en). "
                     f"Nieuw: {len(summary.get('created_stations', []))}; capaciteit gewijzigd: {len(summary.get('capacity_changed', []))}; routes ververst: {len(summary.get('refreshed_stations', []))}. "
                     "Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd."
                 )
@@ -848,6 +884,7 @@ class ClusterManagementPage(QWidget):
                     f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; "
                     f"{len(summary['removed_source_clusters'])} station(s) vervallen."
                     f"{description} Routes en gebieden bijgewerkt. "
+                    f"Ontwerpstroom gewijzigd: {summary.get('current_changed_count', 0)} aansluiting(en). "
                     f"Nieuw: {len(summary.get('created_stations', []))}; capaciteit gewijzigd: {len(summary.get('capacity_changed', []))}; routes ververst: {len(summary.get('refreshed_stations', []))}. "
                     "De toepassing kan ongedaan gemaakt worden."
                 )
@@ -863,7 +900,7 @@ class ClusterManagementPage(QWidget):
                 self.exclusion_radius.setEnabled(True)
                 self.table.setEnabled(True)
                 self.queue.setEnabled(True)
-                for widget in (self.capacity, self.new_capacity, self.new_name):
+                for widget in (self.capacity, self.new_capacity, self.new_name, self.design_current):
                     widget.setEnabled(True)
                 self.cancel.setEnabled(False)
             if self.host.iface is not None:

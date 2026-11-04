@@ -5,8 +5,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QSettings, QTimer, Qt
-from qgis.PyQt.QtGui import QColor, QFont, QIcon, QPixmap
+from qgis.PyQt.QtCore import QSettings, QTimer, Qt, QUrl
+from qgis.PyQt.QtGui import QColor, QFont, QIcon, QPixmap, QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -463,6 +463,23 @@ class LSNetontwerpDialog(QDialog):
         progress_layout.addWidget(self.progress_details)
         self.progress_group.setVisible(False)
         root.addWidget(self.progress_group)
+
+        self.clustering_issue_group = QGroupBox("Clustering controleren")
+        issue_layout = QVBoxLayout(self.clustering_issue_group)
+        self.clustering_issue_label = QLabel()
+        self.clustering_issue_label.setWordWrap(True)
+        issue_layout.addWidget(self.clustering_issue_label)
+        issue_buttons = QHBoxLayout()
+        self.open_diagnostics_button = QPushButton("Uitleg en controlebestanden openen")
+        self.open_control_project_button = QPushButton("Controleproject openen")
+        self.open_diagnostics_button.clicked.connect(lambda: self._open_clustering_diagnostic(False))
+        self.open_control_project_button.clicked.connect(lambda: self._open_clustering_diagnostic(True))
+        issue_buttons.addWidget(self.open_diagnostics_button)
+        issue_buttons.addWidget(self.open_control_project_button)
+        issue_layout.addLayout(issue_buttons)
+        self._clustering_diagnostic_folder = None
+        self.clustering_issue_group.hide()
+        root.addWidget(self.clustering_issue_group)
 
         self.status_label = QLabel(
             "Stap 1: maak invoer, werkproject en ontwerpstroomcontrolelaag."
@@ -4089,6 +4106,9 @@ class LSNetontwerpDialog(QDialog):
             )
             return
         update = self._make_progress("Clustering voorbereiden…")
+        self.clustering_issue_group.hide()
+        diagnostic_root = Path(self.prepared_state["clustering_dir"])
+        previous_reports = set(diagnostic_root.glob("controle_*"))
         self.run_button.setEnabled(False)
         self.edit_values_button.setEnabled(False)
         self.edit_housing_button.setEnabled(False)
@@ -4104,8 +4124,10 @@ class LSNetontwerpDialog(QDialog):
             ).cluster(self.prepared_state)
         except Exception as exc:
             self._finish_progress()
-            QMessageBox.critical(self, "Clustering mislukt", str(exc))
-            self.status_label.setText(f"Mislukt: {exc}")
+            self.progress_details.appendPlainText(str(exc))
+            self._show_clustering_diagnostic(exc, diagnostic_root, previous_reports)
+            QMessageBox.critical(self, "Clustering niet afgerond — invoer behouden", str(exc))
+            self.status_label.setText("Clustering niet afgerond. Bekijk de uitleg en het controleproject in de uitvoermap.")
             self.edit_values_button.setEnabled(True)
             self.edit_housing_button.setEnabled(True)
             self.edit_stations_button.setEnabled(True)
@@ -4120,7 +4142,8 @@ class LSNetontwerpDialog(QDialog):
             self.new_buildings_button.setEnabled(False)
             QMessageBox.information(
                 self,
-                "LS-netontwerp gereed",
+                "LS-netontwerp gereed" + (" — met waarschuwingen" if result.get("warnings") else ""),
+                ("\n\n".join(result.get("warnings", [])) + "\n\n" if result.get("warnings") else "") +
                 "De clustering is gereed.\n\n"
                 "Voor handmatige correcties:\n"
                 "1. Selecteer aansluitingen in 'Aansluitingen geclusterd'.\n"
@@ -4132,3 +4155,24 @@ class LSNetontwerpDialog(QDialog):
             )
         finally:
             self.run_button.setEnabled(True)
+
+    def _show_clustering_diagnostic(self, error, root, previous_reports=()):
+        from .clustering_diagnostics import explain_failure
+        reports = [p for p in Path(root).glob("controle_*") if p not in previous_reports]
+        self._clustering_diagnostic_folder = max(reports, key=lambda p: p.stat().st_mtime) if reports else None
+        summary, action = explain_failure(error)
+        self.clustering_issue_label.setText(summary + " " + action)
+        folder = self._clustering_diagnostic_folder
+        self.open_diagnostics_button.setEnabled(folder is not None)
+        self.open_control_project_button.setEnabled(folder is not None and (folder / "controleproject.qgz").exists())
+        self.clustering_issue_group.show()
+        QApplication.processEvents()
+        for scroll in self.main_page.findChildren(QScrollArea):
+            if scroll.isAncestorOf(self.clustering_issue_group):
+                scroll.ensureWidgetVisible(self.clustering_issue_group)
+
+    def _open_clustering_diagnostic(self, project):
+        folder = self._clustering_diagnostic_folder
+        if folder is not None:
+            path = folder / "controleproject.qgz" if project else folder
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))

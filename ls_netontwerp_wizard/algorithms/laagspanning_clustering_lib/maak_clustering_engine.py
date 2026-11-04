@@ -1171,7 +1171,7 @@ def automatic_new_station_count_options(
     if not 0.0 < TARGET_UTILIZATION <= 1.0:
         raise RuntimeError("Voorkeursbenutting moet groter dan 0 en maximaal 100% zijn")
     minimum_count = max(
-        0,
+        int(_AUTO_TOPOLOGY_MINIMUM_NEW),
         int(
             math.ceil(
                 max(0.0, total_load - existing_capacity)
@@ -1196,6 +1196,24 @@ def automatic_new_station_count_options(
     )
     candidates = range(minimum_count, maximum_count + 1)
     return sorted(candidates, key=score)
+
+
+def indivisible_capacity_issues(unit_load, unit_node_indices, unit_components,
+                               station_nodes, station_components, capacities, new_capacity):
+    """Necessary capacity bounds, before any expensive spatial solver."""
+    issues = []
+    root_capacity = {int(node): float(capacity) for node, capacity in zip(station_nodes, capacities)}
+    for index, load in enumerate(unit_load):
+        component = int(unit_components[index])
+        component_capacities = np.asarray(capacities)[np.asarray(station_components) == component]
+        available = max(float(new_capacity), float(component_capacities.max()) if len(component_capacities) else 0.)
+        node = int(unit_node_indices[index])
+        at_root = node in root_capacity
+        maximum = root_capacity[node] if at_root else available
+        if float(load) > maximum + 1e-6:
+            issues.append({"unit": index, "load_a": float(load), "maximum_a": maximum,
+                           "component": component + 1, "station_root": at_root})
+    return issues
 
 
 def solve_facility_selection(
@@ -5973,6 +5991,10 @@ def main(_automatic_retry: bool = False) -> None:
     node_xy = np.asarray(node_list, dtype=float)
     tree = cKDTree(node_xy)
     point_xy = np.column_stack((points.geometry.x, points.geometry.y))
+    # Detached spare cables without connections need no new station. In the
+    # unbounded run they used to abort all demand-bearing components merely
+    # because every vertex of such a spare cable was excluded for placement.
+    _demand_nodes, _demand_snap, demand_node_indices = snap_xy(point_xy, node_list, tree)
     point_tree = cKDTree(point_xy)
     point_clearance_m, _point_nearest = point_tree.query(node_xy)
     station_placement_parts = [
@@ -6013,6 +6035,9 @@ def main(_automatic_retry: bool = False) -> None:
             [node_index[node] for node in component_nodes], dtype=int
         )
         graph_component_by_node_index[component_indices] = component_index
+        if not np.isin(demand_node_indices, component_indices).any():
+            log(f"Kabelcomponent {component_index + 1}: geen aansluitingen; geen nieuwe stationslocatie nodig.")
+            continue
         component_raw_main = np.intersect1d(
             component_indices, raw_main_node_indices, assume_unique=False
         )
@@ -6154,7 +6179,7 @@ def main(_automatic_retry: bool = False) -> None:
                 existing_capacity[component_stations].sum()
             )
             component_minimum_new += max(
-                0,
+                int(not len(component_stations)),
                 int(
                     math.ceil(
                         max(0.0, component_load - component_capacity)
@@ -6175,6 +6200,49 @@ def main(_automatic_retry: bool = False) -> None:
         _AUTO_TOPOLOGY_MINIMUM_NEW = max(
             int(_AUTO_TOPOLOGY_MINIMUM_NEW), int(component_minimum_new)
         )
+
+    issues = indivisible_capacity_issues(unit_load, unit_node_indices, unit_component_indices,
+                                        station_node_indices, station_component_indices,
+                                        existing_capacity, new_capacity)
+    if issues:
+        problem_units = {issue["unit"] for issue in issues}
+        problem_points = points.iloc[np.flatnonzero(np.isin(point_to_unit, list(problem_units)))].copy()
+        problem_points["Knelpunt"] = "Ondeelbare groep boven beschikbare stationscapaciteit"
+        problem_points.to_file(OUT / "capaciteitsknelpunten.gpkg", layer="knelpunten", driver="GPKG")
+        pd.DataFrame(issues).to_csv(OUT / "capaciteitsknelpunten.csv", index=False, sep=";")
+        first = issues[0]
+        raise RuntimeError(
+            f"{len(issues)} ondeelbare aansluitingseenheid/eenheden overschrijden de stationscapaciteit. "
+            f"Eerste knelpunt: kabelcomponent {first['component']}, {first['load_a']:.1f} A "
+            f"bij maximaal {first['maximum_a']:.1f} A. "
+            "Aansluitingen op dezelfde kabelknoop kunnen niet veilig over stations worden gesplitst. "
+            "Controleer ontwerpstromen, flat-/kabelkoppelingen of de capaciteit van het station op deze knoop."
+        )
+
+    # A solver failure must leave a map of the independent network parts, not
+    # just a generic 'no solution' string. This is a control layer, not a design.
+    component_lines = defaultdict(list)
+    for start, end in graph.edges:
+        component = int(graph_component_by_node_index[node_index[start]])
+        if start != end:
+            component_lines[component].append(LineString([start, end]))
+    component_records = []
+    for component, lines in component_lines.items():
+        unit_mask = unit_component_indices == component
+        station_mask = station_component_indices == component
+        demand = float(unit_load[unit_mask].sum())
+        capacity = float(existing_capacity[station_mask].sum())
+        count = int(np.count_nonzero(unit_mask))
+        component_records.append({
+            "Component": component + 1, "Aansl_eenheden": count,
+            "Belasting_A": demand, "Bestaand_A": capacity,
+            "Stations": int(np.count_nonzero(station_mask)),
+            "Min_nieuw": max(int(count > 0 and not station_mask.any()), math.ceil(max(0., demand-capacity)/new_capacity - 1e-12)),
+            "Controle": "Zonder bestaand station" if count and not station_mask.any() else "Met bestaand station" if count else "Geen aansluitingen",
+            "geometry": unary_union(lines),
+        })
+    gpd.GeoDataFrame(component_records, geometry="geometry", crs=CRS_RD).to_file(
+        OUT / "netwerkcontrole.gpkg", layer="kabelcomponenten", driver="GPKG")
 
     legacy_new_labels = sorted(
         {
@@ -6922,6 +6990,11 @@ def main(_automatic_retry: bool = False) -> None:
             "Snap_m": point_snap_m,
             "Oud_gebied": legacy_series,
             "Multistory": safe_column("Multistory", ""),
+            "Nieuwbouw": safe_column("Nieuwbouw", ""),
+            "HandmatigNieuwbouw": safe_column("HandmatigNieuwbouw", ""),
+            "NWB_ID": safe_column("NWB_ID", ""),
+            "Bron": safe_column("Bron", ""),
+            "Nieuwbouwproject": safe_column("Nieuwbouwproject", ""),
         },
         geometry=points.geometry,
         crs=CRS_RD,
@@ -7062,7 +7135,16 @@ def main(_automatic_retry: bool = False) -> None:
         missing_connection_links,
     )
     log("Overzichtskaart renderen...")
-    make_map(cables, connections, stations_design, areas, routes, plan_layer)
+    try:
+        make_map(cables, connections, stations_design, areas, routes, plan_layer)
+    except Exception as exc:
+        # All hard design checks and GeoPackage writes have passed. A bitmap
+        # or PDF export failure must not throw the valid design away.
+        for filename in ("clustering_overzicht.png", "clustering_overzicht.pdf"):
+            (OUT / filename).unlink(missing_ok=True)
+        warning = f"De clustering is berekend, maar de overzichtskaart kon niet worden geëxporteerd: {exc}"
+        (OUT / "clustering_waarschuwingen.json").write_text(json.dumps([warning], ensure_ascii=False, indent=2), encoding="utf-8")
+        log("WAARSCHUWING: " + warning)
 
     readme = f"""# Clustering laagspanning
 

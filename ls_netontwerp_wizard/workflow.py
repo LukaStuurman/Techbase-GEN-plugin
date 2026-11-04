@@ -1123,7 +1123,10 @@ class WorkflowRunner:
                 )
 
         self.progress(100, "Volledig LS-netontwerp gereed")
+        warning_path = clustering_dir / "clustering_waarschuwingen.json"
+        warnings = json.loads(warning_path.read_text(encoding="utf-8")) if warning_path.exists() else []
         state["status"] = "gereed"
+        state["warnings"] = warnings
         state["final_project"] = str(project)
         self._write_state(state)
         return {
@@ -1132,6 +1135,7 @@ class WorkflowRunner:
             "geopackage": clustering_result.get("GEOPACKAGE", ""),
             "pdf": clustering_result.get("CONTROLEKAART_PDF", ""),
             "png": clustering_result.get("CONTROLEKAART", ""),
+            "warnings": warnings,
         }
 
     def recover_project(self, state):

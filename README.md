@@ -1,8 +1,12 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.26.0
+## Laatste versie: 1.27.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.26.0/ls_netontwerp_wizard-1.26.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.26.0)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.0/ls_netontwerp_wizard-1.27.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.0)
+
+**Nieuw in 1.27.0:** zelf nieuwbouwaansluitingen op de kaart plaatsen zonder BAG-object via **1.3. Nieuwbouw**, **4i. Ontwerpstroom na clustering aanpassen**, gerichte foutuitleg en blijvende controleprojecten, herstelde herhaalpogingen zonder plangebied en behoud van een berekend ontwerp bij fouten in kaart-/layoutexport. [Gebruik en testverantwoording](CLUSTER_RECOVERY_VALIDATION.md).
+
+De Vaartbroek-test zonder plangebied leverde met de huidige capaciteit/topologie/routegrenzen nog geen volledige veilige clustering op. Er is wel een controleproject met de invoer en losse kabelcomponenten gemaakt. Deze release verbergt zo'n rekenfout niet als een geslaagd ontwerp.
 
 Nieuw in het echte gekleurde dashboard: **4e capaciteit aanpassen**, **4f clusters samenvoegen**, **4g splitsen met extra station op een sleufknoop** en **4h controles/herberekenen**. Alle wijzigingen lopen via de gecontroleerde wachtrij met gezamenlijk toepassen en undo. De oorspronkelijke 4a–4d blijven beschikbaar.
 

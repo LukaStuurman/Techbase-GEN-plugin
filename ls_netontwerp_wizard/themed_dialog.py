@@ -415,6 +415,10 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     "4h. Clusters controleren / herberekenen", 4,
                     callback=lambda: self.show_cluster_management_section("validation_group"), secondary=True,
                 ),
+                self._dashboard_button(
+                    "4i. Ontwerpstroom na clustering aanpassen", 4,
+                    callback=lambda: self.show_cluster_management_section("current_group"), secondary=True,
+                ),
             ],
         )
         step5 = self._make_step_card(

@@ -187,7 +187,9 @@ def main():
         result = add_selected_objects(source, target, None, page, fallback_type="onbekend")
         assert result["added"] == 1 and result["missing"] == 0
         f = next(f for f in target.getFeatures() if f["BAG_VBO_ID"] == "0000010000000004")
-        assert f["Ontwerpstroom"] == config[2]["WOONHUIS"]["onbekend"]
+        # All objects added through Nieuwbouw retain the established 2022+
+        # design assumption, including an unknown housing type without a pand.
+        assert f["Ontwerpstroom"] == config[2]["WOONHUIS_2022"]["onbekend"]
     if "--live-pdok" in sys.argv:
         layer = pdok_objects_layer("https://api.pdok.nl/kadaster/bag/ogc/v2")
         assert layer.fields().lookupField("huisnummer") >= 0

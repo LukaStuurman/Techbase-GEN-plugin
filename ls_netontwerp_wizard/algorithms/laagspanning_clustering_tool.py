@@ -821,6 +821,33 @@ verzoek zichtbaar worden.
         )
 
     @staticmethod
+    def _create_basic_result_project(output_dir, gpkg):
+        """Keep a validated design usable if the optional layout worker fails."""
+        from qgis.core import QgsProject, QgsReferencedRectangle, QgsRectangle
+        project = QgsProject()
+        project.setTitle("LS-netontwerp — basisproject (layout ontbreekt)")
+        tables = (("sleuven_genood", "Sleuven geknipt/genood"),
+                  ("clustergebieden", "Clustergebieden"),
+                  ("cluster_kabelroutes", "Kabelroutes per cluster"),
+                  ("aansluitingen_geclusterd", "Aansluitingen geclusterd"),
+                  ("stations_ontwerp", "Stations ontwerp"))
+        for table, name in tables:
+            layer = QgsVectorLayer(f"{gpkg}|layername={table}", name, "ogr")
+            if not layer.isValid():
+                raise QgsProcessingException(f"Het basisproject mist een geldige resultaatlaag: {name}")
+            project.addMapLayer(layer)
+            project.setCrs(layer.crs())
+            if table == "aansluitingen_geclusterd":
+                extent = QgsRectangle(layer.extent())
+                extent.grow(max(10., .05 * max(extent.width(), extent.height())))
+                project.viewSettings().setDefaultViewExtent(QgsReferencedRectangle(extent, layer.crs()))
+        project.writeEntry("LSNetontwerp", "presentation_warning", "De clustering is berekend; de uitgebreide layout ontbreekt. Gebruik projectherstel voor de presentatie.")
+        path = Path(output_dir) / "clustering_ontwerp.qgz"
+        if not project.write(str(path)):
+            raise QgsProcessingException("Ook het basisproject kon niet worden opgeslagen. De resultaat-GeoPackage blijft beschikbaar.")
+        return str(path)
+
+    @staticmethod
     def _qgis_python_environment():
         import qgis
 
@@ -1377,6 +1404,7 @@ verzoek zichtbaar worden.
 
         work_dir = Path(tempfile.mkdtemp(prefix="ls_clustering_invoer_"))
         run_output = work_dir / "resultaat"
+        calculation_log = []
         try:
             feedback.pushInfo("Invoerlagen voorbereiden...")
             points_path = work_dir / "aansluitingen.gpkg"
@@ -1567,12 +1595,15 @@ verzoek zichtbaar worden.
             def qgis_log(message):
                 if feedback.isCanceled():
                     raise QgsProcessingException("Berekening geannuleerd.")
+                calculation_log.append(str(message))
                 feedback.pushInfo(str(message))
 
             engine.log = qgis_log
             engine.main()
             feedback.setProgress(95)
 
+            for filename in ("clustering_overzicht.png", "clustering_overzicht.pdf", "clustering_overzicht.qpt", "clustering_waarschuwingen.json"):
+                (output_dir / filename).unlink(missing_ok=True)
             shutil.copytree(run_output, output_dir, dirs_exist_ok=True)
             copied_gpkg = output_dir / "clustering_ontwerp.gpkg"
             # Keep every existing station available for the current-situation
@@ -1612,14 +1643,30 @@ verzoek zichtbaar worden.
                 raise QgsProcessingException(
                     f"De QGIS-projectgenerator ontbreekt: {project_runner}"
                 )
-            self._create_qgis_project_with_retries(
-                project_runner, output_dir, copied_gpkg, feedback
-            )
+            try:
+                self._create_qgis_project_with_retries(
+                    project_runner, output_dir, copied_gpkg, feedback
+                )
+            except Exception as project_error:
+                if feedback.isCanceled() or "geannuleerd" in str(project_error).casefold():
+                    raise
+                (output_dir / "clustering_overzicht.qpt").unlink(missing_ok=True)
+                self._create_basic_result_project(output_dir, copied_gpkg)
+                warning_path = output_dir / "clustering_waarschuwingen.json"
+                warnings = json.loads(warning_path.read_text(encoding="utf-8")) if warning_path.exists() else []
+                warnings.append(f"De clustering is berekend. Het basisproject bevat alle resultaatlagen; de uitgebreide layout ontbreekt: {project_error}")
+                warning_path.write_text(json.dumps(warnings, ensure_ascii=False, indent=2), encoding="utf-8")
+                feedback.pushWarning(warnings[-1])
             feedback.setProgress(100)
-        except QgsProcessingException:
-            raise
         except Exception as exc:
-            raise QgsProcessingException(f"Clustering is mislukt: {exc}") from exc
+            if feedback.isCanceled() or "geannuleerd" in str(exc).casefold():
+                raise QgsProcessingException("Berekening geannuleerd; voorbereide invoer is behouden.") from exc
+            try:
+                from ls_netontwerp_wizard.clustering_diagnostics import save_failure
+                message = save_failure(exc, output_dir, work_dir, calculation_log)
+            except Exception as report_error:
+                message = f"Clustering niet afgerond: {exc}\nDiagnose opslaan mislukt: {report_error}\nUitvoermap: {output_dir}"
+            raise QgsProcessingException(message) from exc
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -1637,10 +1684,10 @@ verzoek zichtbaar worden.
             self.SLEUVEN_GENOOD_UIT: f"{gpkg}|layername=sleuven_genood",
             self.OVERZICHT_CSV: str(output_dir / "cluster_overzicht.csv"),
             self.GEOPACKAGE: str(gpkg),
-            self.CONTROLEKAART: str(output_dir / "clustering_overzicht.png"),
-            self.CONTROLEKAART_PDF: str(output_dir / "clustering_overzicht.pdf"),
+            self.CONTROLEKAART: str(output_dir / "clustering_overzicht.png") if (output_dir / "clustering_overzicht.png").exists() else "",
+            self.CONTROLEKAART_PDF: str(output_dir / "clustering_overzicht.pdf") if (output_dir / "clustering_overzicht.pdf").exists() else "",
             self.QGIS_PROJECT: str(output_dir / "clustering_ontwerp.qgz"),
-            self.LAYOUT_TEMPLATE: str(output_dir / "clustering_overzicht.qpt"),
+            self.LAYOUT_TEMPLATE: str(output_dir / "clustering_overzicht.qpt") if (output_dir / "clustering_overzicht.qpt").exists() else "",
         }
         if plan_area is not None:
             result[self.PLANGEBIED_UIT] = f"{gpkg}|layername=plangebied"
