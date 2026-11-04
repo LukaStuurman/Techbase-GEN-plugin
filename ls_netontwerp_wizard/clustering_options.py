@@ -13,7 +13,7 @@ from .ui_theme import apply_theme, branded_header, role
 
 CLUSTER_KEYS = ("field_design_current", "max_route", "new_station_kva", "target_utilization",
     "node_tolerance", "automatic_stations", "manual_station_count", "node_trenches", "only_plan",
-    "write_shapefiles", "field_multistory", "field_flat_id")
+    "write_shapefiles", "field_multistory", "field_flat_id", "allow_external_routes")
 
 
 def points_layer(state):
@@ -141,11 +141,17 @@ class ClusteringOptionsDialog(QDialog):
         row.addWidget(load)
         form.addRow("Plangebied", row)
         self.selected_only = QCheckBox("Alleen geselecteerde vlakken van het plangebied gebruiken")
-        self.only_plan = QCheckBox("Alleen aansluitingen en netwerk binnen het plangebied clusteren")
+        self.only_plan = QCheckBox("Alleen aansluitingen en stations binnen het plangebied clusteren")
         self.only_plan.setChecked(bool(self.values.get("only_plan")))
         self.plan_combo.currentIndexChanged.connect(lambda: self.only_plan.setChecked(self.plan_combo.currentData() is not None))
         form.addRow(self.selected_only)
         form.addRow(self.only_plan)
+        self.allow_external_routes = QCheckBox("Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken")
+        self.allow_external_routes.setChecked(bool(self.values.get("allow_external_routes", True)))
+        self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None)
+        self.plan_combo.currentIndexChanged.connect(lambda: self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None))
+        self.allow_external_routes.setToolTip("De volledige kabelroute telt mee voor de maximale routelengte. Clustergebieden en nieuwe stations blijven binnen het plangebied.")
+        form.addRow(self.allow_external_routes)
         note = QLabel("Een gekozen plangebied wordt bij opslaan in het werkproject vastgelegd. Je kunt een eerder zonder plangebied gemaakte invoer daarmee alsnog begrenzen.")
         note.setWordWrap(True)
         form.addRow(note)
@@ -230,6 +236,7 @@ class ClusteringOptionsDialog(QDialog):
             values = dict(self.values)
             values.update({key: spin.value() for key, spin in self.numbers.items()})
             values.update(field_design_current=self.current_field.currentText(), only_plan=self.only_plan.isChecked(),
+                allow_external_routes=self.allow_external_routes.isChecked(),
                 automatic_stations=self.automatic.isChecked(), manual_station_count=self.count.value(),
                 node_trenches=self.node.isChecked(), use_flat_cabinets=self.flat.isChecked(), write_shapefiles=self.shapes.isChecked())
             plan = QgsProject.instance().mapLayer(self.plan_combo.currentData())

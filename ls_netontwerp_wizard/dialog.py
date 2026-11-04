@@ -119,7 +119,8 @@ BOOL_OPTIONS = {
     "default_apartment": ("Appartement zonder doorlaat: standaardwaarde", True),
     "one_phase_exception": ("1-/2-fase woonhuis: tabelwaarde", True),
     "node_trenches": ("Kabels knippen/noden", True),
-    "only_plan": ("Alleen objecten binnen plangebied", True),
+    "only_plan": ("Alleen aansluitingen en stations binnen plangebied", True),
+    "allow_external_routes": ("Kabelroutes buiten het plangebied toestaan", True),
     "automatic_stations": ("Aantal nieuwe stations automatisch", True),
     "write_shapefiles": ("Ook losse shapefiles schrijven", False),
 }
@@ -2822,6 +2823,7 @@ class LSNetontwerpDialog(QDialog):
         self.plan_edit.setEnabled(not without_plan)
         self.plan_button.setEnabled(not without_plan)
         self.widgets["only_plan"].setEnabled(not without_plan)
+        self.widgets["allow_external_routes"].setEnabled(not without_plan)
 
     def _browse(self, edit, kind):
         start = edit.text().strip() or str(Path.home())
@@ -2904,6 +2906,7 @@ class LSNetontwerpDialog(QDialog):
             "one_phase_exception",
             "node_trenches",
             "only_plan",
+            "allow_external_routes",
             "automatic_stations",
             "write_shapefiles",
         ):

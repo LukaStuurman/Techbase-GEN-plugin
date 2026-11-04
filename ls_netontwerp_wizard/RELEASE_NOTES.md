@@ -1,4 +1,21 @@
-# LS Netontwerp Wizard v1.27.0
+# LS Netontwerp Wizard v1.27.1
+
+## Kabels buiten het plangebied gebruiken
+
+In **3a. Automatische clustering** staat de optie **Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken** standaard aan. De keuze is ook beschikbaar bij Geavanceerd → Berekening en in de Processing-tool.
+
+- De volledige kabelroute mag het plangebied verlaten en weer binnenkomen. De volledige omweg telt mee voor de maximale kabellengte; capaciteits- en exclusiviteitscontroles blijven actief.
+- De aparte selectie van aansluitingen en bestaande stations via het plangebied blijft gelden. Nieuwe stations worden binnen het plangebied geplaatst; clustergebieden worden op het plangebied begrensd.
+- Als het plangebied een aangesloten route in losse vlakken knipt, mogen de binnenliggende gebiedsdelen meerdere vlakken vormen. Ieder vlak moet de echte route raken. Willekeurige losliggende gebiedsdelen blijven afgewezen.
+- Uitvinken knipt het netwerk weer op de plangebiedgrens. Zonder plangebied is de optie niet van toepassing.
+- De instelling wordt opgeslagen. Nieuwe resultaten bewaren hun routingkeuze voor latere handmatige correcties, stroomwijzigingen en routeherberekening. Bestaande resultaten zonder deze informatie houden hun oorspronkelijke beleid; voer stap 3 opnieuw uit om de nieuwe optie toe te passen.
+- De kaart- en layoutuitsnede neemt de volledige gebruikte routes mee.
+
+**Validatie:** echte QGIS 4.2.3-test met een U-vormige route van 40 m die buiten het plangebied loopt, afwijzing bij uitgeschakelde optie en bij te lage routelimiet, selectie van objecten binnen het plangebied, nieuw station binnen de grens, een meerdelig plangebied, bewaren/heropenen van de keuze en latere stroom-/routeherberekening. Bestaande cluster-, dashboard-, herstel- en layouttests slagen. [Volledig testverslag](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/EXTERNAL_PLAN_ROUTES_VALIDATION.md).
+
+Installeer de release-ZIP en herstart QGIS volledig.
+
+## Behouden uit v1.27.0
 
 ## Nieuw in deze release
 

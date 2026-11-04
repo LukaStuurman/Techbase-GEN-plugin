@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.27.0
+## Laatste versie: 1.27.1
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.0/ls_netontwerp_wizard-1.27.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.0)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.1/ls_netontwerp_wizard-1.27.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.1)
+
+**Nieuw in 1.27.1:** in **3a. Automatische clustering** staat ‘Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken’ standaard aan. De volledige buitenroute telt mee voor de maximale kabellengte. Aansluitingen/stations volgen het gekozen plangebiedfilter; nieuwe stations en clustergebieden blijven binnen het gebied. De keuze wordt opgeslagen en blijft ook bij latere clustercorrecties behouden. [Gebruik en validatie](EXTERNAL_PLAN_ROUTES_VALIDATION.md).
 
 **Nieuw in 1.27.0:** zelf nieuwbouwaansluitingen op de kaart plaatsen zonder BAG-object via **1.3. Nieuwbouw**, **4i. Ontwerpstroom na clustering aanpassen**, gerichte foutuitleg en blijvende controleprojecten, herstelde herhaalpogingen zonder plangebied en behoud van een berekend ontwerp bij fouten in kaart-/layoutexport. [Gebruik en testverantwoording](CLUSTER_RECOVERY_VALIDATION.md).
 

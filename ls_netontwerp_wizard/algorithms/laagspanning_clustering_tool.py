@@ -83,6 +83,7 @@ class LaagspanningClusteringAlgorithm(QgsProcessingAlgorithm):
     VERDEELKASTEN = "VERDEELKASTEN"
     PLANGEBIED = "PLANGEBIED"
     ALLEEN_BINNEN_PLANGEBIED = "ALLEEN_BINNEN_PLANGEBIED"
+    KABELROUTES_BUITEN_PLANGEBIED = "KABELROUTES_BUITEN_PLANGEBIED"
     AUTOMATISCH_AANTAL = "AUTOMATISCH_AANTAL"
     AANTAL_NIEUWE = "AANTAL_NIEUWE"
     NIEUW_KVA = "NIEUW_KVA"
@@ -207,12 +208,14 @@ geknipt. Dit gebeurt alleen intern; de gekozen bronlagen worden niet aangepast.
 Als het veld GebiedLabel bruikbare labels in de vorm 'Trafo 1', 'Trafo 2',
 enzovoort bevat, gebruikt de tool die als kandidaatlocaties. Zonder zulke labels
 maakt de tool zelf kandidaatlocaties op het kabelnet. Een optioneel plangebied
-kan worden opgegeven om de sleuven en uiteindelijke clustergebieden exact te
-begrenzen. Aansluitingen buiten dit plangebied worden geweigerd. Het gekozen
+kan worden opgegeven om de aansluitingen en uiteindelijke clustergebieden exact te
+begrenzen. Kabelroutes mogen standaard buiten het plangebied lopen om een aansluiting
+binnen de grens te bereiken. Zet deze optie uit om het kabelnet op de grens te knippen.
+De volledige route blijft meetellen voor de maximale kabellengte. Het gekozen
 plangebied wordt als blijvende resultaatlaag overgenomen.
 Met 'Alleen objecten binnen plangebied gebruiken' worden aansluitingen en
-bestaande stations buiten de grens genegeerd en worden de gebruikte kabels op
-de grens afgeknipt. De ontwerpstroomsom en capaciteit worden dan uitsluitend
+bestaande stations buiten de grens genegeerd. De kabelroute-optie bepaalt of het netwerk
+op de grens wordt afgeknipt. De ontwerpstroomsom en capaciteit worden uitsluitend
 met de overblijvende objecten berekend. Als deze optie uitstaat, blijft een
 aansluiting buiten het plangebied een foutmelding.
 
@@ -465,7 +468,14 @@ verzoek zichtbaar worden.
         self.addParameter(
             QgsProcessingParameterBoolean(
                 self.ALLEEN_BINNEN_PLANGEBIED,
-                self.tr("Alleen kabels, aansluitingen en stations binnen plangebied gebruiken"),
+                self.tr("Alleen aansluitingen en stations binnen plangebied gebruiken"),
+                defaultValue=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.KABELROUTES_BUITEN_PLANGEBIED,
+                self.tr("Kabels buiten plangebied gebruiken om aansluitingen binnen plangebied te bereiken"),
                 defaultValue=True,
             )
         )
@@ -1360,6 +1370,7 @@ verzoek zichtbaar worden.
         only_within_plan = self.parameterAsBool(
             parameters, self.ALLEEN_BINNEN_PLANGEBIED, context
         )
+        allow_external_routes = self.parameterAsBool(parameters, self.KABELROUTES_BUITEN_PLANGEBIED, context)
         output_text = self.parameterAsString(parameters, self.UITVOERMAP, context)
         output_path = Path(output_text).resolve() if output_text else None
         system_temp = Path(tempfile.gettempdir()).resolve()
@@ -1580,6 +1591,7 @@ verzoek zichtbaar worden.
             )
             engine.PLANGEBIED_PATH = plan_path if plan_area is not None else None
             engine.ONLY_WITHIN_PLAN_AREA = bool(only_within_plan)
+            engine.ALLOW_EXTERNAL_ROUTES = bool(allow_external_routes)
             engine.OUT = run_output
             engine.N_NEW = n_new
             engine.NEW_KVA = new_kva

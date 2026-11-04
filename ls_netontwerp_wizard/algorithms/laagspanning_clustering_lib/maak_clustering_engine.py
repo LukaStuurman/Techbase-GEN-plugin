@@ -58,6 +58,7 @@ PLANGEBIED_PATH: Path | None = None
 BAG_API_BASE_URL = "https://api.pdok.nl/kadaster/bag/ogc/v2"
 BAG_BUILDINGS_PATH: Path | None = None  # Prefer the previously calculated BAG housing layer.
 ONLY_WITHIN_PLAN_AREA = True
+ALLOW_EXTERNAL_ROUTES = True
 LS_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
 CONNECTION_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
 LS_FUNCTION_FILTER_ENABLED = False
@@ -3048,6 +3049,7 @@ def make_cable_based_cluster_polygons(
     station_snap_xy: np.ndarray,
     station_count: int,
     study_area_override: object | None = None,
+    allow_external_routes: bool = False,
 ) -> tuple[list[object], object]:
     sites: dict[tuple[float, float], tuple[np.ndarray, int, int]] = {}
 
@@ -3143,7 +3145,7 @@ def make_cable_based_cluster_polygons(
         # shortest possible in-plan bridge. This is only used after the cable
         # corridor repair above and keeps the result free of exclaves.
         repair_guard = 0
-        while polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1:
+        while (not allow_external_routes and polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1):
             repair_guard += 1
             if repair_guard > 100:
                 break
@@ -3162,6 +3164,24 @@ def make_cable_based_cluster_polygons(
             polygon = polygon.geoms[0]
         polygons.append(polygon)
     return polygons, study_area
+
+
+def external_routing_enabled(routes):
+    """Older projects keep their original policy; new results persist it."""
+    return bool(len(routes) and "Buitenplan_toegestaan" in routes and
+                all(str(value).strip().casefold() in ("true", "1", "ja")
+                    for value in routes["Buitenplan_toegestaan"]))
+
+
+def invalid_disconnected_area(polygon, route, study_area, allow_external_routes):
+    if polygon.geom_type != "MultiPolygon" or len(polygon.geoms) <= 1:
+        return False
+    # Clipping a connected cable route to a concave/disjoint study area can
+    # legitimately leave multiple service polygons inside it. Each piece must
+    # touch the actual connected route; arbitrary detached slivers still fail.
+    if not allow_external_routes or route.difference(study_area.buffer(.05)).length <= .1:
+        return True
+    return any(not part.buffer(.05).intersects(route) for part in polygon.geoms)
 
 
 def recalculate_manual_assignment(
@@ -3187,6 +3207,7 @@ def recalculate_manual_assignment(
     defer_area_rebuild: bool = False,
     preserve_all_routes: bool = False,
     relocated_station_names: set[str] | None = None,
+    allow_external_routes: bool | None = None,
 ) -> tuple[
     gpd.GeoDataFrame,
     gpd.GeoDataFrame,
@@ -3239,6 +3260,8 @@ def recalculate_manual_assignment(
     areas_rd = rd["gebieden"]
     routes_rd = rd["routes"]
     cables_rd = rd["sleuven"]
+    if allow_external_routes is None:
+        allow_external_routes = external_routing_enabled(routes_rd)
     explicit_study_area = None
     if "plangebied" in rd:
         valid_plan = rd["plangebied"].loc[
@@ -3257,7 +3280,8 @@ def recalculate_manual_assignment(
                 f"{outside_points} aansluiting(en) liggen buiten het plangebied"
             )
         cables_rd = cables_rd.copy()
-        cables_rd.geometry = cables_rd.geometry.intersection(explicit_study_area)
+        if not allow_external_routes:
+            cables_rd.geometry = cables_rd.geometry.intersection(explicit_study_area)
         cables_rd = cables_rd.loc[~cables_rd.geometry.is_empty].copy()
         if cables_rd.empty:
             raise RuntimeError("Binnen het plangebied liggen geen bruikbare sleuven")
@@ -3597,11 +3621,12 @@ def recalculate_manual_assignment(
             np.asarray(station_nodes, dtype=float),
             station_count,
             study_area_override=study_area,
+            allow_external_routes=allow_external_routes,
         )
         disconnected = [
             station_names[index]
             for index, polygon in enumerate(cluster_polygons)
-            if polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1
+            if invalid_disconnected_area(polygon, route_geometries[index], study_area, allow_external_routes)
         ]
         if check_shared_routes_and_branches and disconnected:
             raise RuntimeError(
@@ -4472,6 +4497,11 @@ def make_map(
         miny = min(miny, plan_miny)
         maxx = max(maxx, plan_maxx)
         maxy = max(maxy, plan_maxy)
+    if len(routes):
+        route_bounds = routes.total_bounds
+        if np.isfinite(route_bounds).all():
+            minx, miny = min(minx, route_bounds[0]), min(miny, route_bounds[1])
+            maxx, maxy = max(maxx, route_bounds[2]), max(maxy, route_bounds[3])
     margin = 100.0
     view_bounds = (minx - margin, miny - margin, maxx + margin, maxy + margin)
 
@@ -5259,6 +5289,9 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         map_item.setKeepLayerSet(True)
         extent_layer = loaded.get("plangebied", loaded["aansluitingen_geclusterd"])
         map_extent = QgsRectangle(extent_layer.extent())
+        for route_feature in source_routes.getFeatures():
+            if route_feature.hasGeometry() and not route_feature.geometry().isEmpty():
+                map_extent.combineExtentWith(route_feature.geometry().boundingBox())
         map_extent.grow(100.0)
         map_item.zoomToExtent(map_extent)
         layout.addLayoutItem(map_item)
@@ -5706,7 +5739,7 @@ def main(_automatic_retry: bool = False) -> None:
                 raise RuntimeError(
                     "Binnen het plangebied liggen geen bestaande stations"
                 )
-            if flat_cabinets is not None and not flat_cabinets.empty:
+            if not ALLOW_EXTERNAL_ROUTES and flat_cabinets is not None and not flat_cabinets.empty:
                 flat_inside = np.asarray(
                     [buffered_plan.covers(geometry) for geometry in flat_cabinets.geometry],
                     dtype=bool,
@@ -5723,7 +5756,8 @@ def main(_automatic_retry: bool = False) -> None:
                 f"{outside_points} LS-aansluitingen liggen buiten het plangebied"
             )
         cables = cables.copy()
-        cables.geometry = cables.geometry.intersection(plan_area)
+        if not ALLOW_EXTERNAL_ROUTES:
+            cables.geometry = cables.geometry.intersection(plan_area)
         cables = cables.loc[~cables.geometry.is_empty].copy()
         main_cables_for_station_placement = (
             main_cables_for_station_placement.copy()
@@ -5736,7 +5770,7 @@ def main(_automatic_retry: bool = False) -> None:
                 ~main_cables_for_station_placement.geometry.is_empty
             ].copy()
         )
-        if connection_cables_for_station_exclusion is not None:
+        if not ALLOW_EXTERNAL_ROUTES and connection_cables_for_station_exclusion is not None:
             connection_cables_for_station_exclusion = (
                 connection_cables_for_station_exclusion.copy()
             )
@@ -5748,7 +5782,7 @@ def main(_automatic_retry: bool = False) -> None:
                     ~connection_cables_for_station_exclusion.geometry.is_empty
                 ].copy()
             )
-        if station_enclosures is not None and not station_enclosures.empty:
+        if not ALLOW_EXTERNAL_ROUTES and station_enclosures is not None and not station_enclosures.empty:
             station_enclosures = station_enclosures.copy()
             station_enclosures.geometry = station_enclosures.geometry.intersection(
                 plan_area
@@ -5756,7 +5790,7 @@ def main(_automatic_retry: bool = False) -> None:
             station_enclosures = station_enclosures.loc[
                 ~station_enclosures.geometry.is_empty
             ].reset_index(drop=True)
-        if distribution_cabinets is not None and not distribution_cabinets.empty:
+        if not ALLOW_EXTERNAL_ROUTES and distribution_cabinets is not None and not distribution_cabinets.empty:
             cabinet_inside = np.asarray(
                 [buffered_plan.intersects(geometry) for geometry in distribution_cabinets.geometry],
                 dtype=bool,
@@ -5766,7 +5800,8 @@ def main(_automatic_retry: bool = False) -> None:
             ].reset_index(drop=True)
         if cables.empty:
             raise RuntimeError("Binnen het plangebied liggen geen bruikbare sleuven")
-        log("Het kabelnet wordt op de grens van het plangebied afgeknipt.")
+        log("Kabelroutes mogen buiten het plangebied lopen; aansluitingen en stations volgen het plangebiedfilter." if ALLOW_EXTERNAL_ROUTES else
+            "Het kabelnet wordt op de grens van het plangebied afgeknipt.")
         log("Clustergebieden worden begrensd door het opgegeven plangebied.")
 
     parsed_station_kva = []
@@ -5840,7 +5875,7 @@ def main(_automatic_retry: bool = False) -> None:
             points, flat_cabinets, cables
         )
         if apartment_trenches is not None and not apartment_trenches.empty:
-            if plan_area is not None:
+            if plan_area is not None and not ALLOW_EXTERNAL_ROUTES:
                 outside_length = float(
                     unary_union(apartment_trenches.geometry.tolist()).difference(
                         plan_area.buffer(0.05)
@@ -5863,6 +5898,7 @@ def main(_automatic_retry: bool = False) -> None:
     )
     if (
         plan_area is not None
+        and not ALLOW_EXTERNAL_ROUTES
         and missing_connection_links is not None
         and not missing_connection_links.empty
     ):
@@ -6025,6 +6061,10 @@ def main(_automatic_retry: bool = False) -> None:
     safe_node_mask = point_clearance_m >= NEW_STATION_POINT_CLEARANCE_M
     excluded_node_mask = excluded_station_mask(node_xy, globals().get("EXCLUDED_STATION_AREAS", []))
     safe_node_mask &= ~excluded_node_mask
+    placement_inside = np.ones(len(node_xy), dtype=bool)
+    if plan_area is not None:
+        placement_inside = np.asarray([buffered_plan.covers(Point(xy)) for xy in node_xy], dtype=bool)
+        safe_node_mask &= placement_inside
     regular_node_indices_list: list[int] = []
     graph_component_by_node_index = np.full(len(node_list), -1, dtype=int)
     regular_indices_by_component: dict[int, np.ndarray] = {}
@@ -6059,7 +6099,7 @@ def main(_automatic_retry: bool = False) -> None:
         else:
             component_regular = component_indices[safe_node_mask[component_indices]]
             if not len(component_regular):
-                allowed_indices = component_indices[~excluded_node_mask[component_indices]]
+                allowed_indices = component_indices[(~excluded_node_mask[component_indices]) & placement_inside[component_indices]]
                 if not len(allowed_indices):
                     raise RuntimeError("Een kabelcomponent heeft geen stationslocatie buiten de uitgesloten locaties.")
                 # Retain a deterministic last-resort routing anchor, choosing
@@ -6917,11 +6957,12 @@ def main(_automatic_retry: bool = False) -> None:
         station_snap_xy,
         len(capacities),
         plan_area,
+        allow_external_routes=bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
     )
     disconnected = [
         index
         for index, polygon in enumerate(cluster_polygons)
-        if polygon.geom_type == "MultiPolygon" and len(polygon.geoms) > 1
+        if invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     ]
     if disconnected:
         raise RuntimeError(
@@ -6929,7 +6970,10 @@ def main(_automatic_retry: bool = False) -> None:
             + ", ".join(str(index) for index in disconnected)
         )
     for station_index, polygon in enumerate(cluster_polygons):
-        outside_length = route_geometries[station_index].difference(
+        checked_route = route_geometries[station_index]
+        if plan_area is not None and ALLOW_EXTERNAL_ROUTES:
+            checked_route = checked_route.intersection(plan_area)
+        outside_length = checked_route.difference(
             polygon.buffer(0.05)
         ).length
         if outside_length > 0.1:
@@ -6995,6 +7039,7 @@ def main(_automatic_retry: bool = False) -> None:
             "NWB_ID": safe_column("NWB_ID", ""),
             "Bron": safe_column("Bron", ""),
             "Nieuwbouwproject": safe_column("Nieuwbouwproject", ""),
+            "Buitenplan_toegestaan": bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
         },
         geometry=points.geometry,
         crs=CRS_RD,
@@ -7063,6 +7108,7 @@ def main(_automatic_retry: bool = False) -> None:
         "Gem_route": mean_route,
         "Max_route": max_route,
         "Route_km": route_lengths / 1000.0,
+        "Buitenplan_toegestaan": bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
     }
     areas = gpd.GeoDataFrame(common_summary, geometry=cluster_polygons, crs=CRS_RD)
     routes = gpd.GeoDataFrame(
@@ -7178,6 +7224,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - Kabelfilter laagspanningskabels: {'Function bevat ' + ', '.join(LS_FUNCTION_TERMS) if LS_FUNCTION_FILTER_ENABLED and LS_FUNCTION_TERMS else 'geen Function-filter'}.
 - Kabelfilter aansluitkabels: {'Function bevat ' + ', '.join(CONNECTION_FUNCTION_TERMS) if original_connection_cables is not None and CONNECTION_FUNCTION_FILTER_ENABLED and CONNECTION_FUNCTION_TERMS else ('geen Function-filter' if original_connection_cables is not None else 'geen aparte aansluitkabellaag')}.
 - Plangebiedselectie: {'aansluitingen en bestaande stations buiten de grens zijn genegeerd' if plan_area is not None and ONLY_WITHIN_PLAN_AREA else ('aansluitingen buiten de grens zijn niet toegestaan' if plan_area is not None else 'geen plangebied opgegeven')}.
+- Kabelroutes buiten plangebied: {'toegestaan; de volledige omweg telt mee voor de routelengte' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else ('niet toegestaan; het netwerk is op de grens geknipt' if plan_area is not None else 'geen plangebiedbeperking')}.
 - De gefilterde kabellagen zijn vóór de routeberekening samengevoegd en als één
   netwerk geknipt/genood. Daardoor zijn ook onderlinge kruisingen en
   T-aansluitingen echte netwerkknooppunten.
@@ -7186,7 +7233,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   station verbonden; gedeelde kabellengte tussen clusters is 0 meter.
 - Nieuwe stationlocatie: het belastingsgewogen midden van het cluster, exact
   gesnapt op een kabelknoop.
-- Gebiedstopologie: elk cluster is één aaneengesloten polygoon zonder exclaves.
+- Gebiedstopologie: {'gebieden blijven binnen het plangebied; meerdere vlakken zijn alleen toegestaan als de aangesloten kabelroute buiten het plangebied doorloopt en ieder vlak de route raakt' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else 'elk cluster is één aaneengesloten polygoon zonder exclaves'}.
   De grenzen zijn afgeleid van de dichtstbijzijnde exclusieve kabelroutes; bij
   een knooppunt wordt zo nodig een smalle corridor om de eigen kabel gereserveerd.
   Alle eigen aansluitingen, routes en het station liggen binnen het eigen gebied.
