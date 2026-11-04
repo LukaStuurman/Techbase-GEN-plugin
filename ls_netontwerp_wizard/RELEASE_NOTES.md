@@ -1,4 +1,22 @@
-# LS Netontwerp Wizard v1.27.3
+# LS Netontwerp Wizard v1.28.0
+
+## Voedend station rechtstreeks uit het LS-schema
+
+Nieuw in het echte dashboard: **1.4. Voedend station uit LS-schema**. De functie leest de XML en Excel van veld, railsectie en smeltveiligheid en volgt de kabelgroep van iedere aansluiting via de verdeelkasten naar een station. Daarvoor hoeft geen LOVION-netwerkanalyse per station te worden opgehaald. De bestaande stationslaag vertaalt de MS-functieplaats naar de stationsnaam.
+
+- De fysieke schematische smeltpositie bepaalt de rail. Administratieve bovenliggende assets worden niet zonder controle als elektrische verbinding gebruikt. Volgens de gebruikersregel voedt een mes zijn rail, voert een numeriek afgezekerd veld af en koppelt een actief K-veld de twee bedoelde rails.
+- Optionele ASCII-DXF-controle op railgeometrie, smeltposities en K-bruggen. Een zelfstandige DXF-import zonder de XML-objectkoppelingen wordt niet geleverd. XML/Excel alleen werkt wel en behaalt in deze proef dezelfde uitkomst.
+- Een optionele controle-CSV wordt uitsluitend op **Master Asset ID** vergeleken. De CSV voedt de voorspelling niet. Voorstel en tabel tonen bestaand, voorgesteld en referentiestation, afwijkingen en het herleidingspad. Tabelselecties kunnen op de kaart worden bekeken; rapporten zijn exporteerbaar.
+- Toepassen wijzigt de bron-/ontwerpstroomlaag in één GeoPackage-transactie, met herkomstkolommen en blijvend undo na heropenen. CSV-afwijkingen, dubbele ID's en onzekere toewijzingen worden niet toegepast. Met CSV staan alleen overeenkomende koppelingen standaard aan; bestaande stationsnamen vervangen is een aparte keuze. Gewijzigde bronbestanden, laaginhoud en stationsgegevens vereisen een nieuw voorstel.
+- Een bestaand clusterresultaat wordt niet rechtstreeks aangepast; voer clustering zo nodig opnieuw uit na een wijziging van de bronlaag.
+
+**Den Dungen:** alle **1.998** unieke Master Asset ID's uit het controlebestand zijn exact in de 2.763 bronpunten teruggevonden. XML/Excel en XML/Excel plus DXF leveren ieder **1.926 gelijk, 4 afwijkend en 68 niet herleid**. Dat is 96,4% overeenkomst op de volledige referentie en 99,8% op de 1.930 herleide referentiegevallen. Het is geen 100%-garantie. De vier afwijkingen blijven controlepunten en worden niet stilzwijgend gecorrigeerd op basis van de CSV. Op een lokale kopie zijn 1.926 koppelingen toegepast, de vier afwijkingen behouden en alle oorspronkelijke attributen/geometrieën na heropenen exact met undo hersteld.
+
+Getest met de echte QGIS 4.2.3-dashboardwidgets, achtergrondtaak, kaartselectie, echte GeoPackages, foutinjectie tijdens schrijven, gewijzigde voorstellen, twee afzonderlijke voedingen en een K-koppeling met werkelijk twee bronstations. Bestaande regressies slagen. Geen volledige handmatige Desktop-test of QGIS 3-uitvoering. [Volledige verantwoording](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/SCHEMA_LINK_VALIDATION.md).
+
+Installeer de ZIP en herstart QGIS volledig.
+
+## Behouden uit v1.27.3
 
 ## Vaartbroek zonder plangebied opgelost
 

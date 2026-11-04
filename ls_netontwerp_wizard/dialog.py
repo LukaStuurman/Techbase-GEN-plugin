@@ -535,6 +535,10 @@ class LSNetontwerpDialog(QDialog):
         self.new_buildings_button.setObjectName("secondaryButton")
         self.new_buildings_button.setEnabled(False)
         self.new_buildings_button.clicked.connect(self.show_connection_sources_page)
+        self.schema_link_button = QPushButton("1.4. Voedend station uit LS-schema")
+        self.schema_link_button.setObjectName("secondaryButton")
+        self.schema_link_button.setToolTip("Herleid via kabelgroep, rail en smelt; vergelijk op Master Asset ID en pas gecontroleerd toe")
+        self.schema_link_button.clicked.connect(self.show_schema_link_page)
         self.cluster_button = QPushButton("3. Clustering maken")
         self.cluster_button.setToolTip(
             "Maak de kabelverbonden clustering met de gecontroleerde waarden"
@@ -585,6 +589,7 @@ class LSNetontwerpDialog(QDialog):
         action_grid.addWidget(self.edit_zero_current_button, 2, 0, 1, 4)
         action_grid.addWidget(self.station_names_button, 3, 0, 1, 2)
         action_grid.addWidget(self.new_buildings_button, 3, 2, 1, 2)
+        action_grid.addWidget(self.schema_link_button, 4, 0, 1, 4)
         root.addWidget(actions)
         self.actions_group = actions
         close_button = QPushButton("Sluiten")
@@ -614,6 +619,9 @@ class LSNetontwerpDialog(QDialog):
         self.page_stack.addWidget(self.connection_sources_page)
         self.station_link_page = ConnectionSourcesPage(self, "stations")
         self.page_stack.addWidget(self.station_link_page)
+        from .schema_link_page import SchemaLinkPage
+        self.schema_link_page = SchemaLinkPage(self)
+        self.page_stack.addWidget(self.schema_link_page)
         self.page_stack.setCurrentWidget(self.main_page)
 
     def _build_manual_page(self):
@@ -3396,6 +3404,11 @@ class LSNetontwerpDialog(QDialog):
         self.station_link_page.refresh()
         self.page_stack.setCurrentWidget(self.station_link_page)
         self.setWindowTitle("LS Netontwerp Wizard – stationskoppeling")
+
+    def show_schema_link_page(self):
+        self.schema_link_page.refresh()
+        self.page_stack.setCurrentWidget(self.schema_link_page)
+        self.setWindowTitle("LS Netontwerp Wizard – voedend station uit LS-schema")
 
     def open_station_names_csv(self, target_layer=None):
         if not self.prepared_state and target_layer is None:

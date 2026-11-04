@@ -41,6 +41,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             self.main_page, self.value_page, self.housing_page, self.station_page,
             self.zero_current_page, self.connection_sources_page, self.station_link_page, self.manual_page,
             self.network_page, self.areas_page, self.cluster_management_page,
+            self.schema_link_page,
         )
         action_sets = (
             (self.value_page, (self.value_run_button,)),
@@ -49,6 +50,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             (self.zero_current_page, (self.zero_current_page.apply_button,)),
             (self.connection_sources_page, ()),
             (self.station_link_page, ()),
+            (self.schema_link_page, (self.schema_link_page.check_button, self.schema_link_page.apply_button, self.schema_link_page.undo_button)),
             (self.manual_page, (self.manual_run_button,)),
             (self.cluster_management_page, (self.cluster_management_page.check_button, self.cluster_management_page.apply_button, self.cluster_management_page.undo_button, self.cluster_management_page.cancel)),
             (self.network_page, (self.network_draw_button, self.network_refresh_button, self.network_selected_refresh_button)),
@@ -68,6 +70,10 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
     def show_station_link_page(self):
         self._prepare_fixed_subpage(self.station_link_page)
         return super().show_station_link_page()
+
+    def show_schema_link_page(self):
+        self._prepare_fixed_subpage(self.schema_link_page)
+        return super().show_schema_link_page()
 
     def _toggle_advanced(self, enabled):
         super()._toggle_advanced(enabled)

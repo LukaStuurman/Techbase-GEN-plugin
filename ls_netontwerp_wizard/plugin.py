@@ -74,6 +74,7 @@ class LSNetontwerpPlugin:
             self.dialog.cluster_management_page.stop()
             self.dialog.connection_sources_page.cancel_bag_download()
             self.dialog.station_link_page.cancel_bag_download()
+            self.dialog.schema_link_page.cancel()
         try:
             QgsProject.instance().readProject.disconnect(self._repair_project_presentation)
         except (TypeError, RuntimeError):

@@ -312,6 +312,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                 ),
                 self._dashboard_button("1.2. Stationskoppeling", 1, target=self.station_names_button, secondary=True),
                 self._dashboard_button("1.3. Nieuwbouw", 1, target=self.new_buildings_button, secondary=True),
+                self._dashboard_button("1.4. Voedend station uit LS-schema", 1, target=self.schema_link_button, secondary=True),
             ],
         )
         step2 = self._make_step_card(

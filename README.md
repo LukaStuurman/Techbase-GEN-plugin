@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.27.3
+## Laatste versie: 1.28.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.3/ls_netontwerp_wizard-1.27.3.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.3)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.28.0/ls_netontwerp_wizard-1.28.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.28.0)
+
+**Nieuw in 1.28.0: 1.4. Voedend station uit LS-schema.** Herleid de stationsnaam van een aansluiting via kabelgroep → veld/mes/rail → verdeelkasten. Geen LOVION-netwerkanalyse per station nodig. XML en bijbehorende Excel leveren de objectrelaties en schematische posities; een optionele DXF controleert railgeometrie, smeltposities en K-bruggen. Voorstel, kaartselectie, vergelijking op exact Master Asset ID, rapportexport, atomair toepassen en blijvend beschermd undo zitten in het echte dashboard. In de Den Dungen-controle komen 1.926 van 1.998 aansluitingen overeen; 4 wijken af en 68 blijven zonder herleiding. Deze gevallen worden standaard niet toegepast. Een zelfstandige DXF-import zonder XML-objectkoppelingen is niet beschikbaar. [Gebruik, resultaten en beperkingen](SCHEMA_LINK_VALIDATION.md).
 
 **Nieuw in 1.27.3:** Vaartbroek zonder plangebied slaagt nu volledig: 4.266 aansluitingen, 24 bestaande en 41 nieuwe stations, langste route 762,16 m bij een grens van 850 m. Automatisch herstel gebruikt de werkelijke route-, capaciteits- en stationswortelknelpunten; vastlopende belastingverschuivingen krijgen een nieuwe kandidaatcontrole. Smalle overlapvlakken worden op hun volledige oppervlakte beoordeeld om fouten door één afgerond meetpunt te voorkomen. [Resultaat en testverantwoording](VAARTBROEK_VALIDATION.md).
 

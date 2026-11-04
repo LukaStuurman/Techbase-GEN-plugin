@@ -29,7 +29,7 @@ def main():
         child for child in dialog.main_page.findChildren(QPushButton) if child.text() == "1.1. Ontwerpstroom maken"
     ).parentWidget()
     actions = card1.findChildren(QPushButton)
-    assert [button.text() for button in actions] == ["1.1. Ontwerpstroom maken", "1.2. Stationskoppeling", "1.3. Nieuwbouw"]
+    assert [button.text() for button in actions] == ["1.1. Ontwerpstroom maken", "1.2. Stationskoppeling", "1.3. Nieuwbouw", "1.4. Voedend station uit LS-schema"]
     dialog.station_names_button.setEnabled(True)
     dialog.new_buildings_button.setEnabled(True)
     actions[1].click()
@@ -111,9 +111,13 @@ def main():
                 return self.window
             def addPluginToVectorMenu(self, *_args):
                 pass
+            def addPluginToMenu(self, *_args):
+                pass
             def addToolBarIcon(self, *_args):
                 pass
             def removePluginVectorMenu(self, *_args):
+                pass
+            def removePluginMenu(self, *_args):
                 pass
             def removeToolBarIcon(self, *_args):
                 pass
