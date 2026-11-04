@@ -92,6 +92,8 @@ def main():
         assert dialog.network_advanced_container.isHidden()
         assert dialog.network_selected_refresh_button.text() == "Geselecteerde routes verversen"
         dialog.open_cluster_editor()
+        assert dialog.page_stack.currentWidget() is dialog.cluster_management_page
+        dialog._show_classic_manual_page(False)
         assert dialog.page_stack.currentWidget() is dialog.manual_page
         assert dialog.manual_advanced_container.isHidden()
         dialog.manual_advanced_toggle.setChecked(True)

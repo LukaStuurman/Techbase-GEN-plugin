@@ -1,7 +1,7 @@
 """Keep the project layer list authoritative for rendering and legends."""
 from qgis.core import QgsMapLayerLegendUtils, QgsProject
 
-PRESENTATION_VERSION = 147
+PRESENTATION_VERSION = 148
 
 
 def use_layer_tree_order(project=None, foreground=(), background=()):
@@ -73,6 +73,14 @@ def repair_generated_project(project=None):
     for layer in project.mapLayers().values():
         if layer.customProperty("LSNetontwerp/review_current_layer", False) or layer.name() == "Aansluitingen geclusterd":
             show_connection_legend(layer)
+        if (layer.customProperty("LSNetontwerp/review_station_layer", False)
+                or layer.name() == "Bestaande stations (bron)") and hasattr(layer, "fields"):
+            from .workflow import WorkflowRunner
+            name_field = str(layer.customProperty("LSNetontwerp/station_name_field", "Station"))
+            capacity_field = str(layer.customProperty("LSNetontwerp/station_capacity_field", "trafo_power"))
+            max_field = str(layer.customProperty("LSNetontwerp/station_max_field", "Max_A"))
+            if {name_field, max_field}.issubset(set(layer.fields().names())):
+                WorkflowRunner._style_review_stations(layer, name_field, capacity_field, max_field)
     # Keep older prepared-project migrations available when still needed.
     if current_version >= 146 or clustered:
         project.writeEntry("LSNetontwerp", "presentation_version", PRESENTATION_VERSION)

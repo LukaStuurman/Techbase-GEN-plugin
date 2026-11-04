@@ -1,4 +1,18 @@
-# LS Netontwerp Wizard v1.28.0
+# LS Netontwerp Wizard v1.28.1
+
+## Bestaande stations met NULL-vermogen blijven zichtbaar
+
+Station **044.532** stond al in de Den Dungen-import met `trafo_power = NULL` en `Max_A = NULL`. De kaartstijl tekende alleen stations met positieve capaciteit en verborg daardoor zowel het symbool als het label. Dit filter is hersteld.
+
+- Een benoemd station met onbekende capaciteit krijgt een oranje vierkant met zijn stationsnaam en **Capaciteit onbekend**. Stations zonder naam én zonder capaciteit blijven als grijs controlepunt zichtbaar. De rode bekende en gele geplande stations met geldige capaciteit behouden hun weergave.
+- Nieuwe ontwerpstroomresultaten gebruiken de nieuwe stijl. Bestaande gegenereerde werkprojecten krijgen de stijlherstelstap bij openen; voor een al geïmporteerde 044.532 is geen nieuwe XML/Excel-import nodig.
+- NULL blijft NULL. Er wordt geen vermogen of maximale stroom verzonnen. De bestaande capaciteitsvoorwaarden voor automatische clustering blijven actief. Vul een gecontroleerde capaciteit in via **2c. Stations aanpassen** als dit station aan de berekening moet meedoen.
+
+Gecontroleerd met de echte Den Dungen-GeoPackage en native QGIS-rendering: 044.532 is zichtbaar én gelabeld terwijl beide capaciteitsvelden NULL blijven. Tests voor onbekende/geldige/geplande/nul/ongeldige capaciteit, opslag/heropenen, oude projectstijl, stationspresentatie, schemaherleiding en dashboard slagen in QGIS 4.2.3. Geen QGIS 3-uitvoering. [Volledig verslag](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/UNKNOWN_STATION_CAPACITY_VALIDATION.md).
+
+Installeer de ZIP, herstart QGIS en open het werkproject opnieuw.
+
+## Behouden uit v1.28.0
 
 ## Voedend station rechtstreeks uit het LS-schema
 

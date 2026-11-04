@@ -578,7 +578,7 @@ class WorkflowRunner:
         capacity_field="trafo_power",
         max_field="Max_A",
     ):
-        """Show named stations in red and unnamed planned stations in yellow."""
+        """Keep every imported station visible, including unknown capacities."""
         symbol = QgsMarkerSymbol.createSimple(
             {
                 "name": "square",
@@ -622,6 +622,19 @@ class WorkflowRunner:
             f'AND "{escaped_max}" IS NOT NULL AND "{escaped_max}" > 0'
         )
         root_rule.appendChild(planned_rule)
+        for named, color, legend in (
+            (True, "255,140,0,255", "Bestaand station — capaciteit onbekend"),
+            (False, "160,160,160,255", "Station zonder naam — capaciteit onbekend"),
+        ):
+            unknown_symbol = symbol.clone()
+            unknown_symbol.setColor(QColor(*[int(v) for v in color.split(',')]))
+            unknown_rule = QgsRuleBasedRenderer.Rule(unknown_symbol)
+            unknown_rule.setLabel(legend)
+            unknown_rule.setFilterExpression(
+                f'length(trim(coalesce("{escaped_name}", \'\'))) {">" if named else "="} 0 '
+                f'AND ("{escaped_max}" IS NULL OR "{escaped_max}" <= 0)'
+            )
+            root_rule.appendChild(unknown_rule)
         layer.setRenderer(QgsRuleBasedRenderer(root_rule))
 
         labels = QgsPalLayerSettings()
@@ -630,7 +643,10 @@ class WorkflowRunner:
             f'concat(CASE WHEN length(trim(coalesce("{escaped_name}", \'\'))) > 0 '
             f'THEN concat(trim("{escaped_name}"), \'\\n\') '
             f'ELSE \'Gepland station\\n\' END, \'Max_A: \', '
-            f'format_number("{escaped_max}", 0), \' A\') ELSE \'\' END'
+            f'format_number("{escaped_max}", 0), \' A\') ELSE '
+            f'concat(CASE WHEN length(trim(coalesce("{escaped_name}", \'\'))) > 0 '
+            f'THEN trim("{escaped_name}") ELSE \'Station zonder naam\' END, '
+            f'\'\\nCapaciteit onbekend\') END'
         )
         labels.isExpression = True
         labels.enabled = True
