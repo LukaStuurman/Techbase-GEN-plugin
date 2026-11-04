@@ -46,6 +46,18 @@ jobs:
           echo "zip=ls_netontwerp_wizard-$VERSION.zip" >> "$GITHUB_OUTPUT"
           echo "Pluginversie: $VERSION"
 
+      - name: Python-bronnen controleren voor publicatie
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          files = sorted(Path("ls_netontwerp_wizard").rglob("*.py"))
+          assert files
+          for path in files:
+              ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+          print(f"Syntax OK: {len(files)} bestanden")
+          PY
+
       - name: ZIP bouwen
         shell: bash
         env:

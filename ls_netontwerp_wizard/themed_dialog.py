@@ -399,6 +399,22 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                     callback=self.show_station_relocation_page,
                     secondary=True,
                 ),
+                self._dashboard_button(
+                    "4e. Stationscapaciteit aanpassen", 4,
+                    callback=lambda: self.show_cluster_management_section("capacity_group"), secondary=True,
+                ),
+                self._dashboard_button(
+                    "4f. Clusters samenvoegen", 4,
+                    callback=lambda: self.show_cluster_management_section("merge_group"), secondary=True,
+                ),
+                self._dashboard_button(
+                    "4g. Cluster splitsen / station bijplaatsen", 4,
+                    callback=lambda: self.show_cluster_management_section("create_group"), secondary=True,
+                ),
+                self._dashboard_button(
+                    "4h. Clusters controleren / herberekenen", 4,
+                    callback=lambda: self.show_cluster_management_section("validation_group"), secondary=True,
+                ),
             ],
         )
         step5 = self._make_step_card(
@@ -459,6 +475,15 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             self.actions_group.setVisible(False)
         if self._dashboard_widget is not None:
             self._dashboard_widget.setVisible(not enabled)
+
+    def show_cluster_management_section(self, section):
+        from qgis.PyQt.QtWidgets import QScrollArea
+        self.show_manual_page(False)
+        page = self.cluster_management_page
+        group = getattr(page, section)
+        for scroll in page.findChildren(QScrollArea):
+            scroll.ensureWidgetVisible(group)
+        page.status.setText(group.title() + ": kies een station of aansluitingen en zet de wijziging klaar.")
 
     def show_station_relocation_page(self):
         """Open the existing transaction-safe editor from the visible dashboard."""

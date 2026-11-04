@@ -132,10 +132,12 @@ def apply_snapshot(layers, path):
 
 
 def run_batch(layers, operations, directory, maximum_route, preview, feedback, rules=None):
+    from .cluster_management import fingerprint
     if not operations:
         raise ValueError("De wachtrij is leeg.")
     if any(layer.isEditable() for layer in layers.values() if layer is not None):
         raise ValueError("Sla bestaande bewerkingen in de invoerlagen eerst op.")
+    before = fingerprint(layers)
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     token = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -192,5 +194,11 @@ def run_batch(layers, operations, directory, maximum_route, preview, feedback, r
             raise ValueError((lines[-1] if lines else "Het rekenproces stopte onverwacht.") + f" Log: {persistent_log}")
         summary = json.loads(Path(config["summary_path"]).read_text(encoding="utf-8"))
     if not preview:
+        if feedback.isCanceled():
+            raise ValueError("Bewerking geannuleerd; het ontwerp is niet gewijzigd.")
+        if fingerprint(layers) != before:
+            raise ValueError("Het ontwerp is tijdens de berekening aangepast. Het resultaat is niet toegepast.")
+        if rules is not None and rules != station_rules():
+            raise ValueError("De stationskeuzes zijn tijdens de berekening aangepast. Het resultaat is niet toegepast.")
         apply_snapshot(layers, result)
     return summary, str(backup), str(result)

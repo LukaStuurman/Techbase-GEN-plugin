@@ -11,7 +11,11 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
     import numpy as np
     from scipy.spatial import cKDTree
 
-    rules = dict(rules or {})
+    import copy
+    rules = copy.deepcopy(rules or {})
+    frames = dict(frames)
+    if not np.isfinite(maximum_route) or maximum_route <= 0:
+        raise ValueError("De maximale kabelroute moet positief en eindig zijn.")
     cache = {}
     original_build = engine.build_network
 
@@ -28,7 +32,6 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
             cache[key] = original_build(cables)
         return cache[key]
 
-    engine.build_network = cached_build
     if frames.get("plan") is None:
         from shapely.ops import unary_union
         frames["plan"] = engine.gpd.GeoDataFrame(geometry=[unary_union(frames["areas"].geometry.tolist())], crs=frames["areas"].crs)
@@ -36,7 +39,50 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
     moved_ids = set()
     retired = []
     relocated = []
+    created = []
+    capacity_changed = []
+    refreshed = []
     route_summaries = []
+
+    def active_station(name):
+        rows = state[1].loc[state[1].Cluster.astype(str) == name]
+        if len(rows) != 1:
+            raise ValueError(f"Station {name} ontbreekt of is niet uniek.")
+        return rows
+
+    def checked_kva(value):
+        value = float(value)
+        if not np.isfinite(value) or not 1 <= value <= 10000:
+            raise ValueError("Kies een geldige stationscapaciteit tussen 1 en 10000 kVA.")
+        return value
+
+    def recalculate(names=None, preserve=False):
+        nonlocal state
+        result = engine.recalculate_manual_assignment(
+            *state, selected_source_fids=set(), target_station_source_fid=0,
+            max_route_m=maximum_route, node_tolerance_m=0.0,
+            plan_layer=frames.get("plan"), refresh_all_routes=True,
+            refresh_cluster_names=names, preserve_all_routes=preserve,
+            defer_area_rebuild=True,
+        )
+        if not preserve and result[5].get("preserved_route_clusters"):
+            raise ValueError("Geen volledige nieuwe route mogelijk voor: " +
+                             ", ".join(result[5]["preserved_route_clusters"]))
+        state = list(result[:5])
+        route_summaries.append(result[5])
+
+    def validate_areas():
+        from shapely.ops import unary_union
+        polygons = state[2].to_crs(engine.CRS_RD).geometry
+        if any(g is None or g.is_empty or not g.is_valid or
+               g.geom_type not in ("Polygon", "MultiPolygon") for g in polygons):
+            raise ValueError("De herberekening bevat lege of ongeldige clustergebieden.")
+        coverage = unary_union(polygons.tolist())
+        study = unary_union(frames["plan"].to_crs(engine.CRS_RD).geometry.tolist()).buffer(0)
+        if sum(g.area for g in polygons) - coverage.area > 0.01:
+            raise ValueError("De herberekende clustergebieden overlappen.")
+        if coverage.symmetric_difference(study).area > max(0.01, study.area * 1e-8):
+            raise ValueError("De clustergebieden dekken het plangebied niet volledig.")
 
     def move(ids, target):
         nonlocal state
@@ -157,6 +203,7 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
         if not search(0):
             raise ValueError(f"Geen geldige herverdeling gevonden voor {source}. Kies een doelstation of pas eerst kabeltakken aan; het ontwerp is niet gewijzigd.")
 
+    engine.build_network = cached_build
     try:
         for index, operation in enumerate(operations, 1):
             engine.log(f"Wijziging {index} van {len(operations)} controleren...")
@@ -176,6 +223,99 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
                 continue
             if kind == "move":
                 move(operation["point_ids"], str(operation["target"]))
+                continue
+            if kind == "capacity":
+                name = str(operation["station"])
+                rows = active_station(name)
+                kva = checked_kva(operation["kva"])
+                state[1].loc[rows.index, "KVA"] = kva
+                recalculate(preserve=True)
+                station = active_station(name).iloc[0]
+                point = engine.gpd.GeoSeries([station.geometry], crs=state[1].crs).to_crs(engine.CRS_RD).iloc[0]
+                rules[name] = {**rules.get(name, {}), "type": str(station.Type),
+                               "x": float(point.x), "y": float(point.y), "kva": kva,
+                               "protected": rules.get(name, {}).get("protected", False) or str(station.Type).casefold() == "nieuw",
+                               "capacity_override": True}
+                capacity_changed.append(name)
+                continue
+            if kind == "rebuild":
+                names = {str(name) for name in operation.get("stations", [])}
+                for name in names:
+                    active_station(name)
+                recalculate(names=names or None)
+                refreshed.extend(sorted(names) if names else state[1].Cluster.astype(str).tolist())
+                continue
+            if kind == "create":
+                # A split always retains members of the source station. This
+                # avoids silently retiring an existing physical station.
+                name = str(operation["name"]).strip()
+                if not name or len(name) > 80 or any(ord(c) < 32 for c in name):
+                    raise ValueError("Geef een stationsnaam van 1 tot 80 tekens op.")
+                if name in set(state[1].Cluster.astype(str)) or name in rules:
+                    raise ValueError("Deze stationsnaam bestaat al of is gereserveerd.")
+                kva = checked_kva(operation["kva"])
+                ids = {int(fid) for fid in operation["point_ids"]}
+                members = state[0].loc[state[0].__src_fid.isin(ids)]
+                if not ids or len(members) != len(ids) or members.Cluster.nunique() != 1:
+                    raise ValueError("Selecteer aansluitingen uit precies één bestaand cluster.")
+                source = str(members.iloc[0].Cluster)
+                if len(members) >= int((state[0].Cluster.astype(str) == source).sum()):
+                    raise ValueError("Laat minstens één aansluiting bij het bronstation; gebruik samenvoegen voor hele clusters.")
+                if "Multistory" in state[0]:
+                    for value in members.Multistory.dropna().unique():
+                        if str(value).strip().casefold() in ("", "0", "none", "nan"):
+                            continue
+                        group_ids = set(state[0].loc[state[0].Multistory == value, "__src_fid"].astype(int))
+                        if not group_ids.issubset(ids):
+                            raise ValueError("Selecteer alle aansluitingen van de flatgroep samen.")
+                x, y = float(operation["x"]), float(operation["y"])
+                if not (np.isfinite(x) and np.isfinite(y)):
+                    raise ValueError("Ongeldige stationslocatie.")
+                point = engine.Point(x, y)
+                area = state[2].loc[state[2].Cluster.astype(str) == source]
+                area_point = engine.gpd.GeoSeries([point], crs=state[1].crs).to_crs(state[2].crs).iloc[0]
+                if len(area) != 1 or not area.iloc[0].geometry.buffer(.05).covers(area_point):
+                    raise ValueError("Het extra station moet binnen het broncluster liggen.")
+                graph = cached_build(state[4])
+                nodes = list(graph)
+                cable_point = engine.gpd.GeoSeries([point], crs=state[1].crs).to_crs(state[4].crs).iloc[0]
+                if not nodes:
+                    raise ValueError("Het sleuvennet is leeg.")
+                distance, position = cKDTree(np.asarray(nodes)).query([cable_point.x, cable_point.y])
+                if distance > .08:
+                    raise ValueError("Kies een bestaande netwerkknoop op een sleuf.")
+                point = engine.gpd.GeoSeries([engine.Point(*nodes[int(position)])], crs=state[4].crs).to_crs(state[1].crs).iloc[0]
+                if state[1].to_crs(engine.CRS_RD).distance(engine.gpd.GeoSeries([point], crs=state[1].crs).to_crs(engine.CRS_RD).iloc[0]).min() < .1:
+                    raise ValueError("Op deze locatie staat al een station.")
+                from shapely.geometry import LineString
+                for frame_index in (1, 2, 3):
+                    frame = state[frame_index]
+                    template = frame.loc[frame.Cluster.astype(str) == source].iloc[[0]].copy()
+                    template["__src_fid"] = int(frame.__src_fid.max()) + 1
+                    template["Cluster"] = name
+                    template["Type"] = "Nieuw"
+                    template["KVA"] = kva
+                    if "Status" in template:
+                        template["Status"] = f"Nieuw {kva:g}Kva"
+                    if "Kandidaat" in template:
+                        template["Kandidaat"] = ""
+                    if frame_index == 1:
+                        template.geometry = [point]
+                        rd_point = engine.gpd.GeoSeries([point], crs=frame.crs).to_crs(engine.CRS_RD).iloc[0]
+                        for field, value in (("Net_X", rd_point.x), ("Net_Y", rd_point.y), ("Plaatsing", "Handmatig bijgeplaatst")):
+                            if field in template:
+                                template[field] = value
+                    elif frame_index == 3:
+                        template.geometry = [LineString()]
+                        template["Route_km"] = 0.0
+                    state[frame_index] = engine.gpd.GeoDataFrame(engine.pd.concat([frame, template], ignore_index=True), geometry="geometry", crs=frame.crs)
+                move(ids, name)
+                new_route = state[3].loc[state[3].Cluster.astype(str) == name].iloc[0].geometry
+                route_point = engine.gpd.GeoSeries([point], crs=state[1].crs).to_crs(state[3].crs).iloc[0]
+                if new_route is None or new_route.is_empty or new_route.distance(route_point) > .02:
+                    raise ValueError("Het extra station heeft geen geldige kabelroute vanaf zijn locatie.")
+                rules[name] = {"type": "Nieuw", "x": float(rd_point.x), "y": float(rd_point.y), "kva": kva, "protected": True}
+                created.append(name)
                 continue
             if kind == "relocate":
                 # Move only a newly designed station; existing stations stay
@@ -290,7 +430,7 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
             retired.append(source)
             for frame_index in (1, 2, 3):
                 state[frame_index] = state[frame_index].loc[state[frame_index].Cluster.astype(str) != source].copy()
-        if not preview and len(state[1]) and (moved_ids or retired or relocated):
+        if not preview and len(state[1]) and (moved_ids or retired or relocated or refreshed):
             # A single final coverage rebuild for the entire queue. Retain all
             # checked routes instead of changing an unrelated cluster's route.
             result = engine.recalculate_manual_assignment(
@@ -300,11 +440,14 @@ def calculate(engine, frames, operations, maximum_route, preview=False, rules=No
                 preserve_all_routes=True,
             )
             state = list(result[:5])
+            validate_areas()
         elif not len(state[1]) and len(state[0]):
             raise ValueError("Er blijven aansluitingen zonder station over.")
         return state, {"moved_count": len(moved_ids), "removed_source_clusters": retired,
                        "station_rules": rules, "preview": preview,
                        "relocated_stations": relocated,
+                       "created_stations": created, "capacity_changed": capacity_changed,
+                       "refreshed_stations": sorted(set(refreshed)),
                        "maximum_route_m": float(state[0].Route_m.max()) if len(state[0]) else 0,
                        "target_cluster": "meerdere stations",
                        "station_overview": [{"cluster": str(row.Cluster), "load": float(state[0].loc[state[0].Cluster.astype(str)==str(row.Cluster),"Ontwerp_A"].sum()), "capacity": float(row.KVA)/.23/3} for _,row in state[1].iterrows()]}

@@ -8,7 +8,7 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel,
     QPushButton, QComboBox, QDoubleSpinBox, QListWidget, QListWidgetItem,
-    QTableWidget, QTableWidgetItem, QAbstractItemView,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QLineEdit,
 )
 from qgis.core import (QgsProject, QgsProcessingFeedback, QgsCoordinateTransform,
                        QgsFeatureRequest, QgsGeometry, QgsPointXY)
@@ -72,6 +72,7 @@ class ClusterManagementPage(QWidget):
         self.host = host
         self.layers = {}
         self.signature = None
+        self.rules_signature = None
         self.feedback = None
         self._location_tool = None
         self._previous_map_tool = None
@@ -152,6 +153,64 @@ class ClusterManagementPage(QWidget):
         self.queue_location_button.setEnabled(False)
         location_layout.addLayout(location_actions)
         layout.addWidget(self.relocation_group)
+        self.capacity_group = QGroupBox("Stationscapaciteit in het ontwerp aanpassen")
+        capacity_form = QFormLayout(self.capacity_group)
+        self.capacity = QDoubleSpinBox()
+        self.capacity.setRange(1, 10000)
+        self.capacity.setValue(630)
+        self.capacity.setSuffix(" kVA")
+        capacity_form.addRow("Nieuwe ontwerpcapaciteit", self.capacity)
+        self._button(capacity_form, "Capaciteit geselecteerd station klaarzetten", self.queue_capacity)
+        self.table.itemSelectionChanged.connect(self._load_capacity)
+        layout.addWidget(self.capacity_group)
+
+        self.merge_group = QGroupBox("Clusters samenvoegen")
+        merge_layout = QVBoxLayout(self.merge_group)
+        merge_note = QLabel("Selecteer het bronstation in de lijst en één ander doelstation hierboven. "
+                            "Alle aansluitingen gaan naar het doel; het bronstation vervalt in het ontwerp. "
+                            "De broninventaris blijft behouden. Capaciteit, bescherming en routes worden gecontroleerd.")
+        merge_note.setWordWrap(True)
+        merge_layout.addWidget(merge_note)
+        self._button(merge_layout, "Broncluster met doelcluster samenvoegen klaarzetten", self.queue_merge)
+        layout.addWidget(self.merge_group)
+
+        self.create_group = QGroupBox("Cluster splitsen en extra station bijplaatsen")
+        create_form = QFormLayout(self.create_group)
+        create_note = QLabel("Selecteer een deel van één cluster op de kaart. Laat minstens één aansluiting "
+                             "bij het bronstation en houd flatgroepen bijeen. Kies daarna een sleuflocatie "
+                             "binnen het broncluster; het nieuwe station krijgt de geselecteerde aansluitingen.")
+        create_note.setWordWrap(True)
+        create_form.addRow(create_note)
+        self.new_name = QLineEdit()
+        self.new_name.setMaxLength(80)
+        create_form.addRow("Unieke naam nieuw station", self.new_name)
+        self.new_capacity = QDoubleSpinBox()
+        self.new_capacity.setRange(1, 10000)
+        self.new_capacity.setValue(630)
+        self.new_capacity.setSuffix(" kVA")
+        create_form.addRow("Capaciteit nieuw station", self.new_capacity)
+        self._button(create_form, "Deel van cluster op kaart selecteren", self.select_on_map)
+        self._button(create_form, "Locatie extra station op kaart kiezen", self.start_station_creation)
+        self.create_status = QLabel("Nog geen locatie voor een extra station gekozen.")
+        self.create_status.setWordWrap(True)
+        create_form.addRow(self.create_status)
+        self._button(create_form, "Splitsing met extra station klaarzetten", self.queue_creation)
+        self._creation_candidate = None
+        self._creation_ids = None
+        layout.addWidget(self.create_group)
+
+        self.validation_group = QGroupBox("Kaartselecties en herberekenen")
+        validation_layout = QVBoxLayout(self.validation_group)
+        for text, callback in (
+            ("Clustergebied en routes selecteren", self.select_cluster_products),
+            ("Aansluitingen boven maximale route selecteren", lambda: self.select_issues("route")),
+            ("Aansluitingen met nulstroom selecteren", lambda: self.select_issues("zero")),
+            ("Aansluitingen zonder geldig station selecteren", lambda: self.select_issues("assignment")),
+            ("Routes geselecteerd station herberekenen klaarzetten", lambda: self.queue_rebuild(False)),
+            ("Alle routes en gebieden herberekenen klaarzetten", lambda: self.queue_rebuild(True)),
+        ):
+            self._button(validation_layout, text, callback)
+        layout.addWidget(self.validation_group)
         self.queue = QListWidget()
         self.queue.setMinimumHeight(80)
         self.queue.setMaximumHeight(145)
@@ -159,6 +218,7 @@ class ClusterManagementPage(QWidget):
         layout.addWidget(self.queue)
         row = QHBoxLayout()
         self._button(row, "Uit wachtrij verwijderen", self.remove_queued)
+        self._button(row, "Wachtrij wissen", self.clear_queue)
         self._button(row, "Omhoog", lambda: self.reorder(-1))
         self._button(row, "Omlaag", lambda: self.reorder(1))
         self._button(row, "Klassieke correctiepagina", self.classic)
@@ -248,6 +308,8 @@ class ClusterManagementPage(QWidget):
             raise ValueError("Open eerst een berekend clusterproject.")
         if self.signature and fingerprint(self.layers) != self.signature:
             raise ValueError("Het ontwerp is tussentijds aangepast. Wis de wachtrij en zet de wijzigingen opnieuw klaar.")
+        if self.rules_signature is not None and self.rules_signature != station_rules():
+            raise ValueError("De stationskeuzes zijn tussentijds aangepast. Wis de wachtrij.")
 
     def add_operation(self, operation, label):
         self._ready()
@@ -261,6 +323,7 @@ class ClusterManagementPage(QWidget):
             raise ValueError("Dit station staat al in de wachtrij. Pas die wijziging eerst toe.")
         if not self.queue.count():
             self.signature = fingerprint(self.layers)
+            self.rules_signature = station_rules()
         item = QListWidgetItem(label)
         item.setData(ROLE, operation)
         self.queue.addItem(item)
@@ -476,6 +539,137 @@ class ClusterManagementPage(QWidget):
         except Exception as exc:
             self.status.setText(str(exc))
 
+    def _load_capacity(self):
+        try:
+            name = self.selected_station()
+            station = next(f for f in self.layers["stations"].getFeatures() if str(f["Cluster"]) == name)
+            self.capacity.setValue(float(station["KVA"]))
+        except (KeyError, ValueError, StopIteration, AttributeError):
+            pass
+
+    def queue_capacity(self):
+        try:
+            name = self.selected_station()
+            self.add_operation({"kind": "capacity", "station": name, "kva": self.capacity.value()},
+                               f"{name}: ontwerpcapaciteit → {self.capacity.value():g} kVA")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def queue_merge(self):
+        if not self.target.currentData():
+            self.status.setText("Kies één doelstation om clusters samen te voegen.")
+            return
+        self.queue_retirement()
+
+    def start_station_creation(self):
+        try:
+            self._ready()
+            if self.queue.count():
+                raise ValueError("Pas eerst de wachtrij toe of wis deze voordat je een locatie kiest.")
+            if self.host.iface is None:
+                raise ValueError("Een stationslocatie kiezen kan alleen in QGIS Desktop.")
+            points = list(self.layers["connections"].getSelectedFeatures())
+            names = {str(f["Cluster"]) for f in points}
+            if not points or len(names) != 1:
+                raise ValueError("Selecteer een deel van precies één cluster.")
+            self._creation_candidate = None
+            self._creation_ids = [f.id() for f in points]
+            source = names.pop()
+            if len(points) >= sum(str(f["Cluster"]) == source for f in self.layers["connections"].getFeatures()):
+                raise ValueError("Laat minstens één aansluiting bij het bronstation.")
+            self._relocation_station = source
+            canvas = self.host.iface.mapCanvas()
+            self._previous_map_tool = canvas.mapTool()
+            self._location_tool = _StationRelocationMapTool(canvas, self._creation_location_clicked, self._creation_location_canceled)
+            canvas.setMapTool(self._location_tool)
+            self.create_status.setText(f"Klik op een sleufknoop binnen {source}; Esc of rechtsklik annuleert.")
+            self.host.hide()
+        except Exception as exc:
+            self.create_status.setText(str(exc))
+
+    def _creation_location_canceled(self):
+        self._leave_location_mode()
+        self._creation_candidate = None
+        self.create_status.setText("Locatie kiezen geannuleerd.")
+
+    def _creation_location_clicked(self, map_point):
+        source = self._relocation_station
+        self._leave_location_mode()
+        try:
+            candidate, distance = self._snap_to_cluster_trench_node(source, map_point)
+            self._creation_candidate = (float(candidate.x()), float(candidate.y()))
+            self.create_status.setText(f"Locatie X {candidate.x():.2f}, Y {candidate.y():.2f}; {distance:.1f} m gesnapt. Splitsing kan worden klaargezet.")
+        except Exception as exc:
+            self._creation_candidate = None
+            self.create_status.setText(str(exc))
+
+    def queue_creation(self):
+        try:
+            if self._creation_candidate is None or not self._creation_ids:
+                raise ValueError("Selecteer eerst aansluitingen en kies een locatie voor het extra station.")
+            name = self.new_name.text().strip()
+            if not name:
+                raise ValueError("Geef het nieuwe station een unieke naam.")
+            x, y = self._creation_candidate
+            self.add_operation({"kind": "create", "name": name, "kva": self.new_capacity.value(),
+                                "point_ids": self._creation_ids, "x": x, "y": y},
+                               f"Extra station {name}: {len(self._creation_ids)} aansluiting(en), {self.new_capacity.value():g} kVA")
+            self._creation_candidate = None
+            self.create_status.setText("Splitsing klaargezet; controleer het voorstel.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def queue_rebuild(self, all_stations):
+        try:
+            names = [] if all_stations else [self.selected_station()]
+            self.add_operation({"kind": "rebuild", "stations": names},
+                               "Routes en gebieden herberekenen: " + (", ".join(names) or "alle stations"))
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def clear_queue(self):
+        self.queue.clear()
+        self.signature = self.rules_signature = None
+        self._creation_candidate = self._relocation_candidate = None
+        self.queue_location_button.setEnabled(False)
+        self.preview_capacity()
+        self.status.setText("Wachtrij gewist; het ontwerp is ongewijzigd.")
+
+    def select_cluster_products(self):
+        try:
+            self._ready()
+            name = self.selected_station()
+            for key in ("areas", "routes"):
+                layer = self.layers[key]
+                layer.selectByIds([f.id() for f in layer.getFeatures() if str(f["Cluster"]) == name])
+            if self.host.iface is not None:
+                self.host.iface.setActiveLayer(self.layers["areas"])
+                self.host.iface.mapCanvas().zoomToSelected(self.layers["areas"])
+            self.status.setText(f"Gebied en kabelroutes van {name} geselecteerd.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
+    def select_issues(self, kind):
+        try:
+            self._ready()
+            stations = {str(f["Cluster"]) for f in self.layers["stations"].getFeatures()}
+            layer = self.layers["connections"]
+            selected = []
+            for feature in layer.getFeatures():
+                match = (str(feature["Cluster"]) not in stations if kind == "assignment" else
+                         float(feature["Ontwerp_A"] or 0) <= 0 if kind == "zero" else
+                         float(feature["Route_m"] or 0) > self.maximum_route.value())
+                if match:
+                    selected.append(feature.id())
+            layer.selectByIds(selected)
+            if self.host.iface is not None:
+                self.host.iface.setActiveLayer(layer)
+                if selected:
+                    self.host.iface.mapCanvas().zoomToSelected(layer)
+            self.status.setText(f"{len(selected)} aansluiting(en) geselecteerd voor deze controle.")
+        except Exception as exc:
+            self.status.setText(str(exc))
+
     def queue_retirement(self):
         try:
             source = self.selected_station()
@@ -518,6 +712,7 @@ class ClusterManagementPage(QWidget):
             self.queue.takeItem(index)
         if not self.queue.count():
             self.signature = None
+            self.rules_signature = None
         self.preview_capacity()
 
     def reorder(self, direction):
@@ -533,9 +728,18 @@ class ClusterManagementPage(QWidget):
         if self.layers.get("connections") is None or self.layers.get("stations") is None:
             return
         points = {int(f.id()): [str(f["Cluster"]), float(f["Ontwerp_A"])] for f in self.layers["connections"].getFeatures()}
+        capacities = {str(f["Cluster"]): float(f["KVA"])/.23/3 for f in self.layers["stations"].getFeatures()}
+        changed_targets = set()
         automatic = False
         for operation in self.operations():
-            if operation["kind"] == "move":
+            if operation["kind"] == "capacity":
+                capacities[operation["station"]] = operation["kva"]/.23/3
+                changed_targets.add(operation["station"])
+                continue
+            if operation["kind"] == "create":
+                ids, target = operation["point_ids"], operation["name"]
+                capacities[target] = operation["kva"]/.23/3
+            elif operation["kind"] == "move":
                 ids, target = operation["point_ids"], operation["target"]
             elif operation["kind"] == "retire":
                 ids = [fid for fid, (cluster, _) in points.items() if cluster == operation["source"]]
@@ -545,6 +749,7 @@ class ClusterManagementPage(QWidget):
                     continue
             else:
                 continue
+            changed_targets.add(target)
             for fid in ids:
                 if fid in points:
                     points[fid][0] = target
@@ -552,10 +757,8 @@ class ClusterManagementPage(QWidget):
         for cluster, load in points.values():
             loads[cluster] = loads.get(cluster, 0)+load
         text = []
-        for station in self.layers["stations"].getFeatures():
-            name = str(station["Cluster"])
-            if any(op.get("target") == name for op in self.operations()):
-                capacity = float(station["KVA"])/.23/3
+        for name, capacity in capacities.items():
+            if name in changed_targets:
                 load = loads.get(name, 0)
                 text.append(f"{name}: {load:.1f} / {capacity:.1f} A ({load/capacity*100:.1f}%)")
         self.preview.setText(("Voorlopige doelbelasting: " + "; ".join(text) + ". " if text else "") +
@@ -569,6 +772,9 @@ class ClusterManagementPage(QWidget):
         return Path(folder) / "handmatige_correcties"
 
     def execute(self, preview):
+        if self.feedback is not None:
+            return
+        buttons = []
         try:
             self._ready()
             operations = self.operations()
@@ -584,6 +790,8 @@ class ClusterManagementPage(QWidget):
             self.exclusion_radius.setEnabled(False)
             self.table.setEnabled(False)
             self.queue.setEnabled(False)
+            for widget in (self.capacity, self.new_capacity, self.new_name):
+                widget.setEnabled(False)
             self.cancel.setEnabled(True)
             self.status.setText("Voorstel en kabelroutes worden gecontroleerd…" if preview else "Alle wijzigingen worden gezamenlijk berekend…")
             summary, backup, result = run_batch(self.layers, operations, self.directory(), self.maximum_route.value(), preview, self.feedback, rules_before)
@@ -597,6 +805,7 @@ class ClusterManagementPage(QWidget):
                     f"Capaciteit en routes akkoord: {summary['moved_count']} aansluiting(en), "
                     f"{len(summary['removed_source_clusters'])} station(s) laten vervallen."
                     f"{description} Langste route: {summary['maximum_route_m']:.1f} m. "
+                    f"Nieuw: {len(summary.get('created_stations', []))}; capaciteit gewijzigd: {len(summary.get('capacity_changed', []))}; routes ververst: {len(summary.get('refreshed_stations', []))}. "
                     "Gebiedscontrole volgt bij toepassen; het ontwerp is nog ongewijzigd."
                 )
             else:
@@ -609,6 +818,7 @@ class ClusterManagementPage(QWidget):
                     show_retired_stations(rules_before, self.directory())
                     raise
                 undo = {"backup": backup, "rules": rules_before,
+                        "rules_after": summary["station_rules"],
                         "sources": {key: layer_source(layer) for key, layer in self.layers.items()},
                         "after": fingerprint(self.layers)}
                 project = QgsProject.instance()
@@ -625,6 +835,7 @@ class ClusterManagementPage(QWidget):
                     original_node.setItemVisibilityChecked(True)
                 self.queue.clear()
                 self.signature = None
+                self.rules_signature = None
                 self.refresh()
                 if project.fileName():
                     project.write()
@@ -637,6 +848,7 @@ class ClusterManagementPage(QWidget):
                     f"Gereed: {summary['moved_count']} aansluiting(en) bijgewerkt; "
                     f"{len(summary['removed_source_clusters'])} station(s) vervallen."
                     f"{description} Routes en gebieden bijgewerkt. "
+                    f"Nieuw: {len(summary.get('created_stations', []))}; capaciteit gewijzigd: {len(summary.get('capacity_changed', []))}; routes ververst: {len(summary.get('refreshed_stations', []))}. "
                     "De toepassing kan ongedaan gemaakt worden."
                 )
         except Exception as exc:
@@ -651,6 +863,8 @@ class ClusterManagementPage(QWidget):
                 self.exclusion_radius.setEnabled(True)
                 self.table.setEnabled(True)
                 self.queue.setEnabled(True)
+                for widget in (self.capacity, self.new_capacity, self.new_name):
+                    widget.setEnabled(True)
                 self.cancel.setEnabled(False)
             if self.host.iface is not None:
                 self.host.iface.mapCanvas().refresh()
@@ -664,6 +878,8 @@ class ClusterManagementPage(QWidget):
             if not record:
                 raise ValueError("Er is nog geen toepassing om ongedaan te maken.")
             record = json.loads(record)
+            if "rules_after" in record and record["rules_after"] != station_rules():
+                raise ValueError("De stationskeuzes zijn sinds de toepassing veranderd. Undo zou latere keuzes overschrijven.")
             if record["after"] != fingerprint(self.layers):
                 raise ValueError("Het ontwerp is sinds de toepassing veranderd. Terugzetten zou latere wijzigingen overschrijven.")
             if record["sources"] != {key: layer_source(layer) for key, layer in self.layers.items()}:

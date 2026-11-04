@@ -5756,7 +5756,11 @@ def main(_automatic_retry: bool = False) -> None:
     ignored_station_labels = []
     for _station_index, station_row in stations.iterrows():
         try:
-            capacity_value = parse_design_kva(station_row.get("Status"))
+            name = str(station_row.get("Stationsnaa", "")).strip()
+            override = globals().get("STATION_CAPACITY_OVERRIDES", {}).get(name)
+            capacity_value = float(override) if override is not None else parse_design_kva(station_row.get("Status"))
+            if not np.isfinite(capacity_value) or capacity_value <= 0:
+                raise ValueError("Ongeldige ontwerpcapaciteit")
             parsed_station_kva.append(capacity_value)
             valid_station_mask.append(True)
         except (TypeError, ValueError):
