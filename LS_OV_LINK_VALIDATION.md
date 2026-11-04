@@ -1,5 +1,7 @@
 # Stationsherleiding zonder controle-CSV — v1.29.0
 
+**Vervangen door v1.30.0:** de vier verschillen hieronder zijn nu verklaard en opgelost. Vijf smeltobjecten waren administratief aan een ander veld gekoppeld dan fysiek getekend. De nieuwe fysieke veldnummercontrole met LS-DXF geeft gecombineerd 1.998 gelijke controlegevallen en 0 verschillen. Er is daarnaast een zelfstandige DXF-route met geografische stationsankers. Zie [actuele resultaten, oorzaak en beperkingen](DXF_SCHEMA_VALIDATION.md). Onderstaande cijfers blijven de historische v1.29.0-proef.
+
 ## Gebruik in het echte dashboard
 
 Open **1.4. Voedend station uit LS-schema**. Kies de bij elkaar horende veld/rail/smelt-XML en Excel, de aansluitingenlaag en de stationslaag met SAP-nummer. Een controle-CSV is optioneel en kan met het kruisje worden leeggemaakt. Zonder CSV wordt het station volledig uit de bronregistratie berekend.

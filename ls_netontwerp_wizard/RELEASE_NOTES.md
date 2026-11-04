@@ -1,4 +1,24 @@
-# LS Netontwerp Wizard v1.29.0
+# LS Netontwerp Wizard v1.30.0
+
+## DXF-schema’s met geografische stationsankers
+
+Op dashboardpagina **1.4. Voedend station uit LS-schema** kun je bovenaan de **Herleidingsmethode** kiezen. Nieuw: **DXF-schema’s + geografische stationslaag**, zonder schema-XML of schema-Excel. Kies de LS- en eventueel OV-DXF, de geografische GEN-stationslaag in RD New en de aansluitingenlaag met kabelcodes. De controle-CSV blijft optioneel.
+
+- Kabelcodes worden gekoppeld via exacte tekstankers en complete, geordende reeksen langs de witte verwijslijnen. Onvolledige of tegenstrijdige reeksen worden uitgesloten. Verwijslijnen en gewone kruisingen maken geen elektrische verbinding.
+- Getekende eindpunten, mofsymbolen, herkende messen, numerieke zekeringen en gesloten K-bruggen bepalen het voedingspad. Geografische stationsankers vereisen ook een passende stationsnaam in de DXF en duidelijke afstandsmarges. Afstanden en contactcoördinaten zijn controleerbaar in het rapport.
+- Voorstel, herkomst, kaartselectie, export, atomair toepassen en blijvend undo zitten in de echte dashboardpagina. Veranderde stationscoördinaten blokkeren een oud voorstel. Er is geen nieuwe ezdxf-afhankelijkheid.
+
+## Vier eerdere verschillen opgelost door fysieke veldnummers
+
+De eerdere XML-route gebruikte bij de smeltrol de administratieve bovenliggende veldcode. In vijf gevallen wijkt die af van het fysiek getekende veld. De LS-DXF controleert nu expliciete veldnummerteksten op hun werkelijke symboolpositie. Bij LS-028375 staat het mes bij **veld 4 / SMG3176**, terwijl het administratief aan **veld 1 / SMG3271** hangt. Het getekende pad voedt vanuit **044.536**. Dit verklaart en herstelt de vier eerdere afwijkingen; de CSV wordt niet als voorspeller gebruikt. Correcties worden apart gerapporteerd en wijzigen de oorspronkelijke XML/Excel niet.
+
+**Den Dungen, onafhankelijk op 1.998 Master Asset ID’s:** DXF + geografische stations geeft **1.867 gelijk, 0 afwijkend, 131 onbekend**. XML/Excel + LS/OV-DXF met fysieke veldcontrole geeft **1.998 gelijk, 0 afwijkend, 0 onbekend**. Over alle 2.763 bronpunten worden respectievelijk 2.421 en 2.725 herleid. De overige 342 respectievelijk 38 blijven expliciet onbehandeld; 765 bronpunten hebben geen externe controle. Dit is geen algemene garantie voor andere tekeningen of actuele schakelingen.
+
+Toepassen zonder CSV en met CSV-bescherming is voor beide routes op productiekopieën getest, inclusief exact herstel van oorspronkelijke attributen en geometrieën na heropenen. De DXF-taak is met lege schema-XML/Excel-velden via het echte dashboard uitgevoerd; ook toepassen/undo via de knoppen en het blokkeren van gewijzigde stationscoördinaten zijn gecontroleerd. Zeven regressies slagen in QGIS 4.2.3. Geen QGIS 3-uitvoering of volledige handmatige Desktop-/live-schakelproef. [Volledige validatie](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/DXF_SCHEMA_VALIDATION.md).
+
+Installeer de ZIP, herstart QGIS en kies de methode op pagina 1.4.
+
+## Behouden uit v1.29.0
 
 ## Stationsherleiding zonder controle-CSV, met OV-registratie
 

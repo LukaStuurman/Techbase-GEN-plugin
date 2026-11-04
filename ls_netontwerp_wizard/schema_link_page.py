@@ -11,8 +11,9 @@ from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileD
 from qgis.core import QgsApplication, QgsProject, QgsTask, QgsVectorLayer
 
 from .schema_linking import build_mapping, compare_connections, export_report, attach_connection_cables
+from .schema_dxf import build_dxf_mapping
 from .schema_link_io import (apply_proposal, connection_records, eligible,
-    station_records, undo_proposal, connection_cable_records)
+    station_records, undo_proposal, connection_cable_records, station_spatial_records)
 
 
 class SchemaLinkPage(QWidget):
@@ -21,17 +22,24 @@ class SchemaLinkPage(QWidget):
         self.host, self.proposal, self.task = host, None, None
         self._station_snapshot = None
         self._cable_snapshot = None
+        self._spatial_snapshot = None
         root = QVBoxLayout(self)
         host._add_subpage_header(root, '1.4. Voedend station uit LS-schema',
                                  'Kabelcode → veld en rail → verdeelkast → station')
-        note = QLabel('Herleid zonder een LOVION-netwerkanalyse per station. Kies de XML en Excel van veld, rail en smelt. '
-            'DXF is een aanvullende controle op de getekende posities en K-bruggen; een zelfstandige DXF-import zonder objectkoppelingen is nog niet beschikbaar. '
-            'Een OV-schema kan aanvullende kabelcodes op een eenduidig geregistreerd stationveld bevestigen; de OV-schakelstand wordt daarmee niet vastgesteld. '
+        note = QLabel('Kies XML/Excel van veld, rail en smelt, of DXF-schema’s met geografische stationsankers in RD New. '
+            'De DXF-route gebruikt echte eindpunten, mofsymbolen, smeltposities en de tekstvolgorde langs witte verwijslijnen. '
+            'Een kruising of verwijslijn is geen elektrische verbinding. Onduidelijke labels, veldrollen en stationsankers blijven onbehandeld. '
+            'In de XML-route controleert een LS-DXF ook fysieke veldnummers; OV vult daar alleen de herkomstregistratie aan. '
             'Een controle-CSV test uitsluitend op Master Asset ID en vult de voorspelling niet in.')
         note.setWordWrap(True); root.addWidget(note)
         group = QGroupBox('1. Bronnen en lagen'); form = QFormLayout(group)
         self.source_group = group
+        self.method = QComboBox()
+        self.method.addItem('XML + Excel van veld/rail/smelt (DXF-controle optioneel)', 'xml')
+        self.method.addItem('DXF-schema’s + geografische stationslaag (zonder schema-XML/Excel)', 'dxf')
+        form.addRow('Herleidingsmethode',self.method)
         self.files = {}
+        self.file_buttons = {}
         for key, label, pattern in (('xml', 'Veld/rail/smelt XML', 'XML (*.xml)'),
             ('excel', 'Bijbehorende Excel', 'Excel (*.xlsx)'), ('dxf', 'LS-schema DXF (optioneel)', 'DXF (*.dxf)'),
             ('ov_dxf', 'OV-schema DXF (optioneel)', 'DXF (*.dxf)'),
@@ -39,6 +47,7 @@ class SchemaLinkPage(QWidget):
             row = QHBoxLayout(); edit = QLineEdit(); button = QPushButton('Kiezen…')
             edit.setClearButtonEnabled(True)
             edit.setObjectName('schema_' + key); self.files[key] = edit
+            self.file_buttons[key] = button
             edit.setText(str(host.settings.value(host.SETTINGS_PREFIX + 'schema_' + key, '')))
             button.clicked.connect(lambda checked=False, k=key, p=pattern: self.choose_file(k, p))
             edit.textChanged.connect(self.invalidate); row.addWidget(edit, 1); row.addWidget(button); form.addRow(label, row)
@@ -80,11 +89,18 @@ class SchemaLinkPage(QWidget):
         self.map_button = QPushButton('Tabelselectie op kaart'); self.map_button.clicked.connect(self.select_map)
         for button in (self.check_button, self.apply_button, self.undo_button, self.export_button, self.map_button, self.cancel_button):row.addWidget(button)
         self.apply_button.setEnabled(False); self.export_button.setEnabled(False)
+        self.method.currentIndexChanged.connect(self.method_changed)
         self.eligible_label = QLabel(''); root.addWidget(self.eligible_label)
         QgsProject.instance().cleared.connect(self.project_cleared)
 
     def layer(self, combo):
         return QgsProject.instance().mapLayer(combo.currentData())
+
+    def method_changed(self, *args):
+        for key in ('xml','excel'):
+            self.files[key].setEnabled(self.method.currentData()=='xml')
+            self.file_buttons[key].setEnabled(self.method.currentData()=='xml')
+        self.invalidate()
 
     def toggle_sources(self):
         self.source_group.setVisible(self.source_group.isHidden())
@@ -154,18 +170,22 @@ class SchemaLinkPage(QWidget):
         self.invalidate()
         try:
             paths = {k: edit.text().strip() for k, edit in self.files.items()}
-            if not paths['xml'] or not paths['excel']:
-                raise ValueError('Kies de XML en Excel. DXF alleen bevat niet de object-ID-koppelingen voor deze import.')
+            method = self.method.currentData()
+            if method=='xml' and (not paths['xml'] or not paths['excel']):
+                raise ValueError('Kies de schema-XML en Excel, of kies de DXF-methode bovenaan bij Herleidingsmethode.')
             connections, digest = connection_records(self.layer(self.target), self.asset.currentText(), self.cable.currentText())
             stations = station_records(self.layer(self.stations)); self._station_snapshot = stations
+            anchors = station_spatial_records(self.layer(self.stations)) if method=='dxf' else None
+            self._spatial_snapshot = anchors
             cables = connection_cable_records(self.layer(self.cables)); self._cable_snapshot = cables
             connections = attach_connection_cables(connections, cables)
-            signature = (self.target.currentData(), self.stations.currentData(), self.cables.currentData(), self.asset.currentText(), self.cable.currentText(), tuple(paths.values()))
+            signature = (method,self.target.currentData(), self.stations.currentData(), self.cables.currentData(), self.asset.currentText(), self.cable.currentText(), tuple(paths.values()))
             self.check_button.setEnabled(False); self.cancel_button.setEnabled(True)
             self.status.setText('Schematische verbindingen volgen en onafhankelijk op Master Asset ID vergelijken…')
             page_ref = weakref.ref(self)
             def work(task):
-                mapping = build_mapping(paths['xml'], paths['excel'], paths['dxf'], canceled=task.isCanceled, ov_dxf_path=paths['ov_dxf'])
+                mapping = (build_dxf_mapping(paths['dxf'], paths['ov_dxf'], anchors, task.isCanceled) if method=='dxf'
+                    else build_mapping(paths['xml'], paths['excel'], paths['dxf'], canceled=task.isCanceled, ov_dxf_path=paths['ov_dxf']))
                 if task.isCanceled(): raise ValueError('Herleiding geannuleerd; niets gewijzigd.')
                 result = compare_connections(mapping, connections, stations, paths['reference'])
                 result['layer_hash'] = digest
@@ -174,7 +194,7 @@ class SchemaLinkPage(QWidget):
                 page = page_ref()
                 if page is None or sip.isdeleted(page):return
                 page.task = None; page.check_button.setEnabled(True); page.cancel_button.setEnabled(False)
-                current = (page.target.currentData(), page.stations.currentData(), page.cables.currentData(), page.asset.currentText(), page.cable.currentText(), tuple(e.text().strip() for e in page.files.values()))
+                current = (page.method.currentData(),page.target.currentData(), page.stations.currentData(), page.cables.currentData(), page.asset.currentText(), page.cable.currentText(), tuple(e.text().strip() for e in page.files.values()))
                 if current != signature:
                     page.status.setText('Invoer gewijzigd tijdens berekening; maak een nieuw voorstel.'); return
                 if exception or not result:
@@ -222,6 +242,7 @@ class SchemaLinkPage(QWidget):
         try:
             if not self.proposal:raise ValueError('Maak eerst een nieuw voorstel.')
             if station_records(self.layer(self.stations)) != self._station_snapshot:raise ValueError('Stationslaag gewijzigd; bereken opnieuw.')
+            if self._spatial_snapshot is not None and station_spatial_records(self.layer(self.stations)) != self._spatial_snapshot:raise ValueError('Geografische stationsankers gewijzigd; bereken opnieuw.')
             if connection_cable_records(self.layer(self.cables)) != self._cable_snapshot:raise ValueError('Aansluitkabelbron gewijzigd; bereken opnieuw.')
             count = apply_proposal(self.layer(self.target), self.proposal, self.asset.currentText(), self.reference_guard(), self.replace.isChecked())
             self.invalidate(); self.status.setText(f'{count} koppelingen opgeslagen. De laatste toepassing kan worden teruggedraaid. Voer clustering zo nodig opnieuw uit.')

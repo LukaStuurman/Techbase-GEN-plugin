@@ -6,7 +6,7 @@ import sqlite3
 import struct
 from qgis.core import QgsGeometry, QgsProject, QgsVariantUtils
 
-from .schema_linking import file_digest, normalize_asset_id, text
+from .schema_linking import file_digest, normalize_asset_id, text, station_code
 
 AUDIT = ('Schema_station', 'Schema_MS', 'Schema_code', 'Schema_status', 'Schema_pad')
 UNDO_TABLE = '_ls_schema_link_undo'
@@ -86,6 +86,22 @@ def connection_cable_records(layer):
     if not set(names).issubset(set(layer.fields().names())):
         raise ValueError('De aansluitkabelbron mist de object-ID, wederzijdse aansluitingrelatie, kabelgroep of status.')
     return [{n: value(f, n) for n in names} for f in layer.getFeatures()]
+
+
+def station_spatial_records(layer):
+    station_records(layer)
+    if layer.subsetString():raise ValueError('Gebruik de volledige geografische stationslaag zonder filter.')
+    if layer.crs().authid() != 'EPSG:28992':
+        raise ValueError('Deze DXF-route gebruikt RD New (EPSG:28992). Kies de oorspronkelijke geografische GEN-stationslaag in dat stelsel.')
+    rows=[]
+    for feature in layer.getFeatures():
+        geometry=feature.geometry()
+        if geometry.isEmpty() or geometry.isMultipart() or geometry.type()!=0:continue
+        point=geometry.asPoint();name=text(value(feature,'Station'))
+        ms=station_code(value(feature,'trafo_sap_structure_indicator') or value(feature,'sap_structure_indicator'))
+        if name and ms.startswith('MS-'):
+            rows.append({'Station':name,'ms':ms,'x':point.x(),'y':point.y()})
+    return rows
 
 
 def eligible(row, reference_only=True, replace=False):

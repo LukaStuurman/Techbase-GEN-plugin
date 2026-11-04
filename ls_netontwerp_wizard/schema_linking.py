@@ -253,6 +253,30 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
     for ident, row in rails.items():
         if panel(row): panels[panel(row)].append(ident)
     dxf = read_dxf(dxf_path) if dxf_path else None
+    corrected_fields = []
+    if dxf_path:
+        from .schema_dxf import physical_field_numbers
+        positions = physical_field_numbers(dxf_path)
+        position_tree = STRtree([p for p,number in positions]) if positions else None
+        # A fuse's administrative parent can name a different physical field.
+        # Trust a drawn number only at its exact reconstructed field symbol.
+        for parent, items in list(fuses.items()):
+            for fuse in list(items):
+                point = xml['e_lv_fuse'].get(fuse['Id'], {}).get('_geometry')
+                if point is None or position_tree is None:continue
+                numbers = {positions[int(i)][1] for i in position_tree.query(point.buffer(TOLERANCE))
+                           if positions[int(i)][0].distance(point)<=TOLERANCE}
+                field = fields.get(parent, {})
+                stem = text(field.get('[SAP R3] Functieplaatsnummer')).rsplit('-VE',1)[0]
+                if len(numbers)!=1 or not stem:continue
+                number = next(iter(numbers))
+                if number == field.get('Nummer'):continue
+                targets = [ident for ident,row in fields.items() if active(row) and row.get('Nummer')==number
+                           and text(row.get('[SAP R3] Functieplaatsnummer')).rsplit('-VE',1)[0]==stem]
+                if len(targets)!=1:continue
+                target=targets[0];fuses[parent].remove(fuse);fuses[target].append(fuse)
+                corrected_fields.append({'smeltobject':fuse['Id'],'asset_veld':parent,'schema_veld':target,
+                    'installatie':stem,'getekend_veldnummer':number})
     fuse_tree = STRtree(dxf[2]) if dxf else None
     rail_tree = STRtree(dxf[0]) if dxf else None
     rail_checks = {}
@@ -264,7 +288,7 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
             rail_checks[ident] = shape.difference(cover.buffer(TOLERANCE)).length <= TOLERANCE
         return rail_checks[ident]
     bridge_tree = STRtree(dxf[1]) if dxf and dxf[1] else None
-    graph = defaultdict(dict); issues = []; corrected = []; valid_fields = {}; couplings = 0
+    graph = defaultdict(dict); issues = [{'veld':row['installatie'], 'reden':f"Smeltobject {row['smeltobject']}: bovenliggend veld verschilt van getekend veld {row['getekend_veldnummer']}; fysieke veldkoppeling gebruikt."} for row in corrected_fields]; corrected = []; valid_fields = {}; couplings = 0
     def link(start, end, label): graph[start][end] = label
     for ident, field in fields.items():
         check()
@@ -381,9 +405,9 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
                 ov_new += 1
     if any(file_digest(p) != digest for p, digest in files.items()):
         raise ValueError('Een schemabron veranderde tijdens de berekening. Probeer opnieuw met vaste exports.')
-    return {'groups': mappings, 'issues': issues, 'corrected_rails': corrected,
+    return {'groups': mappings, 'issues': issues, 'corrected_rails': corrected, 'corrected_fields':corrected_fields,
             'counts': {'fields': len(fields), 'rails': len(rails), 'fuses': len(tables['LS Smeltveiligheid']), 'couplings': couplings,
-                       'ov_codes': ov_labels, 'ov_added_groups': ov_new, 'ov_conflicts': ov_conflicts},
+                       'ov_codes': ov_labels, 'ov_added_groups': ov_new, 'ov_conflicts': ov_conflicts, 'corrected_fields':len(corrected_fields)},
             'files': files,
             'mode': ('Administratieve rail (vergelijking)' if administrative else 'XML/Excel + DXF-controle' if dxf else 'XML/Excel met schematische posities') + (' + OV-registratie' if ov_dxf_path else '')}
 
@@ -463,7 +487,8 @@ def compare_connections(mapping, records, station_records, reference_path=''):
 def export_report(result, directory):
     directory = Path(directory); directory.mkdir(parents=True, exist_ok=True)
     for name, rows in (('Aansluitingen.csv', result['rows']), ('Schema-controles.csv', result['mapping']['issues']),
-                       ('Railcorrecties.csv', result['mapping']['corrected_rails'])):
+                       ('Railcorrecties.csv', result['mapping']['corrected_rails']), ('Veldcorrecties.csv',result['mapping'].get('corrected_fields',[])),
+                       ('Stationsankers.csv',result['mapping'].get('station_anchors',[]))):
         with (directory / name).open('w', encoding='utf-8-sig', newline='') as stream:
             fields = list(dict.fromkeys(key for row in rows for key in row))
             if fields:
@@ -476,7 +501,9 @@ def export_report(result, directory):
         'Herleiding volgens geregistreerde smeltposities en de gebruikersregel: mes voedt rail, numerieke zekering voert af. '
         'Rails blijven gescheiden zonder K. Geen actuele vermogensstroom of bewijs van live schakelstand. '
         'De controle-CSV wordt uitsluitend op Master Asset ID vergeleken en levert geen voorspellingen. '
-        'DXF is een aanvullende geometriecontrole; zelfstandig ontbreken in deze export de object-ID-koppelingen. '
+        'Bij XML/Excel controleert LS-DXF ook fysieke veldnummers; een administratief bovenliggend veld kan onjuist zijn. '
+        'De afzonderlijke DXF-route gebruikt geografische stationsankers in RD New, exacte kabeltekstankers en volledige tekstvolgorde langs verwijslijnen. '
+        'Een verwijslijn of gewone kruising vormt geen elektrische verbinding. Onzekere koppelingen blijven onbehandeld. '
         'Een optionele OV-DXF bevestigt kabelcodes bij een uniek geregistreerd actief stationveld; dit bewijst geen OV-schakelstand. '
         'Een bewezen LS-pad blijft leidend bij een afwijkende OV-registratie. Herkomst en kandidaten staan per aansluiting vermeld. '
         'Meerdere kabelgroepen moeten dezelfde bron aanwijzen. Een unieke wederzijdse object-ID-relatie met een actieve aansluitkabel kan de specifieke groep bepalen. '
