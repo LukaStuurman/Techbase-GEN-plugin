@@ -50,6 +50,20 @@ def main():
     # Already-disjoint coverages keep the original objects and coordinates.
     originals=[box(0,0,5,10),box(5,0,10,10)]
     assert engine.partition_cluster_overlaps(originals,supports,box(0,0,10,10)) is originals
+    # Narrow kinked corridors at projected-coordinate scale. Classifying a
+    # disputed face must preserve both nearby routes and their endpoint dots.
+    from shapely.affinity import translate
+    routes=[LineString([(0,0),(.2,1.4),(.2,2),(.3,2.2),(.3,2.8)]),
+            LineString([(.9,0),(1.1,1.5),(1.1,2.7)])]
+    routes=[translate(route,160000.,390000.) for route in routes]
+    dots=[[Point(160000.331,390002.764)],[Point(160001.105,390002.692)]]
+    supports=[unary_union([route,*points]) for route,points in zip(routes,dots)]
+    study=box(159999.,389999.,160003.,390004.)
+    originals=[study.intersection(box(159999.,389999.,160000.7,390004.)).union(routes[0].buffer(.75)),
+               study.intersection(box(160000.7,389999.,160003.,390004.)).union(routes[1].buffer(.75))]
+    originals=[p.intersection(study) for p in originals]
+    partition=engine.partition_cluster_overlaps(originals,supports,study)
+    validate(partition,study,supports,dots)
     print('CLUSTER_BOUNDARY_PARTITION_TEST_OK (parallel routes, overlap face splitting, point/route ownership, orphan fragment, conservation, unchanged valid input)',flush=True)
     os._exit(0)
 

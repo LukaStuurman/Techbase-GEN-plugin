@@ -1,4 +1,19 @@
-# LS Netontwerp Wizard v1.27.2
+# LS Netontwerp Wizard v1.27.3
+
+## Vaartbroek zonder plangebied opgelost
+
+De volledige automatische clustering slaagt nu met **4.266 aansluitingen, 24 bestaande en 41 nieuwe stations**. Totale ontwerpstroom **29.978,7 A**, langste station-aansluitingroute **762,16 m** bij een limiet van 850 m. Gebieden, routes, capaciteit, bron-ID's, latere stroomwijziging en het opgeslagen QGIS-project zijn onafhankelijk gecontroleerd. PDF en kaartafbeelding zijn gegenereerd.
+
+- Herstel na een mislukte stationsselectie bewaart nu de actuele belasting bij iedere stap, ook als een verschuiving de routegrens overschrijdt. Routeknelpunten en onjuiste eigendom van een stationswortel kunnen zelf een gerichte extra kandidaat opleveren.
+- Een belastingverdeling die niet verder verbetert blijft niet duizenden keren doorlopen. De automatische herstelstap probeert een extra geschikte kabelknoop en controleert iedere kandidaat opnieuw. Overbodige stations worden daarna alleen verwijderd als de volledige veilige verdeling behouden blijft.
+- Een stationswortel mag niet door een ander kabelterritorium worden overgenomen. Zowel de gewone als de versnelde herstelberekening gebruiken dezelfde voorwaarden.
+- Bij smalle gebiedsoverlap wordt het volledige grensvlak beoordeeld. Eén afgerond punt op een bijna samenvallende grens kan daardoor geen werkelijke eigenaar meer laten verdwijnen. De totale dekkingscontrole blijft actief.
+
+Geen capaciteits- of afstandsgrenzen verhoogd, geen ontbrekende kabels verzonnen en geen aansluitingen weggelaten. Het resultaat gebruikt de bestaande voorbereide XML/Excel/BAG-invoer. Getest in QGIS 4.2.3; geen volledige nieuwe bronimport, handmatige volledige Desktop-kliktest of QGIS 3-test. [Volledige testverantwoording](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/VAARTBROEK_VALIDATION.md).
+
+Installeer de release-ZIP en herstart QGIS volledig.
+
+## Behouden uit v1.27.2
 
 ## Den Dungen: clustering met plangebied
 

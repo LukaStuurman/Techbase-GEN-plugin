@@ -2084,6 +2084,7 @@ def solve_greedy_voronoi_connected_assignment(
     last_overloaded: np.ndarray | None = None
     last_assignment: np.ndarray | None = None
     last_unit_distances: np.ndarray | None = None
+    last_problem_units: np.ndarray | None = None
     source_distance_cache: dict[int, np.ndarray] = {}
     source_distance_lock = Lock()
 
@@ -2113,7 +2114,7 @@ def solve_greedy_voronoi_connected_assignment(
             )
 
     def evaluate(selected_candidates: list[int], record_failure=True):
-        nonlocal last_overloaded, last_assignment, last_unit_distances
+        nonlocal last_overloaded, last_assignment, last_unit_distances, last_problem_units
         source_indices = np.concatenate(
             [
                 np.asarray(existing_source_indices, dtype=int),
@@ -2141,19 +2142,25 @@ def solve_greedy_voronoi_connected_assignment(
         assignment = np.zeros(len(loads), dtype=int)
         unit_distances = np.zeros(len(loads), dtype=float)
         station_loads = np.zeros(len(capacities), dtype=float)
+        best_excess = np.inf
+        stalled_iterations = 0
         for _balance_iteration in range(10000):
             adjusted = unit_distance_matrix + biases[None, :]
             assignment = np.argmin(adjusted, axis=1)
             unit_distances = unit_distance_matrix[
                 np.arange(len(loads)), assignment
             ]
+            station_loads = np.bincount(
+                assignment, weights=loads, minlength=len(capacities)
+            )
+            root_owners = np.argmin(source_distances[:, source_indices].T + biases[None, :], axis=1)
+            stolen_roots = np.flatnonzero(root_owners != np.arange(len(source_indices)))
+            if len(stolen_roots):
+                break
             if np.any(~np.isfinite(unit_distances)) or np.any(
                 unit_distances > MAX_ROUTE_M + 1e-7
             ):
                 break
-            station_loads = np.bincount(
-                assignment, weights=loads, minlength=len(capacities)
-            )
             overloaded = np.flatnonzero(station_loads > capacities + 1e-6)
             if not len(overloaded):
                 node_cluster = np.argmin(
@@ -2166,7 +2173,7 @@ def solve_greedy_voronoi_connected_assignment(
                 # Weighted shortest-path Voronoi has connected cells; demand
                 # ownership must exactly match the node territories.
                 if np.any(node_cluster[unit_node_indices] != assignment):
-                    return None
+                    break
                 utilization = station_loads / capacities
                 distance_cost = float(np.sum((loads + 0.5) * unit_distances))
                 target_cost = float(
@@ -2180,6 +2187,15 @@ def solve_greedy_voronoi_connected_assignment(
                     unit_distances,
                     distance_cost + target_cost,
                 )
+
+            excess = float(np.maximum(station_loads - capacities, 0.).sum())
+            if excess < best_excess - 1e-6:
+                best_excess = excess
+                stalled_iterations = 0
+            else:
+                stalled_iterations += 1
+                if stalled_iterations >= 200:
+                    break
 
             overload_ratio = station_loads[overloaded] / capacities[overloaded]
             station_index = int(overloaded[int(np.argmax(overload_ratio))])
@@ -2212,6 +2228,15 @@ def solve_greedy_voronoi_connected_assignment(
             last_overloaded = np.flatnonzero(station_loads > capacities + 1e-6)
             last_assignment = assignment
             last_unit_distances = unit_distances
+            # Route/root failures are not necessarily overload failures. Keep
+            # the actual failing demand nodes so automatic recovery can add a
+            # reachable candidate instead of silently ending the search.
+            problem = np.isin(assignment, last_overloaded) | (~np.isfinite(unit_distances)) | (unit_distances > MAX_ROUTE_M + 1e-7)
+            if len(stolen_roots):
+                problem |= np.isin(assignment, root_owners[stolen_roots])
+            if 'node_cluster' in locals():
+                problem |= node_cluster[unit_node_indices] != assignment
+            last_problem_units = np.flatnonzero(problem)
         return None
 
     selected = (
@@ -2221,14 +2246,13 @@ def solve_greedy_voronoi_connected_assignment(
     )
     current = evaluate(selected)
     added_for_capacity = 0
-    while current is None and last_overloaded is not None:
+    while current is None and last_problem_units is not None and len(last_problem_units):
         if added_for_capacity >= 50:
             break
         existing_sources = set(int(value) for value in existing_source_indices)
         candidate_sources = set(int(value) for value in candidate_source_indices)
         chosen_graph_index = None
-        for overloaded_station in last_overloaded:
-            members = np.flatnonzero(last_assignment == int(overloaded_station))
+        for members in [last_problem_units]:
             scores = (last_unit_distances[members] + 10.0) * (loads[members] + 0.5)
             for member in members[np.argsort(scores)[::-1]]:
                 unit_graph_index = int(unit_node_indices[int(member)])
@@ -3063,8 +3087,18 @@ def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05)
         point = face.representative_point()
         if not study_area.covers(point):
             continue
-        owners = sorted(int(index) for index in tree.query(point, predicate="intersects")
-                        if polygons[int(index)].covers(point))
+        # A thin overlap's representative point can round onto the wrong side
+        # of an almost coincident border. Classify the complete atomic face,
+        # not one floating-point coordinate (which can silently lose an owner).
+        owners = sorted(int(index) for index in tree.query(face, predicate="intersects")
+                        if polygons[int(index)].intersection(face).area > face.area * .5)
+        if not owners:
+            owners = sorted(int(index) for index in tree.query(point, predicate="intersects")
+                            if polygons[int(index)].covers(point))
+        if not owners and face.area <= 1e-6:
+            # Intersection can underflow on numerical border slivers. The
+            # final coverage check still rejects any material missing area.
+            continue
         if not owners:
             raise RuntimeError("Een vlak van de clustergebiedsreparatie heeft geen eigenaar.")
         if len(owners) == 1:

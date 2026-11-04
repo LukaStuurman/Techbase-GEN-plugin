@@ -229,6 +229,7 @@ def _make_greedy_solver(engine):
         last_overloaded = None
         last_assignment = None
         last_unit_distances = None
+        last_problem_units = None
 
         def compact_distances(source_indices):
             return engine.network_distance_matrix(
@@ -272,7 +273,7 @@ def _make_greedy_solver(engine):
             return owner
 
         def evaluate(selected_candidates, record_failure=True, build_full_ownership=False):
-            nonlocal last_overloaded, last_assignment, last_unit_distances
+            nonlocal last_overloaded, last_assignment, last_unit_distances, last_problem_units
             source_indices = np.concatenate(
                 [
                     existing_source_indices_arr,
@@ -285,6 +286,7 @@ def _make_greedy_solver(engine):
             if len(np.unique(source_indices)) != len(source_indices):
                 return None
             unit_distance_matrix = compact_distances(source_indices)
+            root_distances = engine.network_distance_matrix(adjacency, source_indices, source_indices)
             if np.any(~np.isfinite(unit_distance_matrix).any(axis=1)):
                 return None
             capacities = np.concatenate(
@@ -298,16 +300,23 @@ def _make_greedy_solver(engine):
             unit_distances = np.zeros(len(loads_arr), dtype=float)
             station_loads = np.zeros(len(capacities), dtype=float)
             unit_range = np.arange(len(loads_arr))
+            best_excess = np.inf
+            stalled_iterations = 0
+            root_mismatch = np.zeros(len(loads_arr), dtype=bool)
 
             for _balance_iteration in range(10000):
                 unit_distances = unit_distance_matrix[unit_range, assignment]
+                station_loads = np.bincount(
+                    assignment, weights=loads_arr, minlength=len(capacities)
+                )
+                root_owners = np.argmin(root_distances + biases[None, :], axis=1)
+                stolen_roots = np.flatnonzero(root_owners != np.arange(len(source_indices)))
+                if len(stolen_roots):
+                    break
                 if np.any(~np.isfinite(unit_distances)) or np.any(
                     unit_distances > engine.MAX_ROUTE_M + 1e-7
                 ):
                     break
-                station_loads = np.bincount(
-                    assignment, weights=loads_arr, minlength=len(capacities)
-                )
                 overloaded = np.flatnonzero(station_loads > capacities + 1e-6)
                 if not len(overloaded):
                     # The full weighted Voronoi ownership differs from demand
@@ -318,7 +327,9 @@ def _make_greedy_solver(engine):
                         if root_units is not None and np.any(
                             assignment[root_units] != station_index
                         ):
-                            return None
+                            root_mismatch[root_units] = assignment[root_units] != station_index
+                    if root_mismatch.any():
+                        break
                     node_cluster = None
                     if build_full_ownership:
                         node_cluster = build_node_cluster(source_indices, biases)
@@ -339,6 +350,17 @@ def _make_greedy_solver(engine):
                         unit_distances,
                         distance_cost + target_cost,
                     )
+
+                # A repeating weighted partition is not proof of infeasibility.
+                # Return its actual demand bottlenecks to candidate recovery.
+                excess = float(np.maximum(station_loads - capacities, 0.).sum())
+                if excess < best_excess - 1e-6:
+                    best_excess = excess
+                    stalled_iterations = 0
+                else:
+                    stalled_iterations += 1
+                    if stalled_iterations >= 200:
+                        break
 
                 overload_ratio = station_loads[overloaded] / capacities[overloaded]
                 station_index = int(overloaded[int(np.argmax(overload_ratio))])
@@ -389,6 +411,10 @@ def _make_greedy_solver(engine):
                 )
                 last_assignment = assignment
                 last_unit_distances = unit_distances
+                problem = np.isin(assignment, last_overloaded) | (~np.isfinite(unit_distances)) | (unit_distances > engine.MAX_ROUTE_M + 1e-7) | root_mismatch
+                if len(stolen_roots):
+                    problem |= np.isin(assignment, root_owners[stolen_roots])
+                last_problem_units = np.flatnonzero(problem)
             return None
 
         selected = (
@@ -398,14 +424,13 @@ def _make_greedy_solver(engine):
         )
         current = evaluate(selected)
         added_for_capacity = 0
-        while current is None and last_overloaded is not None:
+        while current is None and last_problem_units is not None and len(last_problem_units):
             if added_for_capacity >= 50:
                 break
             existing_sources = set(int(value) for value in existing_source_indices_arr)
             candidate_sources = set(int(value) for value in candidate_source_indices)
             chosen_graph_index = None
-            for overloaded_station in last_overloaded:
-                members = np.flatnonzero(last_assignment == int(overloaded_station))
+            for members in [last_problem_units]:
                 scores = (last_unit_distances[members] + 10.0) * (
                     loads_arr[members] + 0.5
                 )

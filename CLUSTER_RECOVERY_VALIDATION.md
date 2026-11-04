@@ -1,5 +1,7 @@
 # v1.27.0 — clusteringcontrole, stroom na clustering en handmatige nieuwbouw
 
+**Historisch verslag:** de hieronder beschreven Vaartbroek-beperking is inmiddels opgelost in v1.27.3. De volledige proef met 4.266 aansluitingen is geslaagd; zie [de actuele validatie](VAARTBROEK_VALIDATION.md).
+
 ## Wat is toegevoegd
 
 - **1.3. Nieuwbouw → Zelf nieuwbouwaansluitingen plaatsen — zonder BAG**: klik één keer per toekomstige aansluiting op de kaart. Rechtsklik/Enter keert terug; Esc wist de klaargezette punten. Losse punten verwijderen of de wachtrij wissen kan vóór het opslaan. Kies een projectomschrijving, gebruiksdoel, geplande aansluitwaarde en bouwjaar. Bereken de stroom uit een woningtype met de nieuwbouwtabellen, vul vier stroomwaarden in of kies expliciet ‘Later bepalen’ (0 A, nog te beoordelen).

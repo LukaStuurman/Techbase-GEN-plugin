@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.27.2
+## Laatste versie: 1.27.3
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.2/ls_netontwerp_wizard-1.27.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.2)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.3/ls_netontwerp_wizard-1.27.3.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.3)
+
+**Nieuw in 1.27.3:** Vaartbroek zonder plangebied slaagt nu volledig: 4.266 aansluitingen, 24 bestaande en 41 nieuwe stations, langste route 762,16 m bij een grens van 850 m. Automatisch herstel gebruikt de werkelijke route-, capaciteits- en stationswortelknelpunten; vastlopende belastingverschuivingen krijgen een nieuwe kandidaatcontrole. Smalle overlapvlakken worden op hun volledige oppervlakte beoordeeld om fouten door één afgerond meetpunt te voorkomen. [Resultaat en testverantwoording](VAARTBROEK_VALIDATION.md).
 
 **Nieuw in 1.27.2:** herstel van overlappende grensstroken bij kabelverbonden clustergebieden. Alleen betwiste grensvlakken worden verdeeld aan de hand van de echte kabels, aansluitverbindingen en stations. Den Dungen is volledig doorgerekend met plangebied en buitenroutes: 1.985 aansluitingen, 16 bestaande en 18 nieuwe stations, langste route 642,81 m bij een grens van 850 m. Dekking, capaciteit, routes en bewerkbare QGIS-projecten zijn gecontroleerd. [Testverantwoording en beperkingen](DEN_DUNGEN_VALIDATION.md).
 
@@ -10,7 +12,7 @@
 
 **Nieuw in 1.27.0:** zelf nieuwbouwaansluitingen op de kaart plaatsen zonder BAG-object via **1.3. Nieuwbouw**, **4i. Ontwerpstroom na clustering aanpassen**, gerichte foutuitleg en blijvende controleprojecten, herstelde herhaalpogingen zonder plangebied en behoud van een berekend ontwerp bij fouten in kaart-/layoutexport. [Gebruik en testverantwoording](CLUSTER_RECOVERY_VALIDATION.md).
 
-De Vaartbroek-test zonder plangebied leverde met de huidige capaciteit/topologie/routegrenzen nog geen volledige veilige clustering op. Er is wel een controleproject met de invoer en losse kabelcomponenten gemaakt. Deze release verbergt zo'n rekenfout niet als een geslaagd ontwerp.
+De eerdere Vaartbroek-beperking uit v1.27.0 is in v1.27.3 opgelost en met een volledige berekening gecontroleerd. Als een ander ontwerp nog vastloopt, blijven de diagnose en het controleproject beschikbaar; een mislukte berekening wordt niet als geslaagd ontwerp gemeld.
 
 Nieuw in het echte gekleurde dashboard: **4e capaciteit aanpassen**, **4f clusters samenvoegen**, **4g splitsen met extra station op een sleufknoop** en **4h controles/herberekenen**. Alle wijzigingen lopen via de gecontroleerde wachtrij met gezamenlijk toepassen en undo. De oorspronkelijke 4a–4d blijven beschikbaar.
 
