@@ -10,9 +10,9 @@ from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileD
     QTableWidgetItem, QVBoxLayout, QWidget)
 from qgis.core import QgsApplication, QgsProject, QgsTask, QgsVectorLayer
 
-from .schema_linking import build_mapping, compare_connections, export_report
+from .schema_linking import build_mapping, compare_connections, export_report, attach_connection_cables
 from .schema_link_io import (apply_proposal, connection_records, eligible,
-    station_records, undo_proposal)
+    station_records, undo_proposal, connection_cable_records)
 
 
 class SchemaLinkPage(QWidget):
@@ -20,11 +20,13 @@ class SchemaLinkPage(QWidget):
         super().__init__(host)
         self.host, self.proposal, self.task = host, None, None
         self._station_snapshot = None
+        self._cable_snapshot = None
         root = QVBoxLayout(self)
         host._add_subpage_header(root, '1.4. Voedend station uit LS-schema',
                                  'Kabelcode → veld en rail → verdeelkast → station')
         note = QLabel('Herleid zonder een LOVION-netwerkanalyse per station. Kies de XML en Excel van veld, rail en smelt. '
             'DXF is een aanvullende controle op de getekende posities en K-bruggen; een zelfstandige DXF-import zonder objectkoppelingen is nog niet beschikbaar. '
+            'Een OV-schema kan aanvullende kabelcodes op een eenduidig geregistreerd stationveld bevestigen; de OV-schakelstand wordt daarmee niet vastgesteld. '
             'Een controle-CSV test uitsluitend op Master Asset ID en vult de voorspelling niet in.')
         note.setWordWrap(True); root.addWidget(note)
         group = QGroupBox('1. Bronnen en lagen'); form = QFormLayout(group)
@@ -32,19 +34,22 @@ class SchemaLinkPage(QWidget):
         self.files = {}
         for key, label, pattern in (('xml', 'Veld/rail/smelt XML', 'XML (*.xml)'),
             ('excel', 'Bijbehorende Excel', 'Excel (*.xlsx)'), ('dxf', 'LS-schema DXF (optioneel)', 'DXF (*.dxf)'),
+            ('ov_dxf', 'OV-schema DXF (optioneel)', 'DXF (*.dxf)'),
             ('reference', 'Controle-CSV (optioneel)', 'CSV (*.csv)')):
             row = QHBoxLayout(); edit = QLineEdit(); button = QPushButton('Kiezen…')
+            edit.setClearButtonEnabled(True)
             edit.setObjectName('schema_' + key); self.files[key] = edit
             edit.setText(str(host.settings.value(host.SETTINGS_PREFIX + 'schema_' + key, '')))
             button.clicked.connect(lambda checked=False, k=key, p=pattern: self.choose_file(k, p))
             edit.textChanged.connect(self.invalidate); row.addWidget(edit, 1); row.addWidget(button); form.addRow(label, row)
-        self.target = QComboBox(); self.stations = QComboBox()
+        self.target = QComboBox(); self.stations = QComboBox(); self.cables = QComboBox()
         self.asset = QComboBox(); self.cable = QComboBox()
         form.addRow('Aansluitingenlaag', self.target); form.addRow('Master Asset ID-kolom', self.asset)
         form.addRow('Kabelgroepkolom', self.cable); form.addRow('Stationslaag met SAP-nummer', self.stations)
+        form.addRow('Aansluitkabelbron (optioneel, object-ID-relaties)', self.cables)
         refresh = QPushButton('Lagen vernieuwen'); refresh.clicked.connect(self.refresh); form.addRow(refresh)
         self.target.currentIndexChanged.connect(self.columns)
-        for combo in (self.target, self.stations, self.asset, self.cable): combo.currentIndexChanged.connect(self.invalidate)
+        for combo in (self.target, self.stations, self.cables, self.asset, self.cable): combo.currentIndexChanged.connect(self.invalidate)
         root.addWidget(group)
         self.sources_toggle = QPushButton('Bronnen en lagen verbergen')
         self.sources_toggle.clicked.connect(self.toggle_sources)
@@ -58,8 +63,8 @@ class SchemaLinkPage(QWidget):
         self.status.setWordWrap(True); root.addWidget(self.status)
         self.filter = QComboBox(); self.filter.addItems(['Alle aansluitingen', 'CSV-afwijkingen', 'Niet herleid', 'Toepasbaar'])
         self.filter.currentIndexChanged.connect(self.show_rows); root.addWidget(self.filter)
-        self.table = QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(['Master Asset ID', 'Kabelgroep', 'Voorgesteld station', 'Bestaand station', 'Referentiestation', 'CSV-controle', 'Status', 'Voedingspad'])
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels(['Master Asset ID', 'Kabelgroep', 'Voorgesteld station', 'Bestaand station', 'Referentiestation', 'CSV-controle', 'Status', 'Herkomst', 'Voedingspad'])
         edit_enum = getattr(QAbstractItemView, 'EditTrigger', QAbstractItemView)
         selection_enum = getattr(QAbstractItemView, 'SelectionBehavior', QAbstractItemView)
         self.table.setEditTriggers(getattr(edit_enum, 'NoEditTriggers', getattr(QAbstractItemView, 'NoEditTriggers', 0)))
@@ -111,9 +116,10 @@ class SchemaLinkPage(QWidget):
                                     'LS-aansluitingen ontwerpstroom', 'ogr')
             if source.isValid():
                 source.setCustomProperty('LSNetontwerp/review_current_layer', True); project.addMapLayer(source)
-        previous = (self.target.currentData(), self.stations.currentData())
-        self.target.blockSignals(True); self.stations.blockSignals(True)
-        self.target.clear(); self.stations.clear()
+        previous = (self.target.currentData(), self.stations.currentData(), self.cables.currentData())
+        had_cables = self.cables.count() > 0
+        for combo in (self.target, self.stations, self.cables):combo.blockSignals(True);combo.clear()
+        self.cables.addItem('Niet gebruiken — alleen de kabelcodes van aansluitingen', None)
         targets = []
         for layer in project.mapLayers().values():
             if not isinstance(layer, QgsVectorLayer): continue
@@ -122,12 +128,15 @@ class SchemaLinkPage(QWidget):
                 targets.append(layer)
             if 'Station' in fields and any(c in fields for c in ('trafo_sap_structure_indicator', 'sap_structure_indicator')):
                 self.stations.addItem(layer.name(), layer.id())
+            if {'id','Kabel Subgroep','service_connections_id','cable_status','change_state'}.issubset(fields):
+                self.cables.addItem(layer.name(), layer.id())
         targets.sort(key=lambda layer: not bool(layer.customProperty('LSNetontwerp/review_current_layer', False)))
         for layer in targets: self.target.addItem(layer.name(), layer.id())
-        for combo, old in zip((self.target, self.stations), previous):
+        for combo, old in zip((self.target, self.stations, self.cables), previous):
             index = combo.findData(old)
             if index >= 0: combo.setCurrentIndex(index)
             combo.blockSignals(False)
+        if not had_cables and self.cables.count()>1:self.cables.setCurrentIndex(1)
         self.columns(); self.invalidate()
 
     def columns(self, *args):
@@ -149,12 +158,14 @@ class SchemaLinkPage(QWidget):
                 raise ValueError('Kies de XML en Excel. DXF alleen bevat niet de object-ID-koppelingen voor deze import.')
             connections, digest = connection_records(self.layer(self.target), self.asset.currentText(), self.cable.currentText())
             stations = station_records(self.layer(self.stations)); self._station_snapshot = stations
-            signature = (self.target.currentData(), self.stations.currentData(), self.asset.currentText(), self.cable.currentText(), tuple(paths.values()))
+            cables = connection_cable_records(self.layer(self.cables)); self._cable_snapshot = cables
+            connections = attach_connection_cables(connections, cables)
+            signature = (self.target.currentData(), self.stations.currentData(), self.cables.currentData(), self.asset.currentText(), self.cable.currentText(), tuple(paths.values()))
             self.check_button.setEnabled(False); self.cancel_button.setEnabled(True)
             self.status.setText('Schematische verbindingen volgen en onafhankelijk op Master Asset ID vergelijken…')
             page_ref = weakref.ref(self)
             def work(task):
-                mapping = build_mapping(paths['xml'], paths['excel'], paths['dxf'], canceled=task.isCanceled)
+                mapping = build_mapping(paths['xml'], paths['excel'], paths['dxf'], canceled=task.isCanceled, ov_dxf_path=paths['ov_dxf'])
                 if task.isCanceled(): raise ValueError('Herleiding geannuleerd; niets gewijzigd.')
                 result = compare_connections(mapping, connections, stations, paths['reference'])
                 result['layer_hash'] = digest
@@ -163,7 +174,7 @@ class SchemaLinkPage(QWidget):
                 page = page_ref()
                 if page is None or sip.isdeleted(page):return
                 page.task = None; page.check_button.setEnabled(True); page.cancel_button.setEnabled(False)
-                current = (page.target.currentData(), page.stations.currentData(), page.asset.currentText(), page.cable.currentText(), tuple(e.text().strip() for e in page.files.values()))
+                current = (page.target.currentData(), page.stations.currentData(), page.cables.currentData(), page.asset.currentText(), page.cable.currentText(), tuple(e.text().strip() for e in page.files.values()))
                 if current != signature:
                     page.status.setText('Invoer gewijzigd tijdens berekening; maak een nieuw voorstel.'); return
                 if exception or not result:
@@ -171,9 +182,11 @@ class SchemaLinkPage(QWidget):
                 page.proposal = result; page.export_button.setEnabled(True)
                 page.source_group.hide(); page.sources_toggle.setText('Bronnen en lagen tonen')
                 comparison = result['comparison']
-                page.status.setText(f"{len(result['rows'])} aansluitingen; {result['summary'].get('Herleid', 0)} herleid. "
-                    f"CSV: {comparison.get('Gelijk', 0)} gelijk, {comparison.get('Afwijkend', 0)} afwijkend, "
+                verification = (f"CSV: {comparison.get('Gelijk', 0)} gelijk, {comparison.get('Afwijkend', 0)} afwijkend, "
                     f"{comparison.get('Niet herleid', 0)} niet herleid; {len(result['reference_missing_in_layer'])} referentie-ID's buiten deze laag. "
+                    if result['reference_file'] else 'Zonder controle-CSV berekend. ')
+                page.status.setText(f"{len(result['rows'])} aansluitingen; {result['summary'].get('Herleid', 0)} herleid. "
+                    + verification +
                     f"{len(result['mapping']['issues'])} schema-controles. Zie rapport voor alle gevallen.")
                 page.show_rows(); page.count_eligible()
             self.task = QgsTask.fromFunction('Voedend station uit LS-schema', work, on_finished=finished)
@@ -201,14 +214,15 @@ class SchemaLinkPage(QWidget):
         elif mode == 3: rows = [r for r in rows if eligible(r, self.reference_guard(), self.replace.isChecked())]
         self.table.setRowCount(len(rows)); self._visible = rows
         for index, row in enumerate(rows):
-            for col, key in enumerate(('Master Asset ID', 'Kabelgroep', 'Station', 'Bestaand station', 'Referentiestation', 'Controle', 'Status', 'Pad')):
+            for col, key in enumerate(('Master Asset ID', 'Kabelgroep', 'Station', 'Bestaand station', 'Referentiestation', 'Controle', 'Status', 'Herkomst', 'Pad')):
                 item = QTableWidgetItem(row[key]); item.setToolTip(row['Reden'] or row[key]); self.table.setItem(index, col, item)
-        self.table.resizeColumnsToContents(); self.table.setColumnWidth(7, 330)
+        self.table.resizeColumnsToContents(); self.table.setColumnWidth(7, 270); self.table.setColumnWidth(8, 330)
 
     def apply(self):
         try:
             if not self.proposal:raise ValueError('Maak eerst een nieuw voorstel.')
             if station_records(self.layer(self.stations)) != self._station_snapshot:raise ValueError('Stationslaag gewijzigd; bereken opnieuw.')
+            if connection_cable_records(self.layer(self.cables)) != self._cable_snapshot:raise ValueError('Aansluitkabelbron gewijzigd; bereken opnieuw.')
             count = apply_proposal(self.layer(self.target), self.proposal, self.asset.currentText(), self.reference_guard(), self.replace.isChecked())
             self.invalidate(); self.status.setText(f'{count} koppelingen opgeslagen. De laatste toepassing kan worden teruggedraaid. Voer clustering zo nodig opnieuw uit.')
         except Exception as exc:self.status.setText(str(exc))

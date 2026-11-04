@@ -1,5 +1,7 @@
 # Stationsherleiding uit LS-schema — v1.28.0
 
+**Update v1.29.0:** onderstaande proef is de oorspronkelijke LS-baseline. Met OV-registratie, meervoudige kabelcodes en wederzijdse aansluitkabelrelaties is de vergelijking nu 1.994 gelijk, 4 afwijkend en 0 niet herleid binnen de 1.998 controlegevallen. Van de volledige bronlaag blijven 40 van 2.763 aansluitingen zonder stationsnaam. Zie de [actuele validatie en beperkingen](LS_OV_LINK_VALIDATION.md).
+
 ## Doel en gebruik
 
 De aansluiting bevat de kabelgroep waaraan zij hangt. De plugin kan die groep via de schema-export volgen naar een station, zodat daarvoor geen per-station aansluitingenlijst uit LOVION-netwerkanalyse nodig is.

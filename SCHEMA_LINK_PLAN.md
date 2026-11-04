@@ -1,5 +1,7 @@
 # Stationsherleiding via kabelgroepen
 
+Uitbreiding v1.29.0: OV-kabelcoderegistratie en wederzijdse object-ID-relaties voor de aansluitkabel zijn uitgevoerd en onafhankelijk zonder CSV gevalideerd. Zie [gebruik, resultaten en beperkingen](LS_OV_LINK_VALIDATION.md). De onderstaande stappen beschrijven de oorspronkelijke LS-route.
+
 1. Lees veld/rail/smelt uit XML en Excel met tekst-ID's. Gebruik de schematische positie van het smeltobject, niet uitsluitend de administratieve bovenliggende rail. Behandel messen als invoer en numerieke zekeringen als afgang volgens de gebruikersregel. K koppelt alleen de twee bedoelde rails. DXF kan de posities en brug controleren; zonder XML ontbreken in deze export de object-ID's voor een betrouwbare zelfstandige DXF-import.
 2. Herleid kabelgroepen naar MS-stations en vertaal via de bestaande stationslaag naar de stationsnaam. Gebruik geen afstands- of referentie-CSV-truc om onbekende voedingen te raden.
 3. Koppel aansluitingen via hun kabelgroep. Vergelijk uitsluitend op Master Asset ID met de controle-CSV. Rapporteer alle vergelijkingsgevallen, ook ontbrekende, dubbele of tegenstrijdige ID's. De controle-CSV is geen voorspeller.

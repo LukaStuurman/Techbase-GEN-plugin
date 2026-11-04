@@ -63,7 +63,8 @@ def connection_records(layer, asset_field, cable_field):
         asset = value(feature, asset_field)
         if isinstance(asset, float) and abs(asset) >= 2 ** 53:
             asset = ''  # A rounded floating-point identifier must never match.
-        rows.append({'fid': feature.id(), 'asset': asset, 'cable': value(feature, cable_field), 'station': value(feature, 'Station')})
+        rows.append({'fid': feature.id(), 'asset': asset, 'cable': value(feature, cable_field), 'station': value(feature, 'Station'),
+                     'object_id': value(feature, 'id'), 'connection_id': value(feature, 'connection_cable_id')})
     if before != layer_hash(layer): raise ValueError('De laag veranderde tijdens het inlezen; controleer opnieuw.')
     return rows, before
 
@@ -75,6 +76,16 @@ def station_records(layer):
     if 'Station' not in names or not any(n in names for n in ('trafo_sap_structure_indicator', 'sap_structure_indicator')):
         raise ValueError('Stationslaag mist Station en een SAP-nummer voor de MS-koppeling.')
     return [{n: value(f, n) for n in names if n in ('Station', 'trafo_sap_structure_indicator', 'sap_structure_indicator', 'trafo_hana_structure_indicator')} for f in layer.getFeatures()]
+
+
+def connection_cable_records(layer):
+    if layer is None: return []
+    if not layer.isValid() or layer.isEditable() or layer.subsetString():
+        raise ValueError('Gebruik een geldige, ongefilterde aansluitkabelbron zonder open bewerkingen.')
+    names = ('id', 'Kabel Subgroep', 'service_connections_id', 'cable_status', 'change_state')
+    if not set(names).issubset(set(layer.fields().names())):
+        raise ValueError('De aansluitkabelbron mist de object-ID, wederzijdse aansluitingrelatie, kabelgroep of status.')
+    return [{n: value(f, n) for n in names} for f in layer.getFeatures()]
 
 
 def eligible(row, reference_only=True, replace=False):
@@ -133,7 +144,9 @@ def apply_proposal(layer, proposal, asset_field, reference_only=True, replace=Fa
         for name in added: connection.execute(f'ALTER TABLE {quote(table)} ADD COLUMN {quote(name)} TEXT')
         columns_to_write = ('Station', *AUDIT)
         for row in changes:
-            values = (row['Station'], row['Station'], row['MS-station'], row['Kabelgroep'], row['Controle'] if row['Controle'] != 'Geen referentie' else 'Herleid uit schema', row['Pad'])
+            evidence = row.get('Herkomst', 'LS-schakelpad')
+            status = (row['Controle'] + ' — ' if row['Controle'] != 'Geen referentie' else '') + evidence
+            values = (row['Station'], row['Station'], row['MS-station'], row['Kabelgroep'], status, row['Pad'])
             connection.execute(f'UPDATE {quote(table)} SET ' + ','.join(quote(n) + '=?' for n in columns_to_write) +
                                f' WHERE {quote(primary)}=?', (*values, row['fid']))
         after = db_hash(connection, table)

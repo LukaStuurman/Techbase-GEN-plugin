@@ -27,6 +27,38 @@ def cable_code(value):
     return re.sub(r'^(SMG\d+)-\d+$', r'\1', value)
 
 
+def cable_codes(value):
+    """Keep every explicitly supplied cable group; do not pick the first."""
+    return list(dict.fromkeys(code for part in re.split(r'[,;\n]+', text(value)) if (code := cable_code(part))))
+
+
+def attach_connection_cables(records, cables):
+    """Prefer only a unique, reciprocal source-object relationship, never distance."""
+    index = defaultdict(list)
+    for cable in cables: index[text(cable.get('id'))].append(cable)
+    object_counts = Counter(text(row.get('object_id')) for row in records)
+    result = []
+    for original in records:
+        row = dict(original); row['original_cable'] = row.get('cable', '')
+        identifiers = [x.strip() for x in re.split(r'[,;]', text(row.get('connection_id'))) if x.strip()]
+        matches = index.get(identifiers[0], []) if len(identifiers) == 1 else []
+        if len(matches) == 1 and text(row.get('object_id')) and object_counts[text(row['object_id'])] == 1:
+            cable = matches[0]
+            reverse_ids = {x.strip() for x in re.split(r'[,;]', text(cable.get('service_connections_id'))) if x.strip()}
+            if (text(row['object_id']) in reverse_ids and text(cable.get('cable_status')).casefold() == 'in bedrijf'
+                    and text(cable.get('change_state')).casefold() == 'active'):
+                specific, registered = cable_codes(cable.get('Kabel Subgroep')), cable_codes(row.get('cable'))
+                if specific and (not registered or set(specific).issubset(set(registered))):
+                    row['cable'] = ', '.join(specific)
+                    row['cable_evidence'] = f"Aansluitkabel {identifiers[0]} via wederzijdse object-ID-relatie"
+                elif specific:
+                    row['cable_conflict'] = True
+                    row['cable'] = ', '.join(dict.fromkeys(registered + specific))
+                    row['cable_evidence'] = f"Aansluitkabel {identifiers[0]} via wederzijdse object-ID-relatie; afwijkende broncodes vereisen overeenstemmende herleiding"
+        result.append(row)
+    return result
+
+
 def station_code(value):
     match = re.match(r'^((?:MS|LS)-\d+)(?:-|$)', text(value).upper())
     return match.group(1) if match else ''
@@ -105,7 +137,7 @@ def read_schema_xml(path):
     return objects
 
 
-def read_dxf(path):
+def read_dxf(path, prefix='E_LV', include_codes=False):
     """ASCII DXF geometry needed for checks, without an optional CAD dependency.
 
     This checks actual LINE/POLYLINE vertices and INSERT positions in modelspace.
@@ -120,6 +152,8 @@ def read_dxf(path):
         raise ValueError('Onvolledig ASCII-DXF: een groepscode mist zijn waarde.')
     section = ''; entity = None; tags = []; poly = None
     rails, bridges, fuses = [], [], []
+    codes = set()
+    rail_layer, field_layer, internal_layer = (prefix + suffix for suffix in ('_RAIL_SECTION', '_FIELD_LOCATION', '_INTERNAL_CONNECTION'))
     def finish(kind, values):
         nonlocal poly
         value = lambda code, default='': next((v for c, v in values if c == code), default)
@@ -127,20 +161,23 @@ def read_dxf(path):
         if kind == 'POLYLINE':
             poly = (layer, [])
         elif kind == 'VERTEX' and poly is not None:
-            if poly[0] in ('E_LV_RAIL_SECTION', 'E_LV_FIELD_LOCATION', 'E_LV_INTERNAL_CONNECTION') and float(value(42, '0')) != 0:
+            if poly[0] in (rail_layer, field_layer, internal_layer) and float(value(42, '0')) != 0:
                 raise ValueError('Gebogen DXF-polylijn: gebruik XML-posities zonder DXF-controle of een rechte schematische export.')
             poly[1].append((float(value(10)), float(value(20))))
         elif kind == 'SEQEND' and poly is not None:
             pl, points = poly; poly = None
             if len(points) > 1:
                 shape = LineString(points)
-                if pl == 'E_LV_RAIL_SECTION': rails.append(shape)
-                if pl in ('E_LV_FIELD_LOCATION', 'E_LV_INTERNAL_CONNECTION'): bridges.append(shape)
-        elif kind == 'LINE' and layer in ('E_LV_RAIL_SECTION', 'E_LV_FIELD_LOCATION', 'E_LV_INTERNAL_CONNECTION'):
+                if pl == rail_layer: rails.append(shape)
+                if pl in (field_layer, internal_layer): bridges.append(shape)
+        elif kind == 'LINE' and layer in (rail_layer, field_layer, internal_layer):
             shape = LineString([(float(value(10)), float(value(20))), (float(value(11)), float(value(21)))])
-            (rails if layer == 'E_LV_RAIL_SECTION' else bridges).append(shape)
-        elif kind == 'INSERT' and layer == 'E_LV_FUSE':
+            (rails if layer == rail_layer else bridges).append(shape)
+        elif kind == 'INSERT' and layer == prefix + '_FUSE':
             fuses.append(Point(float(value(10)), float(value(20))))
+        elif kind == 'TEXT' and layer == prefix + '_SCHEMATIC_CABLE_LABEL':
+            match = re.match(r'^\s*(?:SMG)?(\d+)(?:-\d+)?\s*/', value(1), flags=re.I)
+            if match: codes.add('SMG' + match.group(1))
     for index in range(0, len(lines), 2):
         code, value = int(lines[index].strip()), lines[index + 1].strip()
         if code == 0:
@@ -154,8 +191,8 @@ def read_dxf(path):
         else:
             tags.append((code, value))
     if not rails or not fuses:
-        raise ValueError('DXF mist de lagen E_LV_RAIL_SECTION en/of E_LV_FUSE. Gebruik de schematische export.')
-    return rails, bridges, fuses
+        raise ValueError(f'DXF mist de lagen {prefix}_RAIL_SECTION en/of {prefix}_FUSE. Gebruik de juiste schematische export.')
+    return (rails, bridges, fuses, codes) if include_codes else (rails, bridges, fuses)
 
 
 def active(row):
@@ -177,7 +214,7 @@ def fuse_role(rows):
     return next(iter(roles)) if len(roles) == 1 else 'onzeker'
 
 
-def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, canceled=lambda: False):
+def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, canceled=lambda: False, ov_dxf_path=''):
     # Keep the rest of the dashboard usable on installations where the
     # optional scientific environment has not yet been installed/configured.
     try:
@@ -188,7 +225,7 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
         raise ValueError('Stationsherleiding vereist Shapely 2 in de QGIS-Pythonomgeving.') from exc
     if int(shapely.__version__.split('.')[0]) < 2:
         raise ValueError('Stationsherleiding vereist Shapely 2; de overige wizardfuncties blijven beschikbaar.')
-    files = {str(Path(p).resolve()): file_digest(p) for p in (xml_path, excel_path, dxf_path) if p}
+    files = {str(Path(p).resolve()): file_digest(p) for p in (xml_path, excel_path, dxf_path, ov_dxf_path) if p}
     tables, xml = read_tables(excel_path), read_schema_xml(xml_path)
     def check():
         if canceled(): raise ValueError('Herleiding geannuleerd; niets gewijzigd.')
@@ -307,13 +344,48 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
             while previous[node] is not None:
                 parent = previous[node]; route.append(graph[parent][node]); node = parent
         mappings[code] = {'stations': candidates, 'path': ' → '.join(reversed(route)),
-                          'transformers': [f'{transformer_roots[i][1]}/{transformer_roots[i][2]}' for i, prev in trafo_paths.items() if 'c:' + code in prev]}
+                          'transformers': [f'{transformer_roots[i][1]}/{transformer_roots[i][2]}' for i, prev in trafo_paths.items() if 'c:' + code in prev],
+                          'evidence': 'LS-schakelpad'}
+    ov_new, ov_conflicts, ov_labels = 0, 0, 0
+    if ov_dxf_path:
+        check()
+        *_, codes_in_ov = read_dxf(ov_dxf_path, prefix='E_SL', include_codes=True)
+        ov_labels = len(codes_in_ov)
+        # This supplements registration of origin; it does not invent a closed
+        # OV switching path from nearby text, wire crossings or station names.
+        registered = defaultdict(lambda: defaultdict(list))
+        for field in fields.values():
+            source = station_code(field.get('[SAP R3] Functieplaatsnummer'))
+            code = cable_code(field.get('Kabelgroepnummer'))
+            if (active(field) and source.startswith('MS-') and code in codes_in_ov
+                    and field.get('Soort') in ('Kabelveld', 'OV-veld', 'OV/Installatieveld')):
+                registered[code][source].append(field.get('[SAP R3] Functieplaatsnummer', ''))
+        for code, origins in registered.items():
+            check()
+            group = mappings[code]; candidates = set(origins); ls_sources = set(group['stations'])
+            group['ov_registered_stations'] = sorted(candidates)
+            if ls_sources:
+                if ls_sources != candidates:
+                    group['ov_notice'] = 'Afwijkende OV-stationregistratie zonder bewezen schakelpad; het bestaande LS-schakelpad blijft leidend.'
+                    issues.append({'veld': code, 'reden': group['ov_notice']})
+                    ov_conflicts += 1
+            elif len(candidates) != 1:
+                group['stations'] = sorted(ls_sources | candidates)
+                group['path'] = ''; group['evidence'] = 'Tegenstrijdige LS/OV-registratie'
+                issues.append({'veld': code, 'reden': 'OV-code bevestigd, maar meerdere of tegenstrijdige geregistreerde bronstations.'})
+                ov_conflicts += 1
+            else:
+                source = next(iter(candidates)); group['stations'] = [source]
+                group['path'] = f"{source} → {', '.join(origins[source])} (kabelgroep op actief stationveld; code in OV-schema) → {code}"
+                group['evidence'] = 'OV-code + geregistreerd stationveld; schakeling niet vastgesteld'
+                ov_new += 1
     if any(file_digest(p) != digest for p, digest in files.items()):
         raise ValueError('Een schemabron veranderde tijdens de berekening. Probeer opnieuw met vaste exports.')
     return {'groups': mappings, 'issues': issues, 'corrected_rails': corrected,
-            'counts': {'fields': len(fields), 'rails': len(rails), 'fuses': len(tables['LS Smeltveiligheid']), 'couplings': couplings},
+            'counts': {'fields': len(fields), 'rails': len(rails), 'fuses': len(tables['LS Smeltveiligheid']), 'couplings': couplings,
+                       'ov_codes': ov_labels, 'ov_added_groups': ov_new, 'ov_conflicts': ov_conflicts},
             'files': files,
-            'mode': 'Administratieve rail (vergelijking)' if administrative else 'XML/Excel + DXF-controle' if dxf else 'XML/Excel met schematische posities'}
+            'mode': ('Administratieve rail (vergelijking)' if administrative else 'XML/Excel + DXF-controle' if dxf else 'XML/Excel met schematische posities') + (' + OV-registratie' if ov_dxf_path else '')}
 
 
 def station_lookup(records):
@@ -344,14 +416,15 @@ def compare_connections(mapping, records, station_records, reference_path=''):
     counts = Counter(normalize_asset_id(r.get('asset')) for r in records)
     rows = []
     for item in records:
-        ident = normalize_asset_id(item.get('asset')); code = cable_code(item.get('cable'))
-        group = mapping['groups'].get(code, {}); sources = group.get('stations', [])
+        ident = normalize_asset_id(item.get('asset')); codes = cable_codes(item.get('cable')); code = ', '.join(codes)
+        groups = [mapping['groups'].get(c, {}) for c in codes]
+        sources = sorted({s for group in groups for s in group.get('stations', [])})
         station = ''; status = 'Niet herleid'; reason = ''
         if not ident: status, reason = 'ID ontbreekt', 'Master Asset ID ontbreekt.'
         elif counts[ident] != 1: status, reason = 'Dubbel ID', 'Master Asset ID is niet uniek in de aansluitingenlaag.'
         elif not code: reason = 'Kabelgroep ontbreekt.'
-        elif not group: reason = 'Kabelgroep staat niet in de veldexport.'
-        elif not sources: reason = 'Geen bereikbaar bronstation binnen de geleverde schemaselectie; bekijk de schema-controles.'
+        elif any(not group for group in groups): reason = 'Niet alle kabelgroepen staan in de veldexport.'
+        elif any(not group.get('stations') for group in groups): reason = 'Niet alle kabelgroepen hebben een bronstation binnen de geleverde schemaselectie; bekijk de schema-controles.'
         elif len(sources) > 1: status, reason = 'Meerdere voedingen', 'Meer dan één MS-station bereikbaar.'
         elif len(sources) == 1:
             names = aliases.get(sources[0], set())
@@ -364,11 +437,19 @@ def compare_connections(mapping, records, station_records, reference_path=''):
             elif expected: comparison = 'Tegenstrijdige referentie'
         if comparison == 'Afwijkend': reason = 'Schema en controle-CSV noemen verschillende stations; deze koppeling wordt niet toegepast.'
         elif comparison == 'Dubbel referentie-ID': reason = 'Master Asset ID staat meermaals in de controle-CSV; deze koppeling wordt niet toegepast.'
+        if not reason: reason = '; '.join(sorted({g['ov_notice'] for g in groups if g.get('ov_notice')}))
+        if not reason and item.get('cable_conflict') and station:
+            reason = 'De broncodes verschillen, maar alle afzonderlijke herleidingen noemen hetzelfde station.'
         rows.append({'fid': item['fid'], 'Master Asset ID': ident, 'Kabelgroep': code, 'Station': station,
                      'Bestaand station': text(item.get('station')), 'MS-station': '; '.join(sources),
-                     'Transformatorvelden': '; '.join(group.get('transformers', [])), 'Status': status,
+                     'Transformatorvelden': '; '.join(sorted({t for group in groups for t in group.get('transformers', [])})), 'Status': status,
                      'Controle': comparison, 'Referentiestation': '; '.join(expected), 'Reden': reason,
-                     'Pad': group.get('path', '')})
+                     'Herkomst': '; '.join(sorted({g.get('evidence', 'LS-schakelpad') for g in groups if g})),
+                     'OV-registratiekandidaten': '; '.join(sorted({s for g in groups for s in g.get('ov_registered_stations', [])})),
+                     'Originele kabelcodes': text(item.get('original_cable', item.get('cable'))),
+                     'Kabelkoppeling': item.get('cable_evidence', 'Kabelcode uit aansluitingenlaag'),
+                     'Pad': (item['cable_evidence'] + ' → ' if item.get('cable_evidence') else '') +
+                            ' | '.join(f"{c}: {g.get('path', '')}" for c, g in zip(codes, groups))})
     unmatched = sorted(ident for ident in reference if counts[ident] == 0)
     if reference_path and file_digest(reference_path) != reference_digest:
         raise ValueError('De controle-CSV veranderde tijdens het inlezen.')
@@ -396,5 +477,8 @@ def export_report(result, directory):
         'Rails blijven gescheiden zonder K. Geen actuele vermogensstroom of bewijs van live schakelstand. '
         'De controle-CSV wordt uitsluitend op Master Asset ID vergeleken en levert geen voorspellingen. '
         'DXF is een aanvullende geometriecontrole; zelfstandig ontbreken in deze export de object-ID-koppelingen. '
+        'Een optionele OV-DXF bevestigt kabelcodes bij een uniek geregistreerd actief stationveld; dit bewijst geen OV-schakelstand. '
+        'Een bewezen LS-pad blijft leidend bij een afwijkende OV-registratie. Herkomst en kandidaten staan per aansluiting vermeld. '
+        'Meerdere kabelgroepen moeten dezelfde bron aanwijzen. Een unieke wederzijdse object-ID-relatie met een actieve aansluitkabel kan de specifieke groep bepalen. '
         'Een station kan meerdere fysieke trafos hebben. Bekijk afwijkingen en schema-controles vóór toepassen.\n', encoding='utf-8')
     return str(directory)

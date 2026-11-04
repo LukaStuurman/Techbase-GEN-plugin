@@ -1,4 +1,20 @@
-# LS Netontwerp Wizard v1.28.1
+# LS Netontwerp Wizard v1.29.0
+
+## Stationsherleiding zonder controle-CSV, met OV-registratie
+
+Op **1.4. Voedend station uit LS-schema** zijn **OV-schema DXF** en **Aansluitkabelbron** toegevoegd. De controle-CSV is optioneel en levert uitsluitend een onafhankelijke vergelijking op Master Asset ID.
+
+- Kabelcodelabels uit het OV-schema kunnen een unieke actieve stationveldregistratie bevestigen. Dit is zichtbaar als afzonderlijke herkomst, met de beperking dat de actuele OV-schakeling niet is vastgesteld. Afwijkende OV-registratie vervangt geen bestaand LS-schakelpad.
+- Meerdere kabelgroepen moeten allemaal naar dezelfde bron wijzen. Een specifieke aansluitkabel kan worden gekozen via een unieke wederzijdse object-ID-relatie, met status- en duplicaatcontroles. Geen afstandskeuze of CSV-geleerde koppeling.
+- Tabel, voedingspad, rapport en opgeslagen auditvelden tonen de gebruikte herkomst. De nieuwe bronnen worden op wijzigingen gecontroleerd. Atomair toepassen en beschermd undo na heropenen blijven beschikbaar.
+
+**Den Dungen:** 1.994 van 1.998 controlegevallen gelijk, vier verschillen en nul zonder herleiding. Alle eerder 68 onbekende controlegevallen krijgen nu een herkomst. De meeste daarvan waren woningen, niet uitsluitend straatmeubilair. Over de hele bronlaag worden 2.723 van 2.763 punten herleid; 40 blijven zonder stationsnaam. Voorspellingen zijn met en zonder controle-CSV exact gelijk. De vier verschillen blijven schema 044.522 tegenover controlelijst 044.536; ze worden met CSV niet toegepast en zonder CSV niet stilzwijgend gecorrigeerd.
+
+Werkelijk toepassen zonder CSV (2.723) en met CSV-bescherming (1.994) is op een productiekopie gecontroleerd, inclusief exact herstel van oorspronkelijke attributen en geometrieën na heropenen en undo. De echte dashboardtaak en nieuwe invoervelden zijn met productiegegevens uitgevoerd. Regressies voor schema/OV, dashboard, stationspresentatie, onbekende capaciteit en plugin slagen in QGIS 4.2.3. Geen QGIS 3-uitvoering of volledige handmatige Desktop-test; zelfstandig OV-schakelpad en actuele stroomrichting worden niet geleverd. [Volledig verslag](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/LS_OV_LINK_VALIDATION.md).
+
+Installeer de ZIP en herstart QGIS. Kies op pagina 1.4 de OV-DXF en de aansluitkabelbron uit de GEN-import. Laat Controle-CSV leeg voor zelfstandig gebruik.
+
+## Behouden uit v1.28.1
 
 ## Bestaande stations met NULL-vermogen blijven zichtbaar
 

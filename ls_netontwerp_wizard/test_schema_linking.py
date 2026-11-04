@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-def fixture(root, closed=False):
+def fixture(root, closed=False, extra_fields=()):
     tables = {'LS Veld': [], 'LS Railsectie': [], 'LS Smeltveiligheid': []}
     rails = [('ra', 'MS-000001-L01-RS01', 0), ('rb', 'MS-000002-L01-RS01', 4),
              ('r1', 'LS-000001-L01-RS01', 10), ('r2', 'LS-000001-L01-RS02', 14)]
@@ -22,6 +22,7 @@ def fixture(root, closed=False):
         ('i2', '3', 'Kabelveld', 'LS-000001-L01-VE03', 'r1', 'SMG2', 9999, 'doorverbindingsmes', 2, 14),
         ('o2', '4', 'Kabelveld', 'LS-000001-L01-VE04', 'r1', 'SMG4', 100, 'onbekend', 8, 14),
         ('k', 'K', 'Koppelveld', 'LS-000001-L01-VE05', 'r1', '0', 9999, 'doorverbindingsmes', 5, 12)]
+    fields.extend(extra_fields)
     exp = ET.Element('Explorer')
     collections = {}
     for kind in ('e_lv_field', 'e_lv_rail_section', 'e_lv_fuse'):
@@ -43,7 +44,7 @@ def fixture(root, closed=False):
         tables['LS Veld'].append({'Id':ident,'Nummer':number,'Soort':kind,'Status':'in bedrijf','Change State':'Active',
             '[SAP R3] Functieplaatsnummer':sap,'Bovenliggend Asset Id':rail,'Kabelgroepnummer':code})
         obj('e_lv_field',{'id':ident,'status':'in bedrijf','change_state':'Active','structure_parent_id':rail})
-        if ident=='k' and not closed:continue
+        if (ident=='k' and not closed) or not fusekind:continue
         tables['LS Smeltveiligheid'].append({'Id':'f'+ident,'Status':'in bedrijf','Change State':'Active',
             'Bovenliggend Asset Id':ident,'Smeltveiligheid soort':fusekind,'LS Smeltveiligheid I Nominaal':str(amps)})
         obj('e_lv_fuse',{'id':'f'+ident,'status':'in bedrijf','change_state':'Active','structure_parent_id':ident,'kind':fusekind},[(x,y)])
@@ -71,7 +72,7 @@ def fixture(root, closed=False):
         pairs += [(0,'LINE'),(8,'E_LV_RAIL_SECTION'),(10,154000),(20,408000+y),(11,154010),(21,408000+y)]
     pairs += [(0,'LINE'),(8,'E_LV_FIELD_LOCATION'),(10,154005),(20,408010),(11,154005),(21,408014)]
     for ident,number,kind,sap,rail,code,amps,fusekind,x,y in fields:
-        if ident=='k' and not closed:continue
+        if (ident=='k' and not closed) or not fusekind:continue
         pairs += [(0,'INSERT'),(8,'E_LV_FUSE'),(2,'symbol'),(10,154000+x),(20,408000+y)]
     pairs += [(0,'ENDSEC'),(0,'EOF')]
     dxf.write_text('\n'.join(str(v) for pair in pairs for v in pair)+'\n')

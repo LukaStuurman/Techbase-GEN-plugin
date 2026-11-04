@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.28.1
+## Laatste versie: 1.29.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.28.1/ls_netontwerp_wizard-1.28.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.28.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.29.0/ls_netontwerp_wizard-1.29.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.29.0)
+
+**Nieuw in 1.29.0:** stationsherleiding zonder controle-CSV uitgebreid met optionele OV-schema-DXF, alle opgegeven kabelgroepen en unieke wederzijdse aansluitkabelrelaties. Beschikbaar op dashboardpagina **1.4** met zichtbare herkomst, export en blijvend undo. In Den Dungen: 1.994 van 1.998 controlegevallen gelijk, 4 afwijkend en 0 zonder herleiding; voorspellingen zijn exact gelijk met en zonder CSV. Over de volledige bronlaag worden 2.723 van 2.763 punten herleid; 40 blijven onbekend. OV bevestigt unieke stationveldregistratie en bewijst geen actuele OV-schakelstand. [Gebruik, onafhankelijke proef en beperkingen](LS_OV_LINK_VALIDATION.md).
 
 **Hersteld in 1.28.1:** bestaande stations zonder bekend trafovermogen blijven zichtbaar in de ontwerpstroomcontrole. Zo was 044.532 wel geïmporteerd, maar door het capaciteitsfilter van de kaartstijl onzichtbaar. Stations met onbekende capaciteit krijgen nu een oranje symbool en een leesbaar label. Het vermogen en `Max_A` blijven NULL; er wordt geen capaciteit verzonnen. De stijl van bestaande gegenereerde werkprojecten wordt bijgewerkt. [Validatie](UNKNOWN_STATION_CAPACITY_VALIDATION.md).
 
