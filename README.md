@@ -1,8 +1,12 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.25.1
+## Laatste versie: 1.26.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.25.1/ls_netontwerp_wizard-1.25.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.25.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.26.0/ls_netontwerp_wizard-1.26.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.26.0)
+
+Nieuw in het echte gekleurde dashboard: **4e capaciteit aanpassen**, **4f clusters samenvoegen**, **4g splitsen met extra station op een sleufknoop** en **4h controles/herberekenen**. Alle wijzigingen lopen via de gecontroleerde wachtrij met gezamenlijk toepassen en undo. De oorspronkelijke 4a–4d blijven beschikbaar.
+
+Zie het [uitvoeringsplan](CLUSTER_EDITING_PLAN.md), [de volledige implementatie en testverantwoording](CLUSTER_EDITING_VALIDATION.md) en [de releasebeschrijving](ls_netontwerp_wizard/RELEASE_NOTES.md). Getest met echte PyQGIS/Qt-widgets en rekenprocessen in QGIS 4.2.3 op representatieve testnetten. Een handmatige volledige QGIS Desktop-productietest en QGIS 3-test zijn niet uitgevoerd.
 
 Installeer de ZIP via **Plugins → Plugins beheren en installeren → Installeren vanuit ZIP** en herstart QGIS.
 

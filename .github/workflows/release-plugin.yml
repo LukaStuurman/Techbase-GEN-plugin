@@ -127,7 +127,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          NOTES="Automatisch gebouwde QGIS-pluginrelease van LS Netontwerp Wizard versie ${VERSION}. De ZIP bevat aan de root alleen de map ls_netontwerp_wizard/."
+          NOTES_FILE="ls_netontwerp_wizard/RELEASE_NOTES.md"
+          test -s "$NOTES_FILE"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG bestaat al; asset wordt veilig vervangen."
@@ -137,14 +138,14 @@ jobs:
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "LS Netontwerp Wizard $TAG" \
-              --notes "$NOTES"
+              --notes-file "$NOTES_FILE"
           else
             echo "Nieuwe release $TAG wordt aangemaakt."
             gh release create "$TAG" "$ZIP_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "LS Netontwerp Wizard $TAG" \
-              --notes "$NOTES"
+              --notes-file "$NOTES_FILE"
           fi
 
       - name: Samenvatting
