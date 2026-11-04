@@ -3040,6 +3040,134 @@ def build_refreshed_fixed_routes(
     return route_geometries, route_lengths, point_route_distance
 
 
+def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05):
+    """Partition repair-corridor overlap without moving cables or customers.
+
+    Initial Voronoi cells partition the study area. The narrow corridors used
+    to connect those cells can overlap a neighbour. Re-node their boundaries
+    and refine only the small disputed faces using the actual cable/support
+    geometry; undisputed faces retain their owner exactly.
+    """
+    from shapely.ops import polygonize
+    union = unary_union(polygons)
+    overlap = sum(p.area for p in polygons) - union.area
+    if overlap <= 1e-7:
+        return polygons
+    assigned = [[] for _ in polygons]
+    tree = STRtree(polygons)
+    boundaries = unary_union([p.boundary for p in polygons if not p.is_empty])
+    disputed = 0
+    for face in polygonize(boundaries):
+        if face.is_empty or face.area <= 1e-12:
+            continue
+        point = face.representative_point()
+        if not study_area.covers(point):
+            continue
+        owners = sorted(int(index) for index in tree.query(point, predicate="intersects")
+                        if polygons[int(index)].covers(point))
+        if not owners:
+            raise RuntimeError("Een vlak van de clustergebiedsreparatie heeft geen eigenaar.")
+        if len(owners) == 1:
+            assigned[owners[0]].append(face)
+            continue
+        disputed += 1
+        sites = {}
+
+        def add_geometry(geometry, owner):
+            if geometry.is_empty:
+                return
+            if geometry.geom_type == "Point":
+                xy = (float(geometry.x), float(geometry.y))
+                sites.setdefault(tuple(round(v, 5) for v in xy), (xy, owner))
+            elif geometry.geom_type in ("LineString", "LinearRing"):
+                count = max(1, int(math.ceil(geometry.length / sample_step)))
+                for distance in np.linspace(0., geometry.length, count + 1):
+                    add_geometry(geometry.interpolate(float(distance)), owner)
+            elif hasattr(geometry, "geoms"):
+                for part in geometry.geoms:
+                    add_geometry(part, owner)
+
+        vicinity = face.buffer(max(1., sample_step * 2))
+        for owner in owners:
+            nearby = supports[owner].intersection(vicinity)
+            if nearby.is_empty:
+                # Empty/inactive routes still have a station support point.
+                nearby = nearest_points(face, supports[owner])[1]
+            add_geometry(nearby, owner)
+        values = list(sites.values())
+        if not values:
+            raise RuntimeError("Een overlappend clustergebied mist route- of stationsankers.")
+        if len(values) == 1:
+            assigned[values[0][1]].append(face)
+            continue
+        cells = voronoi_polygons(MultiPoint([xy for xy, _ in values]),
+                                 extend_to=face.envelope, ordered=True)
+        for cell, (_, owner) in zip(cells.geoms, values):
+            piece = cell.intersection(face)
+            if not piece.is_empty:
+                assigned[owner].append(piece)
+    repaired = []
+    for index, parts in enumerate(assigned):
+        if not parts and not polygons[index].is_empty:
+            raise RuntimeError(f"Clustergebied {index} verliest zijn gebied bij het herstellen van overlap.")
+        repaired.append(unary_union(parts).buffer(0) if parts else polygons[index])
+    # Cutting a neighbour's repair corridor out of an inactive station's
+    # territory can detach a tiny face. Transfer only faces with no own cable,
+    # customer connector or station anchor to an edge-adjacent neighbour.
+    # Whole coverage, point ownership and all real routes remain checked.
+    transferred = 0
+    for index in range(len(repaired)):
+        geometry = repaired[index]
+        if geometry.geom_type != "MultiPolygon":
+            continue
+        parts = sorted(geometry.geoms, key=lambda part: part.area, reverse=True)
+        anchored = [part for part in parts if part.buffer(1e-7).intersects(supports[index])]
+        retain = anchored or parts[:1]
+        for part in parts:
+            if any(part.equals(kept) for kept in retain):
+                continue
+            neighbours = []
+            for other, neighbour in enumerate(repaired):
+                if other == index or neighbour.is_empty:
+                    continue
+                shared = part.boundary.intersection(neighbour.boundary).length
+                if shared > 1e-6:
+                    neighbours.append((shared, other))
+            if not neighbours:
+                continue
+            _, owner = max(neighbours)
+            repaired[index] = repaired[index].difference(part).buffer(0)
+            repaired[owner] = unary_union([repaired[owner], part]).buffer(0)
+            transferred += 1
+    # Node the final shared borders once more so independently clipped local
+    # cells use identical border vertices. Ignore sub-square-millimetre faces
+    # created solely by floating-point intersection noise, as in the existing
+    # coverage repair tool. Real coverage loss remains checked below.
+    final_assigned = [[] for _ in repaired]
+    final_tree = STRtree(repaired)
+    final_borders = unary_union([part.boundary for part in repaired if not part.is_empty])
+    for face in polygonize(final_borders):
+        if face.area <= 1e-6:
+            continue
+        scores = [(face.intersection(repaired[int(index)]).area, int(index))
+                  for index in final_tree.query(face)]
+        if scores:
+            score, owner = max(scores)
+            if score > 1e-6:
+                final_assigned[owner].append(face)
+    for index, parts in enumerate(final_assigned):
+        if parts:
+            repaired[index] = unary_union(parts)
+        elif not repaired[index].is_empty:
+            raise RuntimeError(f"Clustergebied {index} verdwijnt bij het herstellen van gedeelde grensknopen.")
+    coverage = unary_union(repaired)
+    if (sum(p.area for p in repaired) - coverage.area > .001 or
+            coverage.symmetric_difference(union).area > .001):
+        raise RuntimeError("Clustergebiedsreparatie kon overlap of ontbrekende dekking niet veilig oplossen.")
+    log(f"Clustergrenzen topologisch hersteld: {overlap:.4f} m² overlap over {disputed} grensvlak(ken) verdeeld; {transferred} leeg grensfragment(en) bij een buurgebied gevoegd.")
+    return repaired
+
+
 def make_cable_based_cluster_polygons(
     route_geometries: list[object],
     point_xy: np.ndarray,
@@ -3116,6 +3244,7 @@ def make_cable_based_cluster_polygons(
     if len(cells) != len(site_xy):
         raise RuntimeError("Aantal kabel-Voronoi-cellen komt niet overeen met sites")
     polygons: list[object] = []
+    supports = []
     for station_index in range(station_count):
         cluster_cells = [
             cells[i] for i in np.flatnonzero(site_cluster == station_index)
@@ -3137,6 +3266,7 @@ def make_cable_based_cluster_polygons(
         if float(np.linalg.norm(b - a)) > 1e-9:
             backbone_parts.append(LineString([a, b]))
         backbone = unary_union(backbone_parts)
+        supports.append(unary_union([backbone, Point(station_xy[station_index])]))
         if not backbone.is_empty:
             corridor = backbone.buffer(0.75, cap_style="flat", join_style="mitre")
             polygon = unary_union([polygon, corridor.intersection(study_area)]).buffer(0)
@@ -3163,6 +3293,7 @@ def make_cable_based_cluster_polygons(
         if polygon.geom_type == "MultiPolygon" and len(polygon.geoms) == 1:
             polygon = polygon.geoms[0]
         polygons.append(polygon)
+    polygons = partition_cluster_overlaps(polygons, supports, study_area)
     return polygons, study_area
 
 

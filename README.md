@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.27.1
+## Laatste versie: 1.27.2
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.1/ls_netontwerp_wizard-1.27.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.27.2/ls_netontwerp_wizard-1.27.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.27.2)
+
+**Nieuw in 1.27.2:** herstel van overlappende grensstroken bij kabelverbonden clustergebieden. Alleen betwiste grensvlakken worden verdeeld aan de hand van de echte kabels, aansluitverbindingen en stations. Den Dungen is volledig doorgerekend met plangebied en buitenroutes: 1.985 aansluitingen, 16 bestaande en 18 nieuwe stations, langste route 642,81 m bij een grens van 850 m. Dekking, capaciteit, routes en bewerkbare QGIS-projecten zijn gecontroleerd. [Testverantwoording en beperkingen](DEN_DUNGEN_VALIDATION.md).
 
 **Nieuw in 1.27.1:** in **3a. Automatische clustering** staat ‘Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken’ standaard aan. De volledige buitenroute telt mee voor de maximale kabellengte. Aansluitingen/stations volgen het gekozen plangebiedfilter; nieuwe stations en clustergebieden blijven binnen het gebied. De keuze wordt opgeslagen en blijft ook bij latere clustercorrecties behouden. [Gebruik en validatie](EXTERNAL_PLAN_ROUTES_VALIDATION.md).
 

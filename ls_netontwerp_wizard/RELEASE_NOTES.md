@@ -1,4 +1,18 @@
-# LS Netontwerp Wizard v1.27.1
+# LS Netontwerp Wizard v1.27.2
+
+## Den Dungen: clustering met plangebied
+
+Smalle verbindingsstroken tussen kabels en clustergebieden konden overlappen. De gebiedsopbouw verdeelt nu alleen die betwiste vlakken op basis van de werkelijke kabels, aansluitverbindingen en stations. Lege afgesneden fragmenten worden waar mogelijk aan een aangrenzend gebied toegevoegd. Gedeelde grenzen krijgen dezelfde knopen. Toewijzingen en kabelroutes worden niet verschoven; bestaande capaciteits-, route- en geometriecontroles blijven gelden.
+
+Den Dungen is met de reeds voorbereide invoer volledig doorgerekend: **1.985 aansluitingen, 16 bestaande en 18 nieuwe stations**, totale ontwerpstroom **16.747 A**, langste route **642,81 m** bij een grens van 850 m. De volledige gebiedsdekking is geldig, zonder meetbare overlap of gedeeld kabeltracé. Het QGIS-project met twee layouts is opnieuw geopend en gecontroleerd.
+
+De oude fout ‘Kabelroute 28 ligt 0.71 m buiten het eigen gebied’ is gereproduceerd met de instelling die het kabelnet op het plangebied knipt. Gebruik de sinds v1.27.1 standaard aangevinkte optie **Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken**. De volledige omweg telt mee; de routelimiet wordt niet versoepeld. De lokaal aangetroffen installatie was nog v1.27.0.
+
+Getest in echte QGIS 4.2.3-processen, inclusief gebiedsreparatie, bestaande clusterfuncties, dashboardwidgets, buitenroutes, fout-/projectherstel en latere stroomwijziging. De productieproef hergebruikt voorbereide XML/Excel/BAG-resultaten; geen volledige nieuwe bronimport, handmatige volledige Desktop-kliktest of QGIS 3-test. Er zijn geen productiegegevens naar GitHub geüpload. [Volledig verslag](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/DEN_DUNGEN_VALIDATION.md).
+
+Installeer de release-ZIP en herstart QGIS volledig.
+
+## Behouden uit v1.27.1
 
 ## Kabels buiten het plangebied gebruiken
 
