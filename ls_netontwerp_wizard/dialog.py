@@ -2434,7 +2434,7 @@ class LSNetontwerpDialog(QDialog):
         self.value_unit_group.setVisible(not household)
         self.value_gas_combo.setVisible(category == "Zakelijk")
         self.value_gas_label.setVisible(category == "Zakelijk")
-        fill_unit_combo(self.value_unit_combo, category)
+        fill_unit_combo(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
         if category == "Straatmeubilair":
             trafo = self._value_matrix_current("matrix_straat", 5.8)
             cable = trafo
