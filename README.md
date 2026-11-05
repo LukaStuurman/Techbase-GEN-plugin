@@ -1,10 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.32.1
+## Laatste versie: 1.33.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.32.1/ls_netontwerp_wizard-1.32.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.32.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.0/ls_netontwerp_wizard-1.33.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.0)
 
-**Hersteld in 1.32.1:** de clustereditor toont één leesbare voortgangsbalk met losse staptekst; stationsbenutting is gewone tekst. De controlegroep groeit mee, annuleren blijft leesbaar onderaan en lagen vernieuwen staat onder Geavanceerd. Gecontroleerd in rust- en rekenstand op twee venstergroottes.
+**Nieuw in 1.33.0:** selecteer **Kader 2.0** naast 3.0/3.1 voor de exacte Excel 2.0-trafo- en kabelwaarden voor woningen, opwek, toekomstige kleinzakelijke/grootzakelijke aansluitingen, laadpunten en straatmeubilair. KaderType toont de uitgangspunten en waarschuwingen. Automatisch clusteren gaat direct via de kabelverbonden Voronoi-methode; bestaande stations gebruiken KVA/Max_A en de getekende routes volgen exacte sleufcoördinaten. [Vergelijking, aannames en tests](KADER_20_VALIDATION.md).\n\n**Hersteld in 1.32.1:** de clustereditor toont één leesbare voortgangsbalk met losse staptekst; stationsbenutting is gewone tekst. De controlegroep groeit mee, annuleren blijft leesbaar onderaan en lagen vernieuwen staat onder Geavanceerd. Gecontroleerd in rust- en rekenstand op twee venstergroottes.
 
 **Nieuw in 1.32.0:** gecontroleerd herstel van losse gebiedsfragmenten, één automatische kabel-Voronoi-herstelpoging bij exclaves en blijvende exacte foutgeometrie. Nieuwe kandidaten met meerdere belaste hoofdkabelrichtingen. Gerichte Den Dungen-terugvalproef slaagt voor 1.928 aansluitingen en 14 nieuwe stations; buitenroutes stonden in deze proef aan. Geen garantie op optimale stationsplaatsing of foutloos resultaat voor iedere dataset. [Validatie en beperkingen](GEOMETRY_RECOVERY_VALIDATION.md).
 
