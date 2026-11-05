@@ -154,6 +154,40 @@ def test():
     )
     assert consumption("3 x 25 A","oplaadpunt","",2015,"G4",config20,
                        1,None,True) == 5.8
+    # End-to-end pure preview of QGIS named business presets. The user
+    # picks a FUTURE 3x160 rating in the GUI, not a current GEN doorlaat.
+    from types import SimpleNamespace
+    preset_tree = ast.parse((ROOT / "current_presets.py").read_text(encoding="utf-8-sig"))
+    unit_definition = next(node for node in preset_tree.body
+                           if isinstance(node, ast.FunctionDef) and node.name == "unit_currents")
+    unit_rows = next(ast.literal_eval(node.value) for node in preset_tree.body
+                     if isinstance(node, ast.Assign)
+                     and any(isinstance(target, ast.Name) and target.id == "UNIT_CHOICES"
+                             for target in node.targets))
+    preset_globals = {"UNIT_CHOICES": unit_rows}
+    exec(compile(ast.Module(body=[unit_definition], type_ignores=[]),
+                 "current_presets.py", "exec"), preset_globals)
+    preset = preset_globals["unit_currents"]
+    calc = SimpleNamespace(calculate_ontwerpstroom=consumption,
+                           calculate_opwek_ontwerpstroom=generation)
+    context = (calc, {"design_framework": "2.0", "one_phase_exception": True},
+               config20, config20_kabel, [], [])
+    assert preset(context, "Zakelijk", "160") == (138., 138., 138., 138.)
+    assert preset(context, "Zakelijk", "250") == (210., 210., 210., 210.)
+    assert preset(context, "Zakelijk", "100") == (0., 0., 0., 0.)
+    assert preset(context, "Oplaadpunt", "laad25") == (5.8, 6.7, 0., 0.)
+
+    # The former 3.1 preset still uses precisely the same current/gas path
+    # under its renamed 3.2 selection.
+    old_context = (calc, {"design_framework": "3.1", "one_phase_exception": True},
+                   old, old, [], [])
+    renamed_context = (calc, {"design_framework": "3.2", "one_phase_exception": True},
+                       renamed, renamed, [], [])
+    for key in ("lt35", "35_40", "50", "63", "80", "100", "125", "160", "200", "250"):
+        for gas in ("G4", "G10", ">G25"):
+            assert preset(old_context, "Zakelijk", key, gas) == preset(
+                renamed_context, "Zakelijk", key, gas
+            ), (key, gas)
     print("KADER_20_VS_32_REGRESSION_OK")
 
 
