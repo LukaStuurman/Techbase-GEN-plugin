@@ -42,6 +42,11 @@ def main():
         check(k.current(level, 4, "appartement", 2024, 3, 25, generation=True)[0], 0)
         check(k.current(level, 4, "appartement", 2020, 3, 25, generation=True)[0], 0)
 
+    # GEN sometimes labels apartment service connections as Huishoudelijk (ID 1).
+    # They must still use the high-rise table (Type 3/4).
+    check(k.current("trafo", 1, "appartement", 2020, 3, 25)[0], 2.8)
+    check(k.current("kabel", 1, "appartement", 2024, 3, 25)[0], 6.0)
+
     # Explicit heating types take precedence over the planning-year assumption.
     check(k.current("trafo", 1, "vrijstaand", 2020, 3, 25, explicit_type="Type 1")[0], 9.5)
     check(k.current("trafo", 1, "vrijstaand", 2024, 3, 25, explicit_type="Type 2")[0], 3.3)
