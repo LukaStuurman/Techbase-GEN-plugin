@@ -146,8 +146,12 @@ def test():
     assert consumption("3 x 25 A","bedrijf","",2015,"G4",config20,1,None,True,
                        True,None,"3 x 100 A") == 0
     config20_kabel = dict(config20, NET_LEVEL="kabel")
-    assert consumption("3 x 25 A","oplaadpunt","",2015,"G4",config20_kabel,
-                       1,None,True) == 6.7
+    charge_value = consumption("3 x 25 A","oplaadpunt","",2015,"G4",config20_kabel,
+                               1,None,True)
+    assert charge_value == 6.7, (
+        charge_value, scope["map_gebruiksdoel"]("oplaadpunt", "", config20_kabel),
+        scope["parse_doorlaat"]("3 x 25 A"),
+    )
     assert consumption("3 x 25 A","oplaadpunt","",2015,"G4",config20,
                        1,None,True) == 5.8
     print("KADER_20_VS_32_REGRESSION_OK")
