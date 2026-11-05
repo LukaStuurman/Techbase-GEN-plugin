@@ -163,6 +163,7 @@ def _make_noded_group(records, terminals):
 def trace_group_cables(points,stations,cables, *,
                        cable_group_field=None,cable_type_field=None,
                        point_group_field=None,point_station_field=None,
+                       distribution_cabinets=None,
                        terminal_tolerance_m=.20,station_anchor_tolerance_m=15.):
     """Return verified original-edge paths, per segment *real* material.
 
@@ -171,7 +172,11 @@ def trace_group_cables(points,stations,cables, *,
     A station's group membership comes from its ORIGINAL member connections;
     nearest cables alone never assign stations.
     """
-    if str(points.crs).upper()!="EPSG:28992" or str(cables.crs).upper()!="EPSG:28992" or str(stations.crs).upper()!="EPSG:28992":
+    if (str(points.crs).upper()!="EPSG:28992" or
+        str(cables.crs).upper()!="EPSG:28992" or
+        str(stations.crs).upper()!="EPSG:28992" or
+        (distribution_cabinets is not None and
+         str(distribution_cabinets.crs).upper()!="EPSG:28992")):
         raise ValueError("Gebruik EPSG:28992 voor reproduceerbare kabel-lengtes.")
     pg=point_group_field or required_column(points,GROUP_FIELDS,"kabelgroep bij aansluiting")
     ps=point_station_field or required_column(points,STATION_FIELDS,"oorspronkelijk station")
@@ -190,32 +195,18 @@ def trace_group_cables(points,stations,cables, *,
         name=str(row[sn] or "").strip()
         if name in station_geoms:raise ValueError(f"Dubbel station {name}")
         station_geoms[name]=row.geometry
-    relevant_groups=set()
-    for station,code in point_members:
-        while code:
-            relevant_groups.add(code)
-            code=parent_group(code)
-    records=defaultdict(list)
-    for index,row in cables.iterrows():
+    # Keep ALL coded source cable geometries for detecting a distinct
+    # cabinet feeder whose code does not occur on any end connection.
+    # Material must be valid for a physically selected direction; unrelated
+    # spare lines do not become evidence of a station's historical feeders.
+    raw_records=defaultdict(list)
+    for _index,row in cables.iterrows():
         try:
             code=group_code(row[cg])
         except ValueError:
-            # Uncoded spare cables are never used as proof of a historic
-            # feeder. The required route itself must still trace completely.
             continue
-        if code not in relevant_groups:
-            continue
-        cable_type=type_key(row[ct])
         for part in _parts(row.geometry):
-            records[code].append((part,cable_type))
-    for station,group in point_members:
-        if station not in station_geoms:
-            raise ValueError(f"Bestaand station {station} ontbreekt in de stationslaag.")
-        if group not in records:
-            raise ValueError(f"Kabelgroep {group} bij {station} heeft geen getypeerde kabeldelen.")
-
-    # Every suffix level is a real direction, also when nobody is connected
-    # directly to the parent and only a -01 or -01-02 descendant is used.
+            raw_records[code].append((part,row[ct]))
     pairs=set(point_members)
     for station,group in tuple(pairs):
         parent=parent_group(group)
@@ -223,10 +214,100 @@ def trace_group_cables(points,stations,cables, *,
             pairs.add((station,parent))
             parent=parent_group(parent)
     for station,group in pairs:
-        if group not in records:
+        if station not in station_geoms:
+            raise ValueError(f"Bestaand station {station} ontbreekt in de stationslaag.")
+        if group not in raw_records:
+            raise ValueError(f"Kabelgroep {group} (station {station}) heeft geen fysieke GEN-kabeldelen.")
+
+    # Cabinet-backed directions are independent -00 feeders with a different
+    # group code from the station's supply cable. Their physical feeding
+    # relationship must be proven by the actual distribution cabinet layer.
+    # Merely being geographically nearby is never enough.
+    feeder_parents={}
+    cabinet_links={}
+    cabinet_geometries=(
+        [(str(i),row.geometry) for i,row in distribution_cabinets.iterrows()
+         if row.geometry is not None and not row.geometry.is_empty]
+        if distribution_cabinets is not None else []
+    )
+    group_union={
+        code:unary_union([geom for geom,_type in rows])
+        for code,rows in raw_records.items()
+    }
+    def terminal_points(code):
+        # Prefer true dead ends; avoid declaring an arbitrary midpoint of a
+        # long crossing cable to be a cabinet outgoing feeder.
+        segments=list(_parts(unary_union([g for g,_type in raw_records[code]])))
+        degree=defaultdict(int)
+        for segment in segments:
+            u=_node(Point(segment.coords[0]))
+            v=_node(Point(segment.coords[-1]))
+            degree[u]+=1
+            degree[v]+=1
+        return [Point(xy) for xy,n in degree.items() if n==1]
+
+    for station,group in sorted(tuple(pairs)):
+        if parent_group(group) is not None:
+            continue
+        source=group_union[group]
+        # Check its member-connected actual component instead of accepting
+        # another remote station's same-numbered K01-00 as the root.
+        direct=[row.geometry for _id,row in point_members.get((station,group),[])]
+        if direct:
+            connected_source=unary_union([
+                geom for geom,_typ in raw_records[group]
+                if any(geom.distance(p)<terminal_tolerance_m for p in direct)
+            ])
+            if not connected_source.is_empty:
+                source=connected_source
+        if source.distance(station_geoms[station])<=station_anchor_tolerance_m:
+            continue
+        if not cabinet_geometries:
             raise ValueError(
-                f"Kabelgroep {group} (station {station}) heeft geen fysieke GEN-kabeldelen."
+                f"Kabelgroep {station}/{group} komt niet rechtstreeks uit het "
+                "station. De verdeelkastenlaag is verplicht om de "
+                "werkelijke voedingsroute te bewijzen."
             )
+        candidates=[]
+        outgoing_endpoints=terminal_points(group)
+        for cabinet_id,cabinet_geom in cabinet_geometries:
+            exits=[p for p in outgoing_endpoints
+                   if cabinet_geom.distance(p)<=terminal_tolerance_m and
+                   source.distance(p)<=terminal_tolerance_m]
+            if len(exits)!=1:
+                continue
+            child_start=exits[0]
+            for upstream,up_geom in group_union.items():
+                if upstream==group or parent_group(upstream) is not None:
+                    continue
+                if up_geom.distance(station_geoms[station])>station_anchor_tolerance_m:
+                    continue
+                # The upstream cable must physically enter the SAME cabinet
+                # and be uniquely rooted at the original station.
+                source_ends=[
+                    p for p in terminal_points(upstream)
+                    if cabinet_geom.distance(p)<=terminal_tolerance_m
+                    and up_geom.distance(p)<=terminal_tolerance_m
+                ]
+                if len(source_ends)!=1:
+                    continue
+                candidates.append((upstream,cabinet_id,child_start,source_ends[0]))
+        unique={(upstream,cabinet_id) for upstream,cabinet_id,_child,_tap in candidates}
+        if len(unique)!=1:
+            raise ValueError(
+                f"Kabelgroep {station}/{group} heeft "
+                f"{len(unique)} eenduidig met het station verbonden "
+                "verdeelkast-voedingsrichting(en); een originele "
+                "kabelroute mag niet op nabijheid worden gegokt."
+            )
+        upstream,cabinet_id,child_start,parent_tap=candidates[0]
+        feeder_parents[(station,group)]=upstream
+        cabinet_links[(station,group)]=(cabinet_id,child_start,parent_tap)
+        pairs.add((station,upstream))
+    records={
+        code:[(geom,type_key(kind)) for geom,kind in raw_records[code]]
+        for code in {group for _station,group in pairs}
+    }
     # Kabel Subgroep numbering may repeat at DIFFERENT stations. Split the
     # original physical geometry into connected components BEFORE deciding
     # which station owns which K01-00/K01-01, using real member terminals and
