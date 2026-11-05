@@ -1125,6 +1125,9 @@ class WorkflowRunner:
                 "ALLEEN_BINNEN_PLANGEBIED": bool(plan_uri) and self.v["only_plan"],
                 "KABELROUTES_BUITEN_PLANGEBIED": self.v.get("allow_external_routes", False),
                 "AUTOMATISCH_AANTAL": self.v["automatic_stations"],
+                "BEHOUD_BESTAANDE_RICHTINGEN": bool(
+                    self.v.get("preserve_existing_directions", False)
+                ),
                 "AANTAL_NIEUWE": self.v["manual_station_count"],
                 "NIEUW_KVA": self.v["new_station_kva"],
                 "VOORKEUR_BENUTTING": self.v["target_utilization"],
