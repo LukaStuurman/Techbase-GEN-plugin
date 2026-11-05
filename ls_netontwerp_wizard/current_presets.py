@@ -73,6 +73,15 @@ def unit_description(category, key):
     return next((label for label, stored, _ in UNIT_CHOICES.get(category, ()) if stored == key), "Zelf invullen")
 
 
+def unit_future_connection(category, key):
+    """A deliberate Type 6/7 choice is a FUTURE rating, not GEN current."""
+    return next(
+        (doorlaat for _label, stored, doorlaat in UNIT_CHOICES.get(category, ())
+         if stored == key),
+        None,
+    )
+
+
 def current_context(host):
     from .algorithms.woningtype_selectie_herberekenen_tool import _configurations, _load_design_module
     module = _load_design_module()
@@ -96,7 +105,13 @@ def unit_currents(context, category, key, gas_category="G4/G6/Geen"):
     return normal, cable_current, generation, generation_cable
 
 
-def category_note(category, key):
+def category_note(category, key, framework=None):
+    if category == "Zakelijk" and str(framework) == "2.0":
+        if key in {"100", "125", "200"}:
+            return "Kader 2.0 Type 7: overig; de toekomstige ontwerpstroom is niet vastgelegd en vereist handmatige invoer"
+        if key in {"160", "250"}:
+            return "Kader 2.0 Type 7: grootverbruik LS op toekomstige aansluitwaarde; gas heeft geen invloed"
+        return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde; gas heeft geen invloed"
     if category == "Zakelijk":
         if key in {"100", "125", "160", "200", "250"}:
             return "Type 9: Grootverbruik LS (eigen richting >3x80A)"
