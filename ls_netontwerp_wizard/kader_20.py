@@ -138,6 +138,10 @@ def current(level, category, housing, build_year, phases, amp, *,
     """
     if level not in HOUSEHOLD:
         raise ValueError(f"Onbekend netvlak: {level}")
+    # GEN uses 'Huishoudelijk' for flats as well as detached houses.
+    # The housing type, not just the broad use category, determines Type 3/4.
+    if category == 1 and normalize_housing(housing) == "appartement":
+        category = 4
     if category in (1, 4):
         number, provenance = household_profile(
             housing if category == 1 else "appartement",
