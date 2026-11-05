@@ -116,7 +116,12 @@ def _make_noded_group(records, terminals):
     if not noded:
         raise ValueError("Kabelgroep heeft geen fysieke lijnstukken.")
     measures=defaultdict(set)
-    for terminal in terminals:
+    # GEOS may merge adjacent collinear source lines during unary_union.
+    # Restore every original endpoint before matching whole segment types;
+    # otherwise successive 150Al/120Al sections become one untypable edge.
+    source_endpoints=[Point(coord) for line in source
+                      for coord in (line.coords[0],line.coords[-1])]
+    for terminal in [*terminals,*source_endpoints]:
         ix,projected=_closest_unique(noded,terminal,0.20,"Aansluiting/aftakpunt")
         distance=float(noded[ix].project(projected))
         if 1e-6<distance<noded[ix].length-1e-6:

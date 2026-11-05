@@ -121,6 +121,7 @@ def test():
     # Also exercise the ACTUAL production connected-Voronoi solver. Extract
     # this pure function by AST to avoid requiring QGIS/osgeo/Matplotlib on CI.
     import ast
+    import __future__
     from threading import Lock
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from scipy.spatial import cKDTree
@@ -139,7 +140,8 @@ def test():
            "TARGET_UTILIZATION_PENALTY":10000.,
            "log":lambda message:None}
     exec(compile(ast.Module(body=[solver_ast],type_ignores=[]),
-                 str(engine_path),"exec"),scope)
+                 str(engine_path),"exec",
+                 flags=__future__.annotations.compiler_flag),scope)
     real=solve_locked_voronoi(
         graph,nodes,point_indices,np.array([20.,15.,30.,25.,50.]),
         np.arange(5),[station],np.asarray([node_index[(0.,0.)]]),

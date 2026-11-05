@@ -33,10 +33,10 @@ def main():
         assert dialog.framework_combo.currentData() == "3.0"
         current_values = dialog.values()
         dialog.framework_combo.setCurrentIndex(
-            dialog.framework_combo.findData("3.1")
+            dialog.framework_combo.findData("3.2")
         )
         framework_values = dialog.values()
-        assert framework_values["design_framework"] == "3.1"
+        assert framework_values["design_framework"] == "3.2"
         assert framework_values["matrix_straat"] == [
             "0", "6", "4.3", "7", "10", "8.7", "11", "35", "5.8",
             "40", "50", "22", "63", "80", "36",
