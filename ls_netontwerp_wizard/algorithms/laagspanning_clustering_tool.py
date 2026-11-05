@@ -1355,6 +1355,36 @@ verzoek zichtbaar worden.
                 "De bestaande-kabelgroepenmodus werkt alleen met automatisch "
                 "gekozen nieuwe stations. Zet automatische stationskeuze aan."
             )
+        original_component_fields = []
+        if preserve_existing:
+            # The default clustering writes a single 'Ontwerpstroom' field
+            # and drops its namesakes. Preserve all four original currents
+            # explicitly: the transformer and branch cable calculations must
+            # NEVER use the single combined surrogate.
+            required_currents = (
+                ("Hoogste Trafo", "Hoogste Trafo"),
+                ("Ontwerpstroom", "Orig_Trafo_Verbruik"),
+                ("Opwek ontwerpstroom", "Orig_Trafo_Opwek"),
+                ("Ontwerpstroom kabel", "Orig_Kabel_Verbruik"),
+                ("Kabel opwek ontwerpstroom", "Orig_Kabel_Opwek"),
+            )
+            found = {}
+            for source_name, canonical_name in required_currents:
+                index = self._automatic_field_index(
+                    points, (source_name,),
+                    f"Kabelgroephistorie: {source_name}", numeric=True,
+                )
+                found[source_name] = index
+                if source_name != "Hoogste Trafo":
+                    original_component_fields.append(
+                        (canonical_name,index,QVariant.Double)
+                    )
+            design_index = found["Hoogste Trafo"]
+            feedback.pushInfo(
+                "Behoudmodus gebruikt Hoogste Trafo als clusterbelasting, "
+                "maar bewaart apart trafo verbruik/opwek en kabel "
+                "verbruik/opwek voor de oorspronkelijke kabelgroepen."
+            )
         n_new = self.parameterAsInt(parameters, self.AANTAL_NIEUWE, context)
         new_kva = self.parameterAsDouble(parameters, self.NIEUW_KVA, context)
         target_utilization = (
@@ -1455,6 +1485,7 @@ verzoek zichtbaar worden.
                     ("GebiedLabel", label_index, QVariant.String),
                     ("Station", station_assignment_index, QVariant.String),
                     ("Multistory", multistory_index, QVariant.String),
+                    *original_component_fields,
                 ],
                 context,
                 feedback,
