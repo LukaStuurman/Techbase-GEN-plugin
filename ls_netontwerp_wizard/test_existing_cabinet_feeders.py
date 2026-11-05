@@ -50,7 +50,7 @@ def test():
         points,stations,cables,distribution_cabinets=cabinets,
     )
     assert group["feeder_parents"]=={(station,"B99-00"):"S07-00"}
-    assert group["cabinet_metadata"]=={(station,"B99-00"):"0"}
+    assert group["cabinet_metadata"]=={(station,"B99-00"):"LS-024709"}
     assert set(group["parent_routes"])=={
         (station,"B99-00"),(station,"B99-01"),
     }
@@ -97,7 +97,7 @@ def test():
         for connection in group["connections"]
     )
     assert [rec["Via_verdeelkast"] for rec in prepared["records"]] == [
-        "0","0",""
+        "LS-024709","LS-024709",""
     ],prepared["records"]
 
     # A cabinet may be fed by a branched station route S07-01, not directly
