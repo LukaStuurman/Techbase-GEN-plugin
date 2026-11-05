@@ -100,6 +100,25 @@ def test():
         "LS-024709","LS-024709",""
     ],prepared["records"]
 
+    # A cabinet can lie within the generous 15-m station snapping radius:
+    # a genuinely independent B99-00 must still count the S07-00 supply.
+    close_points=points.copy()
+    close_points.loc[0,"geometry"]=Point(58,0)
+    close_points.loc[1,"geometry"]=Point(33,20)
+    close_cables=cables.copy()
+    close_cables.loc[0,"geometry"]=LineString([(0,0),(8,0)])
+    close_cables.loc[1,"geometry"]=LineString([(8,0),(58,0)])
+    close_cables.loc[2,"geometry"]=LineString([(33,0),(33,20)])
+    close_cabinets=cabinets.copy()
+    close_cabinets.geometry=[Point(8,0)]
+    near=prepare_retention(
+        close_points,stations,close_cables,850.,
+        distribution_cabinets=close_cabinets,
+    )
+    assert near["feeder_parents"]=={(station,"B99-00"):"S07-00"}
+    assert near["retention"]["richtingen"][(station,"S07-00")]["belasting_a"]==50.
+    assert near["retention"]["route_m"]["cab-main"]==58.
+
     # A cabinet may be fed by a branched station route S07-01, not directly
     # by S07-00. The cabinet's separate B99-00 still requires its own gG,
     # type, length and downstream current checks; upstream S07-00 and
