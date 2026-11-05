@@ -211,7 +211,23 @@ def gas_advice(level, gas_category, phases, amps):
         return 210.0
     if phases in (1, 2, 3) and amps:
         row = _business_rate(phases, amps)
-        return float(row[1]) if row else 0.0
+        if row:
+            return float(row[1])
+        # The 2.0 business "future" rows leave 3x100/125 and several
+        # other intermediate sizes undefined. In the *gas advice* image,
+        # however, G4/G6 explicitly says to retain the CURRENT service
+        # through 3x160. Apply the existing GEN nominal-amp conversion
+        # to those intermediate CURRENT ratings, not a fictional future
+        # rating and never 0 A.
+        if phases == 3:
+            nominal = float(amps)
+            for maximum, current in (
+                (40.0, 32.0), (50.0, 44.0), (63.0, 51.0),
+                (80.0, 65.0), (100.0, 85.0), (125.0, 106.0),
+                (160.0, 138.0),
+            ):
+                if nominal <= maximum:
+                    return current
     return 0.0
 
 
