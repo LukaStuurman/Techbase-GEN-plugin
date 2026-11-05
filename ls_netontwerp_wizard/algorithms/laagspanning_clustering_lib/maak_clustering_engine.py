@@ -7537,6 +7537,17 @@ def main(_automatic_retry: bool = False) -> None:
     network_anchor_y = [geometry.y for geometry in stations.geometry] + [
         float(node[1]) for node in new_nodes
     ]
+    old_kept_counts = [0] * len(capacities)
+    old_released_counts = [0] * len(capacities)
+    if PRESERVE_EXISTING_DIRECTIONS:
+        old_station_index = {
+            name:i for i,name in enumerate(stations["Stationsnaa"].astype(str))
+        }
+        for _point_index,name in original_info["retained_by_index"].items():
+            old_kept_counts[old_station_index[name]] += 1
+        for _point_index,record in original_info["all_original_by_index"].items():
+            if _point_index not in original_info["retained_by_index"]:
+                old_released_counts[old_station_index[record.station]] += 1
     stations_design = gpd.GeoDataFrame(
         {
             "Cluster": cluster_names,
@@ -7547,6 +7558,8 @@ def main(_automatic_retry: bool = False) -> None:
             "Belast_A": cluster_loads,
             "Benut_pct": utilization,
             "Aantal": point_counts,
+            "Orig_behouden":old_kept_counts,
+            "Orig_vrijgegeven":old_released_counts,
             "Gem_route": mean_route,
             "Max_route": max_route,
             "Route_km": route_lengths / 1000.0,
@@ -7642,6 +7655,62 @@ def main(_automatic_retry: bool = False) -> None:
         equipment_links,
         missing_connection_links,
     )
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # A dedicated source-level electrical review layer, one feature for
+        # the EXACT -00/-01/-02 subgroup, not one combined tree or one length.
+        direction_features=[]
+        for (station,group),assessment in sorted(
+            original_info["retention"]["richtingen"].items()
+        ):
+            segments=assessment["segmenten"]
+            physical=[
+                original_info["edge_geometries"][edge_id]
+                for edge_id,_cable_type,_length in segments
+            ]
+            direction_features.append({
+                "Orig_station":station,
+                "Kabel_Subgroep":group,
+                "Lengte_m":float(assessment["length_m"]),
+                "Fysiek_m":float(assessment["fysiek_uniek_m"]),
+                "Belasting_A":float(assessment["belasting_a"]),
+                "Max_ontwerp_A":float(assessment["max_ontwerp_a"]),
+                "gG_A":int(assessment["gg_a"] or 0),
+                "Impedantie_Ohm":float(assessment["impedantie_ohm"]),
+                "Voldoet":bool(assessment["pass"]),
+                "Kab_delen":"; ".join(
+                    f"{kind}: {length:.2f} m"
+                    for _edge_id,kind,length in segments
+                ),
+                "Afzekering_bekend":bool(assessment["werkelijk_gg_bekend"]),
+                "geometry":merge_linework(physical),
+            })
+        if direction_features:
+            try:
+                gpd.GeoDataFrame(
+                    direction_features,geometry="geometry",crs=CRS_RD,
+                ).to_file(
+                    gpkg,layer="bestaande_richtingen_controle",
+                    driver="GPKG",mode="a",
+                )
+                log(
+                    "Bestaande kabelgroepen staan per -00/-01/-02 in de "
+                    "GeoPackage-laag 'bestaande_richtingen_controle', inclusief "
+                    "kabeldelen, gG, belasting en lengte."
+                )
+            except Exception as exc:
+                # The CSV still contains the decision and the main clustering
+                # is valid; preserve electrical audit separately if attaching
+                # to the main GeoPackage fails on a particular GDAL version.
+                gpd.GeoDataFrame(
+                    direction_features,geometry="geometry",crs=CRS_RD,
+                ).to_file(
+                    OUT / "bestaande_richtingen_controle.gpkg",
+                    layer="bestaande_richtingen_controle",driver="GPKG",
+                )
+                log(
+                    "Richtingencontrole als afzonderlijke GeoPackage opgeslagen "
+                    f"({type(exc).__name__} bij het toevoegen aan hoofd-GeoPackage)."
+                )
     log("Overzichtskaart renderen...")
     try:
         make_map(cables, connections, stations_design, areas, routes, plan_layer)
