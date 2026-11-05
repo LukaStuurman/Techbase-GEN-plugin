@@ -216,9 +216,10 @@ def parse_bouwjaar(val):
 
 def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
-        if is_bag_object(doorlaat) and (
-            not has_residential_usage(gebruiksdoel)
-            or clean_text(type_woning) in ("", "null", "none")
+        if (
+            is_bag_object(doorlaat)
+            and has_residential_usage(gebruiksdoel)
+            and clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
         current_phases, current_amp = parse_doorlaat(doorlaat)
@@ -400,9 +401,10 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
 
 def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
-        if is_bag_object(doorlaat) and (
-            not has_residential_usage(gebruiksdoel)
-            or clean_text(type_woning) in ("", "null", "none")
+        if (
+            is_bag_object(doorlaat)
+            and has_residential_usage(gebruiksdoel)
+            and clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
         current_phases, current_amp = parse_doorlaat(doorlaat)
@@ -957,9 +959,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 effective_bouwjaar, explicit_kader20, future_connection,
             )
             kader_type = ""
-            if framework == "2.0" and (
-                not is_bag_object(val_door) or has_residential_usage(val_gebr)
-            ):
+            if framework == "2.0":
                 current_phases, current_amp = parse_doorlaat(val_door)
                 cat = kader_20.classify_category(
                     map_gebruiksdoel(val_gebr, val_woning, full_config_std),
