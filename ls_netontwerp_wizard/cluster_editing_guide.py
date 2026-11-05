@@ -5,7 +5,7 @@ import math
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QApplication, QCheckBox, QComboBox, QCompleter,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout)
+    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLayout, QProgressBar, QPushButton, QVBoxLayout)
 from qgis.core import QgsProcessingFeedback, QgsProject, QgsVariantUtils
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsGeometry, QgsVectorLayer
 from .ui_theme import role
@@ -123,12 +123,15 @@ class ClusterEditingGuide:
         editor.enforce_button.clicked.connect(lambda: self.run_task(editor.enforce_prepared_clusters))
 
         review = QGroupBox("3. Controleer en pas toe")
+        review.setProperty('uiContentMinimum',True)
         self.review_group = review
         review_layout = QVBoxLayout(review)
+        review_layout.setSizeConstraint(getattr(QLayout,'SizeConstraint',QLayout).SetMinimumSize)
         editor.switch_group.layout().removeWidget(editor.preview_label)
         review_layout.addWidget(editor.preview_label)
-        self.capacity = QProgressBar()
-        self.capacity.setRange(0, 1000)
+        self.capacity = QLabel()
+        self.capacity.setWordWrap(True)
+        role(self.capacity,'hint')
         review_layout.addWidget(self.capacity)
         self.safety_label = QLabel()
         self.safety_label.setWordWrap(True)
@@ -138,7 +141,9 @@ class ClusterEditingGuide:
         self.commit = QPushButton("Verplaatsen")
         role(self.commit, "primary")
         self.commit.clicked.connect(self.execute)
-        self.cancel = QPushButton("Annuleren")
+        self.cancel = QPushButton("Berekening annuleren")
+        role(self.cancel,'danger')
+        self.cancel.setMinimumHeight(34)
         self.cancel.clicked.connect(self.cancel_calculation)
         self.cancel.hide()
         row.addWidget(self.commit)
@@ -146,6 +151,9 @@ class ClusterEditingGuide:
         row.addStretch(1)
         review_layout.addLayout(row)
         self.progress_bar = QProgressBar()
+        role(self.progress_bar,'calculationProgress')
+        self.progress_bar.setMinimumHeight(24)
+        self.progress_bar.setTextVisible(False)
         self.progress_label = QLabel()
         self.progress_label.setWordWrap(True)
         review_layout.addWidget(self.progress_bar)
@@ -465,8 +473,7 @@ class ClusterEditingGuide:
             return enabled
         percentage = projected / capacity * 100
         self.capacity.show()
-        self.capacity.setValue(min(1000, max(0, round(percentage * 10))))
-        self.capacity.setFormat(f"Benutting na de wijziging: {percentage:.1f}%")
+        self.capacity.setText(f"Stationsbenutting na wijziging: {percentage:.1f}%")
         lines.append(f"Belasting na wijziging: {projected:.1f} / {capacity:.1f} A (vrij {capacity-projected:.1f} A).")
         if projected > capacity + 1e-6 and self.editor.check_capacity.isChecked():
             lines.append("Dit past niet binnen de stationscapaciteit. Kies minder aansluitingen of een ander station.")
@@ -501,6 +508,8 @@ class ClusterEditingGuide:
         for button in homes:
             button.setEnabled(False)
         self.commit.setEnabled(False)
+        status_was_hidden=e.status_label.isHidden()
+        e.status_label.hide()
         self.cancel.show()
         self.cancel.setEnabled(True)
         self.progress_bar.show()
@@ -521,6 +530,7 @@ class ClusterEditingGuide:
         finally:
             e._active_cluster_feedback = None
             self.busy = False
+            e.status_label.setVisible(not status_was_hidden)
             self.cancel.hide()
             for widget in (*groups, *homes):
                 widget.setEnabled(True)
@@ -529,7 +539,7 @@ class ClusterEditingGuide:
 
     def progress(self, percent, message):
         self.progress_bar.setValue(round(percent))
-        self.progress_label.setText(str(message))
+        self.progress_label.setText(f"{round(percent)}% · {message}")
         self.cancel.setEnabled(percent < 88 and not self.feedback.isCanceled())
         QApplication.processEvents()
 

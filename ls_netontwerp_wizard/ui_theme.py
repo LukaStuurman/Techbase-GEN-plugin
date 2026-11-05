@@ -82,6 +82,7 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: trans
 QProgressBar { background: #EDF1F5; border: 1px solid #DFE5EC; border-radius: 4px;
                color: #334155; text-align: center; min-height: 8px; }
 QProgressBar::chunk { background: #E86C12; border-radius: 3px; }
+QProgressBar[uiRole="calculationProgress"] { min-height: 24px; max-height: 24px; }
 QToolTip { background: #17263A; color: #FFFFFF; border: 0; padding: 6px; }
 QMenu { background: #FFFFFF; border: 1px solid #DFE5EC; padding: 4px; }
 QMenu::item { padding: 7px 16px; }
@@ -288,6 +289,7 @@ def normalize_page(page, host, actions=(), home=True):
         body = QWidget()
         role(body, "content")
         content = QVBoxLayout(body)
+        content.setSizeConstraint(getattr(QLayout,'SizeConstraint',QLayout).SetMinimumSize)
         content.setContentsMargins(0, 0, 8, 0)
         content.setSpacing(10)
         while outer.count():

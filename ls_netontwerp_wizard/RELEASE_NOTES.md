@@ -1,4 +1,17 @@
-# LS Netontwerp Wizard v1.32.0
+# LS Netontwerp Wizard v1.32.1
+
+## Leesbare voortgang in de clustereditor
+
+- Stationsbenutting staat als aparte tekst met het percentage; dit is geen tweede voortgangsbalk meer.
+- Tijdens rekenen verschijnt één balk van 24 px hoog. Percentage en actuele stap staan als gewone tekst naast de balk, niet in een smalle gekleurde strook.
+- De controlegroep en scrollinhoud behouden hun benodigde hoogte. Oude statustekst verdwijnt tijdelijk tijdens rekenen, zodat die niet over de actuele voortgang heen komt.
+- **Berekening annuleren** is een normaal leesbare knop in de vaste onderbalk. **Lagen/modus opnieuw zoeken** staat onder Geavanceerd, buiten het controle-/voortgangsgebied, en is tijdens de berekening uitgeschakeld.
+
+Gecontroleerd met de echte ingebedde Qt-clustereditor op 1180×740 en 1440×960, inclusief rekenstand op 48%, één zichtbare balk, passende labels, afzonderlijke controle-elementen, vaste onderbalk en terugkeer naar ruststand. `test_cluster_editor_progress.py`, de bestaande begeleide-editorproef met echte wijzigingsworkers en de uniforme-UI-regressie slagen in QGIS 4.2.3. Schermafbeeldingen visueel gecontroleerd. Geen fysieke Desktop-muistest of QGIS 3-uitvoering. De rekenlogica is niet gewijzigd.
+
+Installeer de ZIP en herstart QGIS.
+
+## Behouden uit v1.32.0
 
 ## Begrensd herstel bij losliggende clustergebieden
 

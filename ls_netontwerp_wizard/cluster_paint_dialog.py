@@ -238,7 +238,7 @@ class VisueleClusterEditorDialog(QDialog):
         refresh_button.clicked.connect(self.refresh_layers)
         close_button = QPushButton("Sluiten")
         close_button.clicked.connect(self.close)
-        buttons.addWidget(refresh_button)
+        options.addRow(refresh_button)
         buttons.addWidget(close_button)
         root.addLayout(buttons)
 
