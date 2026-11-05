@@ -1,4 +1,16 @@
-# LS Netontwerp Wizard v1.31.1
+# LS Netontwerp Wizard v1.31.2
+
+## Leesbare uitgeklapte clusterknoppen
+
+De kaart **Clustering aanpassen** en het dashboard groeien nu mee wanneer **Geavanceerde clusterbewerkingen** wordt aangevinkt. De inhoud krijgt zijn vereiste minimumhoogte en blijft binnen het scrollbare dashboard. Daardoor worden de negen knoppen niet in een te kleine kaart samengedrukt of over elkaar getekend.
+
+Getest met het echte QGIS/Qt-dashboard op 1180×740 en 1440×960, herhaald uit-/inklappen, alle negen afzonderlijke knoprechthoeken, passende tekstbreedte en bereikbaarheid van het klikpunt via de scrollbalk. `test_dashboard_expansion.py` en de bestaande uniforme-UI-regressie slagen in QGIS 4.2.3. Geen QGIS 3-uitvoering.
+
+**Berekeningsstatus:** de experimentele nieuwe knooppuntplaatsing is nog niet volledig doorgerekend en zit niet in deze UI-herstelrelease. De productierun heeft negen kandidaten geselecteerd, waaronder zes nieuwe knooppuntlocaties, maar definitieve toedeling en route-/gebiedsvalidatie zijn nog niet afgerond. Dit wordt niet als geslaagd totaalontwerp voorgesteld.
+
+Installeer de ZIP en herstart QGIS.
+
+## Behouden uit v1.31.1
 
 ## Kleiner optimalisatiemodel zonder versoepelde controles
 

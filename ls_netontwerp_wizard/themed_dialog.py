@@ -10,6 +10,7 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -240,6 +241,9 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
             "border-radius:9px;}"
         )
         layout = QVBoxLayout(card)
+        constraints = getattr(QLayout, 'SizeConstraint', QLayout)
+        layout.setSizeConstraint(constraints.SetMinimumSize)
+        card.setSizePolicy(SIZE_EXPANDING, getattr(QSizePolicy, 'Policy', QSizePolicy).Minimum)
         layout.setContentsMargins(12, 11, 12, 12)
         layout.setSpacing(7)
         header = QLabel(f"{step}. {title}")
@@ -281,6 +285,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         dashboard.setMinimumHeight(360)
         dashboard.setSizePolicy(SIZE_EXPANDING, SIZE_EXPANDING)
         dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.setSizeConstraint(getattr(QLayout,'SizeConstraint',QLayout).SetMinimumSize)
         dashboard_layout.setContentsMargins(0, 2, 0, 0)
         dashboard_layout.setSpacing(7)
 
@@ -296,6 +301,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         dashboard_layout.addLayout(title_row)
 
         grid = QGridLayout()
+        grid.setSizeConstraint(getattr(QLayout,'SizeConstraint',QLayout).SetMinimumSize)
         grid.setHorizontalSpacing(9)
         grid.setVerticalSpacing(9)
         for col in range(3):
@@ -428,8 +434,17 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         advanced_cluster_buttons = [button for button in step4.findChildren(QPushButton)
                                    if not button.text().startswith('4a.')]
         for button in advanced_cluster_buttons:button.hide()
-        self.cluster_advanced_toggle.toggled.connect(
-            lambda enabled: [button.setVisible(enabled) for button in advanced_cluster_buttons])
+        def expand_cluster_actions(enabled):
+            for button in advanced_cluster_buttons:button.setVisible(enabled)
+            layout=step4.layout();layout.invalidate();layout.activate()
+            step4.setMinimumHeight(max(166,layout.minimumSize().height()))
+            step4.updateGeometry()
+            parent=step4.parentWidget()
+            while parent is not None and parent is not self:
+                if parent.layout() is not None:
+                    parent.layout().invalidate();parent.layout().activate()
+                parent.updateGeometry();parent=parent.parentWidget()
+        self.cluster_advanced_toggle.toggled.connect(expand_cluster_actions)
         step5 = self._make_step_card(
             5,
             "Sleuven & routes",

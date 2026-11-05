@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.31.1
+## Laatste versie: 1.31.2
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.1/ls_netontwerp_wizard-1.31.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.2/ls_netontwerp_wizard-1.31.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.2)
+
+**Hersteld in 1.31.2:** de uitgeklapte geavanceerde clusterknoppen overlappen niet meer. Dashboard en kaart groeien mee en blijven scrollbaar. Negen knoppen zijn op twee venstergroottes op leesbaarheid en bereikbaarheid gecontroleerd. De experimentele knooppuntplaatsing is nog niet volledig gevalideerd en zit niet in deze UI-herstelrelease.
 
 **Nieuw in 1.31.1:** exact kleinere optimalisatiemodellen en vooraf overslaan van rekenkundig onmogelijke benuttingsniveaus. Bij Den Dungen krimpt het eerste model met 56%; de totale versnelfactor is nog niet vastgesteld. Capaciteits- en routevoorwaarden blijven behouden. [Tests en meting](CLUSTER_SPEED_VALIDATION.md).
 
