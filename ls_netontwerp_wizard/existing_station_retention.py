@@ -367,7 +367,14 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             if not isfinite(capacity) or capacity<=0:
                 raise ValueError(f"Station {name} heeft geen betrouwbare trafocapaciteit.")
             members=[c for c in connections if c.station==name and c.id in active]
-            v=_maximum(members,"trafo")
+            v=max(
+                _maximum(members,"trafo"),
+                # The general clustering model adds each point's 'Hoogste
+                # Trafo' (max of demand and generation). Check that
+                # conservative total too, so fixed existing assignments
+                # cannot later exceed the clustering capacity.
+                sum(max(c.trafo_verbruik_a,c.trafo_opwek_a) for c in members),
+            )
             station[name]={"belasting_a":v,"maximum_a":capacity,"pass":v<=capacity+1e-7}
         return station,direction
 
