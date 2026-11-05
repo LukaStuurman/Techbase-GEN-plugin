@@ -45,6 +45,7 @@ def build(output):
         groups.append(dict(
             Station=name,Kabel_Subgroep=code,
             Verdeelkast=str(data["cabinet_metadata"].get((name,code),"")),
+            Bovenliggende_groep=str(data["feeder_parents"].get((name,code),"")),
             Belasting_A=f'{state["belasting_a"]:.2f}',
             Max_ontwerp_A=f'{state["max_ontwerp_a"]:.2f}',
             gG_berekend_A=state["gg_a"] or "",
