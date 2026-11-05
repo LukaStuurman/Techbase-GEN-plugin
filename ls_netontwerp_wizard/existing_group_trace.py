@@ -227,90 +227,182 @@ def trace_group_cables(points,stations,cables, *,
             raise ValueError(
                 f"Kabelgroep {group} (station {station}) heeft geen fysieke GEN-kabeldelen."
             )
-    unions={code:unary_union([geom for geom,_ in rows]) for code,rows in records.items()}
+    # Kabel Subgroep numbering may repeat at DIFFERENT stations. Split the
+    # original physical geometry into connected components BEFORE deciding
+    # which station owns which K01-00/K01-01, using real member terminals and
+    # station origins instead of globally joining equal subgroup codes.
+    components_by_group={}
+    for code,rows in records.items():
+        parts=list(_parts(unary_union([geom for geom,_type in rows])))
+        topology=nx.Graph()
+        for i,part in enumerate(parts):
+            start_node=_node(Point(part.coords[0]))
+            end_node=_node(Point(part.coords[-1]))
+            if start_node==end_node:continue
+            topology.add_edge(start_node,end_node,part_id=i)
+        components=[]
+        for vertices in nx.connected_components(topology):
+            selected={
+                data["part_id"] for u,v,data in topology.edges(data=True)
+                if u in vertices and v in vertices
+            }
+            union=unary_union([parts[i] for i in selected])
+            physical=[
+                (original,cable_type)
+                for original,cable_type in rows
+                if original.intersection(union).length>1e-6
+            ]
+            if not physical:
+                raise ValueError(
+                    f"Geometrie voor kabelgroep {code} heeft geen getypeerde delen."
+                )
+            components.append((union,physical))
+        if not components:
+            raise ValueError(f"Kabelgroep {code}: geen fysiek samenhangende delen.")
+        components_by_group[code]=components
+
+    records_by_pair={}
+    for station,group in sorted(pairs):
+        components=components_by_group[group]
+        if len(components)==1:
+            records_by_pair[(station,group)]=components[0][1]
+            continue
+        direct=[row.geometry for _,row in point_members.get((station,group),[])]
+        if direct:
+            distances=[
+                max(float(geometry.distance(union)) for geometry in direct)
+                for union,_physical in components
+            ]
+            allowed=.20
+        elif parent_group(group) is None:
+            distances=[
+                float(station_geoms[station].distance(union))
+                for union,_physical in components
+            ]
+            allowed=15.
+        else:
+            descendants=[
+                row.geometry
+                for (other_station,other_group),members in point_members.items()
+                if other_station==station and
+                other_group.startswith(group+"-")
+                for _,row in members
+            ]
+            if descendants:
+                distances=[
+                    min(float(geometry.distance(union)) for geometry in descendants)
+                    for union,_physical in components
+                ]
+                allowed=float("inf")
+            else:
+                distances=[
+                    float(station_geoms[station].distance(union))
+                    for union,_physical in components
+                ]
+                allowed=float("inf")
+        ranked=sorted(
+            [(distance,index) for index,distance in enumerate(distances)]
+        )
+        if not ranked or ranked[0][0]>allowed:
+            raise ValueError(
+                f"Station {station}/{group}: geen fysiek kabelcomponent "
+                "binnen de afstandsgrens van oorspronkelijke aansluiting."
+            )
+        if len(ranked)>1 and abs(ranked[0][0]-ranked[1][0])<0.01:
+            raise ValueError(
+                f"Station {station}/{group}: meerdere even waarschijnlijke "
+                "kabelcomponenten met dezelfde code; kies niet op nabijheid."
+            )
+        records_by_pair[(station,group)]=components[ranked[0][1]][1]
+
+    unions={
+        pair:unary_union([geom for geom,_type in rows])
+        for pair,rows in records_by_pair.items()
+    }
     junctions={}
     for station,group in sorted(pairs):
         parent=parent_group(group)
         if not parent:continue
-        if parent not in unions:
+        parent_key=(station,parent)
+        if parent_key not in unions:
             raise ValueError(
-                f"Aftakking {group} bij station {station} heeft geen kabelgroep {parent} als parent."
+                f"Aftakking {group} van {station} heeft geen parent {parent}."
             )
-        intersection=unions[group].intersection(unions[parent])
+        intersection=unions[(station,group)].intersection(unions[parent_key])
         if intersection.length>0.01:
-            raise ValueError(f"Aftakking {group} overlapt kabelgroep {parent}; niet eenduidig.")
+            raise ValueError(
+                f"Aftakking {station}/{group} overlapt de hoofdkabel; "
+                "de gescheiden kabelrichting is niet eenduidig."
+            )
         candidates={_node(p) for p in _points(intersection)}
         if len(candidates)!=1:
             raise ValueError(
-                f"Aftakking {group} moet één fysiek aansluitpunt met parent {parent} "
-                "hebben; geen afzonderlijk beginpunt of meerdere aftakpunten gevonden."
+                f"Aftakking {station}/{group} moet precies één fysiek "
+                f"aftakpunt op {parent} hebben; gevonden {len(candidates)}."
             )
         junctions[(station,group)]=Point(next(iter(candidates)))
 
-    # Parent groups must be split at each child's tap, even if no direct
-    # consumer belongs to the parent group (only -01 consumers).
     all_groups=defaultdict(list)
-    for (station,group),members in point_members.items():
-        all_groups[group].extend(members)
-    for station,group in sorted(pairs):
-        all_groups.setdefault(group,[])
+    for pair,members in point_members.items():
+        all_groups[pair].extend(members)
+    for pair in pairs:
+        all_groups.setdefault(pair,[])
     physical=[]
     edge_geometries={}
     result=[]
     origins={}
     roots={}
     group_graphs={}
-    for group,members in all_groups.items():
+    for (station,group),members in sorted(all_groups.items()):
         terminals=[row.geometry for _,row in members]
-        roots_for_group={
-            (station,code):point for (station,code),point in junctions.items()
-            if code==group
-        }
-        terminals.extend(roots_for_group.values())
-        terminals.extend(
-            point for (station,code),point in junctions.items()
-            if parent_group(code)==group
-        )
-        origin_station_names={name for name,g in pairs if g==group}
+        child_junctions=[
+            point for (other_station,code),point in junctions.items()
+            if other_station==station and parent_group(code)==group
+        ]
+        terminals.extend(child_junctions)
+        if (station,group) in junctions:
+            terminals.append(junctions[(station,group)])
         if parent_group(group) is None:
-            terminals.extend(station_geoms[s] for s in origin_station_names)
-        # Stations can be outside the cable itself. Project main roots onto
-        # the physical group, but do not create conductor between them.
-        noded=list(_parts(unary_union([geom for geom,_ in records[group]])))
+            terminals.append(station_geoms[station])
+        rows=records_by_pair[(station,group)]
+        noded=list(_parts(unary_union([geom for geom,_type in rows])))
         if not noded:
-            raise ValueError(f"Geen kabelgeometrie bij {group}")
+            raise ValueError(f"Geen kabelgeometrie bij {station}/{group}.")
         corrected=[]
         for point in terminals:
-            main_station=any(
-                p is point for s,p in station_geoms.items() if s in origin_station_names
-            )
-            limit=station_anchor_tolerance_m if main_station else terminal_tolerance_m
-            _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {group}")
+            is_station_root=parent_group(group) is None and point is station_geoms[station]
+            limit=station_anchor_tolerance_m if is_station_root else terminal_tolerance_m
+            _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {station}/{group}")
             corrected.append(pr)
-        graph,edge_rows,_noded,geo_by_edge=_make_noded_group(records[group],corrected)
-        group_graphs[group]=(graph,edge_rows)
+        graph,edge_rows,_noded,geo_by_edge=_make_noded_group(rows,corrected)
+        group_graphs[(station,group)]=(graph,edge_rows)
         for local_id,u,v,kind,length in edge_rows:
-            unique_id=group+"|"+local_id
+            unique_id=station+"|"+group+"|"+local_id
             physical.append(Cable(unique_id,group,str(u),str(v),kind,length))
             edge_geometries[unique_id]=geo_by_edge[local_id]
     edge_by_group={}
-    for c in physical:edge_by_group.setdefault(c.group,{})[tuple(sorted((c.from_node,c.to_node)))]=c.id
+    for c in physical:
+        station,group,_local=c.id.split("|",2)
+        edge_by_group.setdefault((station,group),{})[
+            tuple(sorted((c.from_node,c.to_node)))
+        ]=c.id
     direction_roots={}
     for station,group in sorted(pairs):
-        graph,_edges=group_graphs[group]
+        graph,_edges=group_graphs[(station,group)]
         root_point=(
             junctions[(station,group)] if parent_group(group)
             else station_geoms[station]
         )
         _,root_projection=_closest_unique(
-            [p for p,_t in records[group]],root_point,
-            station_anchor_tolerance_m if not parent_group(group)
+            [p for p,_type in records_by_pair[(station,group)]],
+            root_point,
+            station_anchor_tolerance_m if parent_group(group) is None
             else terminal_tolerance_m,
             f"Begin {station}/{group}",
         )
         root=min(graph.nodes,key=lambda xy:Point(xy).distance(root_projection))
         if Point(root).distance(root_projection)>0.02:
-            raise ValueError(f"Beginpunt {station}/{group} ligt niet op fysieke kabel.")
+            raise ValueError(f"Beginpunt {station}/{group} niet op genode kabel.")
         direction_roots[(station,group)]=root
         if parent_group(group):
             roots[(station,group)]=str(root)
@@ -320,35 +412,31 @@ def trace_group_cables(points,stations,cables, *,
     parent_routes={}
     for station,group in sorted(pairs):
         parent=parent_group(group)
-        if parent is None:
-            continue
-        graph,_edges=group_graphs[parent]
+        if parent is None:continue
+        graph,_edges=group_graphs[(station,parent)]
         root=direction_roots[(station,parent)]
         tap=junctions[(station,group)]
         target=min(graph.nodes,key=lambda xy:Point(xy).distance(tap))
         if Point(target).distance(tap)>0.02 or not nx.has_path(graph,root,target):
             raise ValueError(
-                f"Aftakpunt {group} is niet verbonden met de parent {parent} van station {station}."
+                f"Aftakpunt {station}/{group} is niet verbonden met parent {parent}."
             )
         nodes=nx.shortest_path(graph,root,target,weight="length")
         ids=tuple(
-            edge_by_group[parent][tuple(sorted((str(a),str(b))))]
+            edge_by_group[(station,parent)][tuple(sorted((str(a),str(b))))]
             for a,b in zip(nodes[:-1],nodes[1:])
         )
         if not ids:
-            raise ValueError(
-                f"Aftakking {group} begint op de station-/parent-root zonder "
-                "eigen bovenliggende kabelroute; valideer de schakelconfiguratie."
-            )
+            raise ValueError(f"Aftakking {station}/{group} heeft geen parentkabeltraject.")
         parent_routes[(station,group)]=ids
 
     point_id_to_index={}
     for (station,group),members in point_members.items():
-        graph,_edges=group_graphs[group]
+        graph,_edges=group_graphs[(station,group)]
         root=direction_roots[(station,group)]
         for row_index,row in members:
             _,pr=_closest_unique(
-                [p for p,_t in records[group]],row.geometry,
+                [p for p,_t in records_by_pair[(station,group)]],row.geometry,
                 terminal_tolerance_m,f"Aansluiting {row_index}/{group}"
             )
             end=min(graph.nodes,key=lambda xy:Point(xy).distance(pr))
@@ -357,7 +445,7 @@ def trace_group_cables(points,stations,cables, *,
             if not nx.has_path(graph,root,end):
                 raise ValueError(f"Aansluiting {row_index} hoort niet fysiek bij {station}/{group}.")
             nodes=nx.shortest_path(graph,root,end,weight="length")
-            route=tuple(edge_by_group[group][tuple(sorted((str(a),str(b))))] for a,b in zip(nodes[:-1],nodes[1:]))
+            route=tuple(edge_by_group[(station,group)][tuple(sorted((str(a),str(b))))] for a,b in zip(nodes[:-1],nodes[1:]))
             if not route:
                 raise ValueError(f"Aansluiting {row_index} ligt op feederroot; bevestig uitvoerveld.")
             def number(name):
