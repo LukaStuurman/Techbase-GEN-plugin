@@ -173,6 +173,40 @@ def test():
     assert all(x["pass"] for x in
                reduced_result["retention"]["stations"].values())
 
+    # Consumption and generation are separately aggregated at BOTH levels.
+    # The main feeder's 85 A generation load includes only the B99-01
+    # downstream generation once, also through the upstream S07-00 line.
+    mixed=points.copy()
+    mixed.loc[1,"Opwek ontwerpstroom"]=45.
+    mixed.loc[1,"Kabel opwek ontwerpstroom"]=85.
+    mixed_result=prepare_retention(
+        mixed,stations,cables,850.,distribution_cabinets=cabinets,
+    )["retention"]
+    for subgroup in ("S07-00","B99-00","B99-01"):
+        assert mixed_result["richtingen"][(station,subgroup)]["belasting_a"]==85.
+    # Conservative pointwise Hoogste Trafo load 20+45+25 = 90 A,
+    # not an unsafe netting of production against consumption.
+    assert mixed_result["stations"][station]["belasting_a"]==90.
+
+    # Only the cabinet offshoot fuse is too small. The old station must
+    # release ONLY the cabinet-branch endpoint, not change its fuse or
+    # move another station's endpoint onto this cable.
+    branch_too_big=points.copy()
+    branch_too_big.loc[1,"Ontwerpstroom"] = 60.
+    branch_too_big.loc[1,"Ontwerpstroom kabel"] = 60.
+    branch_limit=prepare_retention(
+        branch_too_big,stations,cables,850.,
+        distribution_cabinets=cabinets,
+        installed_fuses={
+            (station,"S07-00"):160,(station,"B99-00"):160,
+            (station,"B99-01"):63,(station,"S03-00"):160,
+        },
+    )
+    assert branch_limit["retention"]["vrijgegeven"]==("cab-branch",),branch_limit
+    assert set(branch_limit["retention"]["behouden"])=={
+        "cab-main","station-main"
+    },branch_limit
+
     # Subfeed gG checked independently; the upstream line is NEVER a
     # justification for a more powerful cabinet branch fuse.
     blown_points=points.copy()
