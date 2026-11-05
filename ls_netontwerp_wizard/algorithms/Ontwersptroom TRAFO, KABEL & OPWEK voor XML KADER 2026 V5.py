@@ -214,7 +214,7 @@ def parse_bouwjaar(val):
     except: 
         return 0
 
-def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None):
+def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
         category = map_gebruiksdoel(gebruiksdoel, type_woning, config)
         if is_bag_object(doorlaat) and (
@@ -222,7 +222,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
-        phases, amp = parse_doorlaat(doorlaat)
+        phases, amp = parse_doorlaat(
+            kader20_future if category not in (1, 4) and kader20_future else doorlaat
+        )
         value, label, warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
             bouwjaar_raw, phases, amp, generation=False,
@@ -376,7 +378,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     return final_val
 
 
-def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None):
+def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
         category = map_gebruiksdoel(gebruiksdoel, type_woning, config)
         if is_bag_object(doorlaat) and (
@@ -384,7 +386,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
-        phases, amp = parse_doorlaat(doorlaat)
+        phases, amp = parse_doorlaat(
+            kader20_future if category not in (1, 4) and kader20_future else doorlaat
+        )
         value, _label, _warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
             bouwjaar_raw, phases, amp, generation=True,
@@ -782,6 +786,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         
         total = source_points.featureCount()
         count = 0
+        inferred_business_future_count = 0
         
         req_panden = QgsFeatureRequest()
         req_panden.setSubsetOfAttributes([name_woning, name_bouwjaar], source_panden.fields())
@@ -856,37 +861,63 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 raw_kader_type = feat[kader20_index]
                 if raw_kader_type is not None and str(raw_kader_type).strip().casefold() not in ("", "null", "none"):
                     explicit_kader20 = str(raw_kader_type).strip()
+            future_index = feat.fields().lookupField(
+                "Kader20ToekomstigeAansluitwaarde"
+            )
+            future_connection = None
+            if future_index >= 0:
+                raw_future = feat[future_index]
+                if raw_future is not None and str(raw_future).strip().casefold() not in ("", "null", "none"):
+                    future_connection = str(raw_future).strip()
+            if framework == "2.0" and not future_connection:
+                category_for_future = map_gebruiksdoel(val_gebr, val_woning, full_config_std)
+                if category_for_future not in (1, 4, 8, 9):
+                    inferred_business_future_count += 1
+                    if inferred_business_future_count <= 10:
+                        feedback.pushWarning(
+                            f"Kader 2.0 aansluiting {feat.id()}: geen "
+                            "Kader20ToekomstigeAansluitwaarde ingevuld; "
+                            "huidige doorlaat wordt tijdelijk als toekomstige "
+                            "aansluitwaarde aangenomen. Controleer handmatig."
+                        )
             res_std = calculate_ontwerpstroom(
                 val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
                 full_config_std, feat.id(), feedback, use_1fase_exc,
                 default_appartement_zonder_doorlaat, explicit_kader20,
+                future_connection,
             )
             res_kabel = calculate_ontwerpstroom(
                 val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
                 full_config_kabel, feat.id(), None, use_1fase_exc,
                 default_appartement_zonder_doorlaat, explicit_kader20,
+                future_connection,
             )
             res_opwek_std = calculate_opwek_ontwerpstroom(
                 val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek,
                 full_config_std, res_std, use_1fase_exc,
-                effective_bouwjaar, explicit_kader20,
+                effective_bouwjaar, explicit_kader20, future_connection,
             )
             res_opwek_kabel = calculate_opwek_ontwerpstroom(
                 val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel,
                 full_config_kabel, res_kabel, use_1fase_exc,
-                effective_bouwjaar, explicit_kader20,
+                effective_bouwjaar, explicit_kader20, future_connection,
             )
             kader_type = ""
             if framework == "2.0" and (
                 not is_bag_object(val_door) or has_residential_usage(val_gebr)
             ):
                 cat = map_gebruiksdoel(val_gebr, val_woning, full_config_std)
-                phases, amps = parse_doorlaat(val_door)
+                phases, amps = parse_doorlaat(
+                    future_connection
+                    if cat not in (1, 4) and future_connection else val_door
+                )
                 _value, kader_type, _warning = kader_20.current(
                     "trafo", cat, val_woning, effective_bouwjaar, phases, amps,
                     explicit_type=explicit_kader20,
                     new_build_year=full_config_std["DEFAULTS"]["bouwjaar_grens"],
                 )
+                if cat not in (1, 4, 8, 9) and not future_connection:
+                    kader_type += " (huidige als toekomst aangenomen)"
 
             # Explicit BAG choices survive a general recalculation. A residential
             # table choice still follows the current pand unless manually overridden.
@@ -930,4 +961,10 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             if count % 200 == 0:
                  feedback.setProgress(int(100 * count / total))
                  
+        if inferred_business_future_count:
+            feedback.pushWarning(
+                f"Kader 2.0: {inferred_business_future_count} zakelijke/onzekere "
+                "aansluitingen zonder expliciete toekomstige aansluitwaarde. "
+                "Controleer en corrigeer deze vóór de clustering."
+            )
         return {self.OUTPUT: dest_id}
