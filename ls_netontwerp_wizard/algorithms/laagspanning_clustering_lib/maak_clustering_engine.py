@@ -2219,6 +2219,11 @@ def solve_greedy_voronoi_connected_assignment(
                 ),
             ]
         )
+        # New-only clustering has no existing source. During candidate
+        # pruning its final candidate may be tested for removal; an empty
+        # source list is invalid, not a zero-row Dijkstra calculation.
+        if not len(source_indices):
+            return None
         if len(np.unique(source_indices)) != len(source_indices):
             return None
         source_distances = cached_source_distances(source_indices)
