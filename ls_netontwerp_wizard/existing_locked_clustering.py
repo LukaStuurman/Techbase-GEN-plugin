@@ -139,7 +139,10 @@ def _select_reserved_edges(graph,node_list,physical_by_station):
             originals.append(line)
             owners.append(station)
     if not originals:
-        raise ValueError("Geen geverifieerde originele kabeldelen om vast te zetten.")
+        # A transformer/direction may be so overloaded that retaining zero
+        # old connections is the only safe choice. In that case every
+        # original consumer is released; do not invent a retained cable.
+        return {}
     tree=STRtree(originals)
     owner_by_edge={}
     actual=[]
