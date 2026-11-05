@@ -182,6 +182,8 @@ def _configurations(values, module):
     except (TypeError, ValueError):
         zero_ids = [4, 8, 9]
     common = {
+        "FRAMEWORK_VERSION": str(values.get("design_framework", "3.0")),
+        "NET_LEVEL": "trafo",
         "WOONHUIS": woon,
         "WOONHUIS_2022": woon_2022,
         "AMP_GLOBAL": parse_amp(raw("matrix_amp", "DEF_AMP_GLOBAL")),
@@ -205,6 +207,7 @@ def _configurations(values, module):
         },
     }
     cable = dict(common)
+    cable["NET_LEVEL"] = "kabel"
     cable["WOONHUIS"] = woon_kabel
     cable["WOONHUIS_2022"] = woon_kabel_2022
     cable["LAAD"] = parse_triplets(raw("matrix_laad_kabel", "DEF_LAAD_KABEL"))
@@ -510,6 +513,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 feedback,
                 one_phase,
                 apartment_default,
+                kader20_type if "kader20_type" in locals() else None,
             )
             cable = module.calculate_ontwerpstroom(
                 doorlaat,
@@ -523,25 +527,19 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 one_phase,
                 apartment_default,
             )
+            kader20_index = point.fields().lookupField("Kader20Type")
+            kader20_type = (
+                str(point[kader20_index]).strip()
+                if kader20_index >= 0 and point[kader20_index] not in (None, "", "NULL")
+                else None
+            )
             generation = module.calculate_opwek_ontwerpstroom(
-                doorlaat,
-                gebruik,
-                new_type,
-                gas,
-                opwek_table,
-                std_config,
-                normal,
-                one_phase,
+                doorlaat, gebruik, new_type, gas, opwek_table,
+                std_config, normal, one_phase, effective_bouwjaar, kader20_type,
             )
             generation_cable = module.calculate_opwek_ontwerpstroom(
-                doorlaat,
-                gebruik,
-                new_type,
-                gas,
-                opwek_cable_table,
-                std_config,
-                cable,
-                one_phase,
+                doorlaat, gebruik, new_type, gas, opwek_cable_table,
+                cable_config, cable, one_phase, effective_bouwjaar, kader20_type,
             )
             point_changes[int(point.id())] = {
                 output_indices["Ontwerpstroom"]: float(normal),
