@@ -297,9 +297,31 @@ def trace_group_cables(points,stations,cables, *,
                 continue
             child_start=exits[0]
             for upstream,up_geom in group_union.items():
-                if upstream==group or parent_group(upstream) is not None:
+                if upstream==group:
                     continue
-                if up_geom.distance(station_geoms[station])>station_anchor_tolerance_m:
+                up_parent=parent_group(upstream)
+                if up_parent is None:
+                    proved_source=(
+                        up_geom.distance(station_geoms[station])
+                        <=station_anchor_tolerance_m
+                    )
+                else:
+                    # A distribution cabinet may be supplied from a -01 or
+                    # -02 offshoot rather than directly from a station -00.
+                    # Prove its complete upstream path via the named parent
+                    # and the physical source cable, not via code similarity.
+                    parent_geom=group_union.get(up_parent)
+                    if parent_geom is None:
+                        continue
+                    intersection=up_geom.intersection(parent_geom)
+                    junctions_here={_node(p) for p in _points(intersection)}
+                    proved_source=(
+                        parent_geom.distance(station_geoms[station])
+                        <=station_anchor_tolerance_m
+                        and intersection.length<=.01
+                        and len(junctions_here)==1
+                    )
+                if not proved_source:
                     continue
                 # The upstream cable must physically enter the SAME cabinet
                 # and be uniquely rooted at the original station.
@@ -323,6 +345,11 @@ def trace_group_cables(points,stations,cables, *,
         feeder_parents[(station,group)]=upstream
         cabinet_links[(station,group)]=(cabinet_id,child_start,parent_tap)
         pairs.add((station,upstream))
+        # Preserve all physical -00/-01 parent edges of a cabinet's feeder.
+        upstream_parent=parent_group(upstream)
+        while upstream_parent:
+            pairs.add((station,upstream_parent))
+            upstream_parent=parent_group(upstream_parent)
     records={
         code:[(geom,type_key(kind)) for geom,kind in raw_records[code]]
         for code in {group for _station,group in pairs}
