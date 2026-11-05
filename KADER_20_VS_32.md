@@ -1,3 +1,23 @@
+## Aanvulling v1.33.2: afzonderlijk 2.0-gasadvies uit ingesloten afbeeldingen
+
+De eerdere vergelijking was onvolledig: **Kader 2.0 heeft wel degelijk een aparte gasadviesstaffel**, maar deze is in de Excel opgeslagen als **twee EMF-afbeeldingen** naast het werkblad `Ontwerpstroom_trafo`, niet als tabelcellen. De keuze voor Type 6/7 blijft gebaseerd op de **toekomstige** elektra-aansluitwaarde; het gasadvies kijkt naar **de huidige gas- én elektra-aansluiting** en verhoogt zo nodig de ontwerpstroom. De grootste van deze twee waarden geldt per netniveau.
+
+| Huidige gascategorie | Huidige elektriciteit | Trafo: geadviseerde E-aansluiting | LS-kabel: geadviseerde E-aansluiting |
+|---|---|---|---|
+| G4/G6/geen | kleiner dan 3×35 A | 3×25 A | 3×25 A |
+| G4/G6/geen | 3×35 t/m 3×160 A | Huidige E-aansluiting | Huidige E-aansluiting |
+| G4/G6/geen | groter dan 3×160 A | 3×250 A | 3×250 A |
+| G10 t/m G25 | kleiner dan 3×35 A | 3×50 A | 3×50 A |
+| G10 t/m G25 | 3×35 t/m 3×50 A | 3×80 A | 3×80 A |
+| G10 t/m G25 | 3×63 t/m 3×80 A | **3×160 A** | **3×80 A** |
+| G10 t/m G25 | vanaf 3×100 A | 3×250 A | 3×250 A |
+| >G25 | t/m 3×80 A | **3×250 A** | **3×80 A** |
+| >G25 | vanaf 3×100 A | 3×250 A | 3×250 A |
+
+Bij een **3×25 A** kleinzakelijke aansluiting zonder gasadvies geldt 8,7 A als minimum. Een kleinere zakelijke doorlaatwaarde (of niet-residentieel BAG zonder bekende doorlaat) krijgt **automatisch toekomstige 3×25 A**. Er wordt géén hogere bekende huidige aansluiting automatisch tot 3×25 A verlaagd. Voor gascategorieën als G10 en >G25 ligt het aanbevolen minimum hoger (bijvoorbeeld huidig 3×63 A met G10: **138 A trafo / 65 A kabel** bij een toekomstige 3×25 A-keuze).
+
+De huishoudens blijven **tot en met 3×40 A** huishouden; boven 3×40 A volgt de zakelijke rekenlogica. Ook de gasstaffel verandert **geen enkele 3.2-waarde**: deze nieuwe regels zijn uitsluitend voor de 2.0-tak.
+
 # Vergelijking Eea-0205.K 2.0 en 3.2 — QGIS-plugin v1.33.1
 
 ## Wat is de bron?
