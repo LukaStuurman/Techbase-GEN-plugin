@@ -32,7 +32,7 @@ def test():
     # A physical branch '-01' must not have its 160m added to the main
     # direction's separate physical length or impedance.
     trunk=Cable("trunk","K01-00","s","junction","4*150mm2 Al",65.)
-    trunk_end=Cable("trunkend","K01-00","junction2","main_end","4*95mm2 Al",120.)
+    trunk_end=Cable("trunkend","K01-00","junction","main_end","4*95mm2 Al",120.)
     branch=Cable("branch","K01-01","junction","branch_end","4*50mm2 Al",160.)
     connections=[
         conn("m","044.529","K01-00",("trunk","trunkend"),60),
@@ -59,10 +59,11 @@ def test():
     # -01/-02/-03 are physically separate offshoots of SAME -00; the main
     # carries all of them, while each branch keeps its own length, type, load.
     tap2=Cable("tap2","K01-00","junction","junction2","4*120mm2 Al",30.)
+    terminal=Cable("terminal","K01-00","junction2","far_end","4*95mm2 Al",120.)
     off2=Cable("off2","K01-02","junction2","end2","4*35mm2 Cu",80.)
     off3=Cable("off3","K01-03","junction","end3","4*50mm2 Al",55.)
     consumers=[
-        conn("a0","044.529","K01-00",("trunk","tap2","trunkend"),20),
+        conn("a0","044.529","K01-00",("trunk","tap2","terminal"),20),
         conn("a1","044.529","K01-01",("branch",),15),
         conn("a2","044.529","K01-02",("off2",),30),
         conn("a3","044.529","K01-03",("off3",),25),
@@ -71,7 +72,7 @@ def test():
     # non-physical topology for the direct main a0 path between tap2/end.
     extended=retain_original(
         {"044.529":217.},consumers,
-        [trunk,tap2,trunk_end,branch,off2,off3],
+        [trunk,tap2,terminal,branch,off2,off3],
         station_origins={("044.529","K01-00"):"s"},
         branch_roots={
             ("044.529","K01-01"):"junction",
@@ -89,7 +90,7 @@ def test():
     assert main["belasting_a"]==90.
     assert main["deel_belasting_a"]["trunk"]==90.
     assert main["deel_belasting_a"]["tap2"]==50.
-    assert main["deel_belasting_a"]["trunkend"]==20.
+    assert main["deel_belasting_a"]["terminal"]==20.
     assert extended["richtingen"][("044.529","K01-01")]["belasting_a"]==15.
     assert extended["richtingen"][("044.529","K01-02")]["belasting_a"]==30.
     assert extended["richtingen"][("044.529","K01-03")]["belasting_a"]==25.
