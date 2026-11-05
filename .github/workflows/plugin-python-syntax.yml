@@ -35,6 +35,6 @@ jobs:
         run: python ls_netontwerp_wizard/test_existing_station_retention.py
       - name: Geometrische trace van -00 hoofdroute en -01/-02/-03 aftakkingen
         run: |
-          python -m pip install "shapely>=2.0" "networkx>=3" "geopandas>=1.0"
+          python -m pip install "shapely>=2.0" "networkx>=3" "geopandas>=1.0" "scipy>=1.14"
           python ls_netontwerp_wizard/test_existing_group_trace.py
           python ls_netontwerp_wizard/test_locked_original_autocluster.py
