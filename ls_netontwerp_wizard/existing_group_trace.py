@@ -592,6 +592,20 @@ def trace_group_cables(points,stations,cables, *,
             raise ValueError(f"Aftakking {station}/{group} heeft geen parentkabeltraject.")
         parent_routes[(station,group)]=ids
 
+    # Preserve both actual endpoints and original cabinet geometry. A
+    # polygon's incoming and outgoing cables can touch different sides:
+    # only a *real existing* 0-cost equipment conductor may connect them
+    # in the QGIS graph. Do not invent an in-cabinet connection at a distance.
+    cabinet_geom_by_id=dict(cabinet_geometries)
+    cabinet_bridges={
+        (station,group):{
+            "cabinet":cabinet_id,
+            "incoming":feeder_taps[(station,group)],
+            "outgoing":junctions[(station,group)],
+            "geometry":cabinet_geom_by_id[cabinet_id],
+        }
+        for (station,group),cabinet_id in cabinet_metadata.items()
+    }
     point_id_to_index={}
     for (station,group),members in point_members.items():
         graph,_edges=group_graphs[(station,group)]
@@ -665,6 +679,7 @@ def trace_group_cables(points,stations,cables, *,
         "parent_routes":parent_routes,
         "feeder_parents":feeder_parents,
         "cabinet_metadata":cabinet_metadata,
+        "cabinet_bridges":cabinet_bridges,
         "point_id_to_index":point_id_to_index,
         "edge_geometries":edge_geometries,
         "group_graphs":group_graphs,
