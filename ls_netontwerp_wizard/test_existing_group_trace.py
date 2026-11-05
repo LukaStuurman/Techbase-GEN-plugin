@@ -77,6 +77,15 @@ def test():
     assert retained_prepared["stations"][station]["belasting_a"]==90.
     assert retained_prepared["richtingen"][(station,"K01-00")]["belasting_a"]==90.
 
+    incomplete=prepared.copy()
+    incomplete.loc[0,"Orig_Kabel_Opwek"]=float("nan")
+    try:
+        trace_group_cables(incomplete,stations,cables)
+    except ValueError as exc:
+        assert "ongeldige stroom" in str(exc),exc
+    else:
+        raise AssertionError("NaN opwek mag niet als 0 A worden beschouwd")
+
     # Different stations may legitimately reuse K01-00/-01/-02/-03.
     # Both sets must trace only to their own physical connected component.
     import pandas as pd
