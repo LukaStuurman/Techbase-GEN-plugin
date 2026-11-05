@@ -100,6 +100,37 @@ def test():
         "0","0",""
     ],prepared["records"]
 
+    # A cabinet may be fed by a branched station route S07-01, not directly
+    # by S07-00. The cabinet's separate B99-00 still requires its own gG,
+    # type, length and downstream current checks; upstream S07-00 and
+    # S07-01 each carry that same 50 A ONCE.
+    branched=cables.copy()
+    branched.loc[0,"geometry"]=LineString([(0,0),(25,0)])
+    import pandas as pd
+    supplier=branched.iloc[[0]].copy()
+    supplier["Kabel Subgroep"]=["S07-01"]
+    supplier["Type"]=["4*70mm2 Al"]
+    supplier.geometry=[LineString([(25,0),(50,0)])]
+    branched=gpd.GeoDataFrame(
+        pd.concat([branched,supplier],ignore_index=True),
+        geometry="geometry",crs="EPSG:28992",
+    )
+    via_branch=prepare_retention(
+        points,stations,branched,850.,distribution_cabinets=cabinets,
+    )
+    assert via_branch["feeder_parents"]=={
+        (station,"B99-00"):"S07-01"
+    },via_branch["feeder_parents"]
+    assert via_branch["retention"]["route_m"]["cab-main"]==100.
+    assert via_branch["retention"]["route_m"]["cab-branch"]==95.
+    for subgroup in ("S07-00","S07-01","B99-00"):
+        assert via_branch["retention"]["richtingen"][
+            (station,subgroup)
+        ]["belasting_a"]==50.,subgroup
+    assert via_branch["retention"]["richtingen"][
+        (station,"B99-01")
+    ]["belasting_a"]==30.
+
     # No cabinet evidence: fail closed (rather than connect B99-00 by
     # nearest-cable distance or append its lengths to station S03-00).
     try:
