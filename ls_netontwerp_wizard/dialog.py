@@ -405,13 +405,13 @@ class LSNetontwerpDialog(QDialog):
         self.framework_combo = QComboBox()
         self.framework_combo.addItem("Kader 3.0 (huidige methode)", "3.0")
         self.framework_combo.addItem(
-            "Kader 3.1 (nieuwe straatmeubilairwaarden)", "3.1"
+            "Kader 3.2 (bestaande rekenwaarden behouden)", "3.2"
         )
         self.framework_combo.addItem(
             "Kader 2.0 (Excel 2.0: warmtepomp, toekomstwaarde zakelijk)", "2.0"
         )
         self.framework_combo.setToolTip(
-            "Kader 3.1 wijzigt alleen straatmeubilair. Kader 2.0 gebruikt eigen "
+            "Kader 3.2 gebruikt dezelfde instellingen als de eerdere keuze 3.1. Kader 2.0 gebruikt eigen "
             "Excelwaarden voor verbruik en opwek op trafo-/kabelniveau. "
             "Kader 2.0 onderscheidt verwarmingssystemen; zonder expliciet "
             "Kader20Type is bouwjaar slechts een aanname. Onbekende toekomstige "
@@ -3226,7 +3226,7 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = widget.value()
         if not values["plan"]:
             values["only_plan"] = False
-        if values["design_framework"] == "3.1":
+        if values["design_framework"] in ("3.1", "3.2"):
             values["matrix_straat"] = list(values["matrix_straat_kader31"])
         return values
 
@@ -3242,7 +3242,7 @@ class LSNetontwerpDialog(QDialog):
         framework = str(
             self.settings.value(self.SETTINGS_PREFIX + "design_framework", "3.0")
         )
-        index = self.framework_combo.findData(framework)
+        index = self.framework_combo.findData("3.2" if framework == "3.1" else framework)
         self.framework_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _save_settings(self, values):
@@ -3275,7 +3275,7 @@ class LSNetontwerpDialog(QDialog):
             return
         self.prepared_state = state
         restored_framework = str(state["values"].get("design_framework", "3.0"))
-        restored_index = self.framework_combo.findData(restored_framework)
+        restored_index = self.framework_combo.findData("3.2" if restored_framework == "3.1" else restored_framework)
         if restored_index >= 0:
             self.framework_combo.setCurrentIndex(restored_index)
         self.plan_edit.setText(str(state["values"].get("plan", "")))
