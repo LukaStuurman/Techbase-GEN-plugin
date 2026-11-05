@@ -7222,9 +7222,18 @@ def main(_automatic_retry: bool = False) -> None:
             display_point = point_beside_cable(exact_anchor)
             placement_type = "Naast kabel (geen hoofdkabel in component)"
         exact_new_station_geometries.append(display_point)
-        new_station_links.append(
-            LineString([display_point.coords[0], graph_anchor.coords[0]])
-        )
+        # Rounding the network vertex to 0.1 m can create a short visible
+        # diagonal off the actual main cable. When the physical station is
+        # already on that main cable, do not draw this numeric snap artefact.
+        if (
+            placement_type == "Op hoofdkabel"
+            and display_point.distance(graph_anchor) <= 0.11
+        ):
+            new_station_links.append(LineString())
+        else:
+            new_station_links.append(
+                LineString([display_point.coords[0], graph_anchor.coords[0]])
+            )
         new_station_placement_types.append(placement_type)
 
     station_geometries = list(stations.geometry) + exact_new_station_geometries
