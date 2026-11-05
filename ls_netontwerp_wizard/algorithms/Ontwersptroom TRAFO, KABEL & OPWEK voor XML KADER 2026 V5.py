@@ -230,7 +230,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
                 )
             return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4) else doorlaat
+            kader20_future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, label, warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
@@ -396,7 +396,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
         if category not in (1, 4, 8, 9) and not kader20_future:
             return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4) else doorlaat
+            kader20_future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, _label, _warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
