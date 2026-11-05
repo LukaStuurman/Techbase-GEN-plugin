@@ -1,3 +1,23 @@
+## Aanvulling v1.33.2: afzonderlijk 2.0-gasadvies uit ingesloten afbeeldingen
+
+De eerdere vergelijking was onvolledig: **Kader 2.0 heeft wel degelijk een aparte gasadviesstaffel**, maar deze is in de Excel opgeslagen als **twee EMF-afbeeldingen** naast het werkblad `Ontwerpstroom_trafo`, niet als tabelcellen. De keuze voor Type 6/7 blijft gebaseerd op de **toekomstige** elektra-aansluitwaarde; het gasadvies kijkt naar **de huidige gas- én elektra-aansluiting** en verhoogt zo nodig de ontwerpstroom. De grootste van deze twee waarden geldt per netniveau.
+
+| Huidige gascategorie | Huidige elektriciteit | Trafo: geadviseerde E-aansluiting | LS-kabel: geadviseerde E-aansluiting |
+|---|---|---|---|
+| G4/G6/geen | kleiner dan 3×35 A | 3×25 A | 3×25 A |
+| G4/G6/geen | 3×35 t/m 3×160 A | Huidige E-aansluiting | Huidige E-aansluiting |
+| G4/G6/geen | groter dan 3×160 A | 3×250 A | 3×250 A |
+| G10 t/m G25 | kleiner dan 3×35 A | 3×50 A | 3×50 A |
+| G10 t/m G25 | 3×35 t/m 3×50 A | 3×80 A | 3×80 A |
+| G10 t/m G25 | 3×63 t/m 3×80 A | **3×160 A** | **3×80 A** |
+| G10 t/m G25 | vanaf 3×100 A | 3×250 A | 3×250 A |
+| >G25 | t/m 3×80 A | **3×250 A** | **3×80 A** |
+| >G25 | vanaf 3×100 A | 3×250 A | 3×250 A |
+
+Bij een **3×25 A** kleinzakelijke aansluiting zonder gasadvies geldt 8,7 A als minimum. Een kleinere zakelijke doorlaatwaarde (of niet-residentieel BAG zonder bekende doorlaat) krijgt **automatisch toekomstige 3×25 A**. Er wordt géén hogere bekende huidige aansluiting automatisch tot 3×25 A verlaagd. Voor gascategorieën als G10 en >G25 ligt het aanbevolen minimum hoger (bijvoorbeeld huidig 3×63 A met G10: **138 A trafo / 65 A kabel** bij een toekomstige 3×25 A-keuze).
+
+De huishoudens blijven **tot en met 3×40 A** huishouden; boven 3×40 A volgt de zakelijke rekenlogica. Ook de gasstaffel verandert **geen enkele 3.2-waarde**: deze nieuwe regels zijn uitsluitend voor de 2.0-tak.
+
 # Kader 2.0 ontwerpstroom en routeherstel — v1.33.1
 
 ## Workbookbron
@@ -34,7 +54,7 @@ De ontwerpstromen op trafo- en kabelniveau komen onafhankelijk uit hun eigen wer
 ## Verschillen / belangrijke aannames
 
 - **Verwarmingswijze is niet hetzelfde als bouwjaar.** In Kader 2.0 worden Type 1/2 (laagbouw) en Type 3/4 (hoogbouw) op verwarmingswijze onderscheiden. De GEN-invoer kent dit niet altijd. Zonder expliciete kolom `Kader20Type` gebruikt de plugin de bestaande bouwjaargrens 2022 slechts als *planningsaanname*: jonger = individuele warmtepomp. In `KaderType` wordt deze aanname vermeld. Vul `Kader20Type` met `Type 1`, `Type 2`, `Type 3` of `Type 4` om deze te overschrijven. De eerdere veldwaarde `OntwerpstroomType` uit Kader 3.x is opzettelijk **geen** Kader 2.0-type.
-- **Toekomstige aansluitwaarde is niet automatisch gelijk aan huidige.** Voor zakelijke aansluitingen kan de invoerkolom `Kader20ToekomstigeAansluitwaarde` (bv. `3 x 160 A`) worden toegevoegd. Die krijgt voorrang op het huidige doorlaatveld. Ontbreekt deze, dan krijgt de zakelijke aansluiting **0 A met waarschuwing** tot de toekomstige waarde via de ontwerpstroomcorrectie is vastgelegd; de huidige waarde wordt nooit als toekomst aangenomen.
+- **Toekomstige aansluitwaarde is niet automatisch gelijk aan huidige.** Voor zakelijke aansluitingen kan de invoerkolom `Kader20ToekomstigeAansluitwaarde` (bv. `3 x 160 A`) worden toegevoegd. Die krijgt voorrang op het huidige doorlaatveld. Ontbreekt deze én is de huidige zakelijke doorlaat **kleiner dan of gelijk aan 3×25 A** (of onbekend), dan kiest de plugin de eerste Type-6-staffel: **toekomstige 3×25 A**, met **8,7 A basisstroom** op trafo én kabel vóór gasadvies. Die keuze wordt in de laag bewaard. Is de huidige doorlaat hoger, dan blijft 0 A met waarschuwing gelden totdat de toekomstige waarde is opgegeven.
 - **Type 7 ‘overig’ is leeg in Excel.** Voor 3×100, 3×125, 3×200, hogere of onbekende zakelijke toekomstige aansluitwaarden bestaat geen vaste Kader 2.0-waarde in deze bron. De plugin verzint geen waarde en valt ook niet stilzwijgend terug naar Kader 3.x: de berekening levert **0 A met waarschuwing** op. Herstel deze via de bestaande nulwaarden-/handmatige ontwerpstroomcorrectie vóór clusteren.
 - **Type 5 aanvullende warmtecomponenten** vereist aantal × elektrisch vermogen × gelijktijdigheidsfactor. De aangeleverde workbook bevat geen volledige gelijktijdigheidsfactortabel. `kader_20.type5_surcharge_a` is beschikbaar voor expliciet aangeleverde getallen; de plugin voegt zonder invoer **geen** toeslag toe.
 - **Stijgleiding is een afzonderlijke berekening**, niet te mengen met trafo/kabel. De exacte Type 3 = 1,7 A en Type 4 = 4,3 A per appartement en Type 6 zakelijke staffel zijn beschikbaar als `kader_20.riser_current`. Zij zijn niet automatisch een extra veld op LS-aansluitpunten, omdat één stijgleiding meerdere aansluitingen kan omvatten.

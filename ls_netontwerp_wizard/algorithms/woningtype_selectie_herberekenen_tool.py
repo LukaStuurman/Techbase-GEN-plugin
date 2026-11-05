@@ -574,18 +574,37 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             if profile_index >= 0:
                 type_label = ""
                 if std_config.get("FRAMEWORK_VERSION") == "2.0":
-                    category = module.map_gebruiksdoel(gebruik, new_type, std_config)
-                    phases, amps = module.parse_doorlaat(
-                        future_connection if category not in (1, 4)
-                        and future_connection else doorlaat
+                    current_phases, current_amp = module.parse_doorlaat(doorlaat)
+                    category = module.kader_20.classify_category(
+                        module.map_gebruiksdoel(gebruik, new_type, std_config),
+                        current_phases, current_amp,
                     )
-                    _amps, type_label, _warning = module.kader_20.current(
-                        "trafo", category, new_type, effective_bouwjaar,
-                        phases, amps, explicit_type=kader20_type,
-                        new_build_year=std_config["DEFAULTS"]["bouwjaar_grens"],
-                    )
-                    if category not in (1, 4, 8, 9) and not future_connection:
-                        type_label += " (huidige als toekomst aangenomen)"
+                    auto_minimum = False
+                    selected_future = future_connection
+                    if category not in (1, 4, 8, 9) and not selected_future:
+                        selected_future = module.kader_20.default_small_business_future(
+                            current_phases, current_amp
+                        )
+                        auto_minimum = bool(selected_future)
+                    if category not in (1, 4, 8, 9) and not selected_future:
+                        type_label = "Type 6/7 - toekomstige aansluitwaarde ontbreekt (herstellen)"
+                    else:
+                        phases, amps = module.parse_doorlaat(
+                            selected_future
+                            if category not in (1, 4, 8, 9) else doorlaat
+                        )
+                        _amps, type_label, _warning = module.kader_20.current(
+                            "trafo", category, new_type, effective_bouwjaar,
+                            phases, amps, explicit_type=kader20_type,
+                            new_build_year=std_config["DEFAULTS"]["bouwjaar_grens"],
+                            gas_category=module.normalize_gas(gas),
+                            current_phases=current_phases,
+                            current_amp=current_amp,
+                        )
+                        if auto_minimum:
+                            type_label += " (automatisch kleinzakelijk min. 3x25A)"
+                    if auto_minimum and future_field >= 0:
+                        point_changes[int(point.id())][future_field] = selected_future
                 point_changes[int(point.id())][profile_index] = type_label
             # Keep the Kader Type 3 label synchronized when housing is edited.
             type_index = points.fields().lookupField(NEW_BUILD_TYPE_FIELD)

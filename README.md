@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.33.1
+## Laatste versie: 1.33.2
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.1/ls_netontwerp_wizard-1.33.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.1)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.2/ls_netontwerp_wizard-1.33.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.2)
+
+**Nieuw in 1.33.2:** Kader 2.0 gebruikt nu óók het aparte **gasadvies voor trafo en LS-kabel** uit de twee afbeeldingen naast `Ontwerpstroom_trafo`. Kleinzakelijk met een lagere/onbekende doorlaat krijgt automatisch **toekomstig 3×25 A** als minimumstaffel (8,7 A voor gasadvies); woningen blijven t/m **3×40 A** huishoudelijk. Het gas is weer te kiezen in de correctiepagina. Kader 3.2 en de vorige clusteringfixes zijn onveranderd. [Volledige gasstaffel en vergelijking](KADER_20_VS_32.md).
 
 **Nieuw in 1.33.1:** Kader **3.1** heet nu **3.2**, maar **geen enkele bestaande 3.1-ontwerpstroomwaarde is gewijzigd**. Kader **2.0** gebruikt nu verplicht een **toekomstige** aansluitwaarde voor kleinzakelijk/grootverbruik, zonder gascorrectie; ontbrekende toekomstwaarden worden 0 A met waarschuwing en zijn via de ontwerpstroomcorrectie vast te leggen. In die correctie kun je ook Kader-2.0-verwarmingstype 1–4 instellen. [Uitgebreide Excelvergelijking 2.0/3.2](KADER_20_VS_32.md).
 

@@ -114,17 +114,121 @@ def household_profile(housing, build_year, new_build_year=2022, explicit_type=No
     return (1 if new_build else 2), "aanname op basis van bouwjaar"
 
 
+def classify_category(category, phases, amps):
+    """All Kaders: a household is domestic up to and including 3x40 A.
+
+    Above 40 A per phase, it uses business rating rules. A missing GEN
+    doorlaat (e.g. residential BAG) does not trigger reclassification.
+    """
+    try:
+        nominal = float(amps)
+    except (ValueError, TypeError):
+        return category
+    if category in (1, 4) and phases and (int(phases) > 3 or nominal > 40):
+        return 10
+    return category
+
+
 def _business_rate(phases, amp):
-    if phases != 3 or amp is None:
+    if amp is None:
         return None
     value = float(amp)
-    if not math.isfinite(value):
+    if not math.isfinite(value) or value <= 0 or phases not in (1, 2, 3):
+        return None
+    # The first 2.0 row is 3x25 A. A smaller supply (e.g. 1x25 A,
+    # 2x25 A or 3x10 A) cannot yield an invented smaller business current.
+    if phases * value <= 3 * 25:
+        return 6, 8.7
+    if phases != 3:
         return None
     if 35 <= value <= 40:
         return 6, 32.0
     if 63 <= value <= 80:
         return 6, 65.0
     return BUSINESS_FUTURE.get(int(value)) if value.is_integer() else None
+
+
+def default_small_business_future(phases, amp):
+    """Minimum 3x25 A for unknown or smaller-than-3x25 business supplies.
+
+    Never silently downgrade an already larger 3-phase business connection.
+    """
+    if not phases or not amp:
+        return "3 x 25 A"
+    return "3 x 25 A" if (
+        phases in (1, 2, 3) and float(amp) > 0
+        and phases * float(amp) <= 75.0
+    ) else None
+
+
+def _current_from_suggested_amps(amps):
+    """Design current for the exact suggested 2.0 standard 3-phase rating."""
+    return {25: 8.7, 50: 44.0, 80: 65.0, 160: 138.0, 250: 210.0}[amps]
+
+
+def gas_advice(level, gas_category, phases, amps):
+    """Source: embedded gas advice illustrations beside the 2.0 trafo sheet.
+
+    The recommendation depends on the CURRENT electricity service and gas
+    service, separately for transformer and main LS cable; the business base
+    value itself comes from FUTURE electricity service.
+    """
+    if level not in ("trafo", "kabel"):
+        raise ValueError("Ongeldig netniveau voor gasadvies")
+    category = str(gas_category or "").upper().replace(" ", "")
+    if (">G25" in category or "G>25" in category or ">=G25" in category):
+        gas = ">G25"
+    elif "G10" in category or "G25" in category and "G4" not in category:
+        gas = "G10-G25"
+    else:
+        gas = "G4/G6/Geen"
+    try:
+        equivalent_amp = (float(phases or 0) * float(amps or 0)) / 3.0
+    except (ValueError, TypeError):
+        equivalent_amp = 0.0
+    if not math.isfinite(equivalent_amp) or equivalent_amp < 0:
+        equivalent_amp = 0.0
+    if gas == ">G25":
+        recommended = 250 if level == "trafo" or equivalent_amp > 80 else 80
+        return _current_from_suggested_amps(recommended)
+    if gas == "G10-G25":
+        if equivalent_amp < 35:
+            recommended = 50
+        elif equivalent_amp <= 50:
+            recommended = 80
+        elif equivalent_amp <= 80:
+            recommended = 160 if level == "trafo" else 80
+        else:
+            recommended = 250
+        return _current_from_suggested_amps(recommended)
+    # G4/G6/no gas: under 3x35 A use 3x25 A, from 3x35 to 3x160
+    # the diagram says 'use current electricity service' and over 3x160
+    # use 3x250 A. The exact rating can be unknown (3x100/3x125):
+    # in that case leave the *future* base intact, not invent a tariff.
+    if equivalent_amp < 35:
+        return 8.7
+    if equivalent_amp > 160:
+        return 210.0
+    if phases in (1, 2, 3) and amps:
+        row = _business_rate(phases, amps)
+        if row:
+            return float(row[1])
+        # The 2.0 business "future" rows leave 3x100/125 and several
+        # other intermediate sizes undefined. In the *gas advice* image,
+        # however, G4/G6 explicitly says to retain the CURRENT service
+        # through 3x160. Apply the existing GEN nominal-amp conversion
+        # to those intermediate CURRENT ratings, not a fictional future
+        # rating and never 0 A.
+        if phases == 3:
+            nominal = float(amps)
+            for maximum, current in (
+                (40.0, 32.0), (50.0, 44.0), (63.0, 51.0),
+                (80.0, 65.0), (100.0, 85.0), (125.0, 106.0),
+                (160.0, 138.0),
+            ):
+                if nominal <= maximum:
+                    return current
+    return 0.0
 
 
 def _value_business(phases, amp):
@@ -136,7 +240,8 @@ def _value_business(phases, amp):
 
 
 def current(level, category, housing, build_year, phases, amp, *,
-            generation=False, explicit_type=None, new_build_year=2022):
+            generation=False, explicit_type=None, new_build_year=2022,
+            gas_category=None, current_phases=None, current_amp=None):
     """Return (A, Kader type description, review warning).
 
     'level' is 'trafo' or 'kabel'; classification category is the existing
@@ -145,6 +250,10 @@ def current(level, category, housing, build_year, phases, amp, *,
     """
     if level not in HOUSEHOLD:
         raise ValueError(f"Onbekend netvlak: {level}")
+    category = classify_category(
+        category, current_phases if current_phases is not None else phases,
+        current_amp if current_amp is not None else amp,
+    )
     # GEN uses 'Huishoudelijk' for flats as well as detached houses.
     # The housing type, not just the broad use category, determines Type 3/4.
     if category == 1 and normalize_housing(housing) == "appartement":
@@ -180,14 +289,22 @@ def current(level, category, housing, build_year, phases, amp, *,
         if value is None:
             return 0.0, "Type 9 - ongedefinieerd straatmeubilair", "Kader 2.0 definieert deze straatmeubilairaansluiting niet"
         return (0.0 if generation else value), "Type 9 - straatmeubilair", ""
-    # Non-household and unknown-use existing connections: never interpret
-    # the gas category as a future connection rating without explicit data.
+    # Base from FUTURE supply; separate gas recommendation is tied to the
+    # CURRENT gas+electricity supplies in two embedded Excel illustrations.
     value, label = _value_business(phases, amp)
-    warning = "" if value > 0 else (
-        "Kader 2.0 mist een vaste waarde voor deze toekomstige zakelijke "
-        "aansluiting; bepaal de toekomstige waarde en corrigeer handmatig."
+    if value <= 0:
+        return 0.0, label, (
+            "Kader 2.0 mist een vaste waarde voor deze toekomstige zakelijke "
+            "aansluiting; bepaal de toekomstige waarde en corrigeer handmatig."
+        )
+    gas_value = gas_advice(
+        level, gas_category,
+        current_phases if current_phases is not None else phases,
+        current_amp if current_amp is not None else amp,
     )
-    return value, label, warning
+    if gas_value > value:
+        return gas_value, label + " (gasadvies verhoogt ontwerpstroom)", ""
+    return value, label, ""
 
 
 def riser_current(kind, number_of_units, future_connection_amp=None):
