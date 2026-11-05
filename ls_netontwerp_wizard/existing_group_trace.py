@@ -292,9 +292,16 @@ def trace_group_cables(points,stations,cables, *,
                     "kabelgroep. Geen willekeurige verdeelkast kiezen."
                 )
             source=matching[0]
-        if source.distance(station_geoms[station])<=station_anchor_tolerance_m:
+        station_distance=float(source.distance(station_geoms[station]))
+        if station_distance<=terminal_tolerance_m:
+            # Genuine station outlet, not a nearby cabinet cable.
             continue
         if not cabinet_geometries:
+            if station_distance<=station_anchor_tolerance_m:
+                # The later graph ownership proof still requires an actual
+                # zero-cost station/enclosure link; proximity alone is not
+                # enough to energize a connection.
+                continue
             raise ValueError(
                 f"Kabelgroep {station}/{group} komt niet rechtstreeks uit het "
                 "station. De verdeelkastenlaag is verplicht om de "
@@ -347,6 +354,11 @@ def trace_group_cables(points,stations,cables, *,
                     continue
                 candidates.append((upstream,cabinet_id,child_start,source_ends[0]))
         unique={(upstream,cabinet_id) for upstream,cabinet_id,_child,_tap in candidates}
+        if len(unique)==0 and station_distance<=station_anchor_tolerance_m:
+            # No confirmed independent incoming cabinet supply. Defer to
+            # the original actual station/enclosure-network proof instead
+            # of pretending a very nearby main cable is necessarily a box.
+            continue
         if len(unique)!=1:
             raise ValueError(
                 f"Kabelgroep {station}/{group} heeft "
