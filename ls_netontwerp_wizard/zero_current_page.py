@@ -415,7 +415,7 @@ class ZeroCurrentPage(QWidget):
         self.unit_group.setVisible(not is_household)
         self.gas_combo.setVisible(code == "Zakelijk")
         self.gas_label.setVisible(code == "Zakelijk")
-        fill_unit_combo(self.unit_combo, code)
+        fill_unit_combo(self.unit_combo, code, self.host._workflow_field_defaults().get('design_framework'))
         if code == "Straatmeubilair":
             default_trafo = self._matrix_value("matrix_straat", 5.8)
             default_cable = default_trafo
