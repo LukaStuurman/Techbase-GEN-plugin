@@ -1,3 +1,17 @@
+## Aanvulling: verdeelkast als apart oorsprongspunt van eigen Kabel Subgroep
+
+**Een eigen hoofdgroep achter een verdeelkast is niet altijd een directe stationsrichting.** Bijvoorbeeld S07-00 (station naar kast) → verdeelkast LS-024709 → B99-00 (kastuitgang) → B99-01 (aftakking). Die kabelcodes mogen niet worden samengevoegd; de uitgaande B99-00 houdt eigen lengte, kabeltype, belasting, impedantie en gG-controle. De belastingen van B99-00 en B99-01 tellen óók eenmalig mee op de voedende S07-00. Dezelfde logica werkt wanneer de kast via S07-01 van de hoofdroute S07-00 wordt gevoed.
+
+De bronlaag `e_lv_distribution_box` (punten, lijnen of polygonen) is expliciet nodig om een niet-rechtstreeks gevoede groep te kunnen aanwijzen. De code zoekt een uniek origineel kabeleind aan die kast, en een fysiek station-gewortelde bronkabel. Ook binnen 15 m van het station wordt een aangetoonde verdeelkastvoeding apart gehouden. Bij twee mogelijke bronkabels, een ontbrekend kastobject, onduidelijke kabeltypegegevens of een niet-aantoonbare verbinding volgt een foutmelding; niet een gok naar het dichtstbijzijnde kabeldeel.
+
+Bij een verdeelkastpolygoon kunnen in- en uitgaande kabels op verschillende zijden eindigen. De QGIS-kabelgraph moet een **bestaande** 0-rekenmeterverbinding langs het kastobject bevatten; deze wordt specifiek gereserveerd voor het originele station. Ontbreekt die, dan is de historische route NIET bewezen en mislukt de behoudmodus. Dit wordt ook gecontroleerd wanneer geen enkele aansluiting naar een nieuw station hoeft.
+
+**Bronbescherming:** vervallen oorspronkelijke stations worden uit de actieve bestaande stationslijst gehouden en hun aansluitingen mogen alleen naar een nieuwe bron. Handmatig vastgezette nieuwe stations zijn voorlopig niet ondersteund in de behoudmodus: er verschijnt een expliciete melding in plaats van ze verkeerd als bestaand te laten deelnemen. De gewone autocluster blijft onveranderd.
+
+**Controlebestand:** de GitHub Actions-workflow voert automatisch de regressies uit en publiceert als bestand `controle-bestaande-stations-verdeelkast`: een Markdown-rapport en afzonderlijke CSV's voor station, richting, fysiek kabeldeel en originele aansluiting. Alle numerieke voorbeeldwaarden zijn **synthetisch** en dus geen bewijs over echte aansluitingen of gG-zekeringen in het project van de gebruiker.
+
+---
+
 # Ontwerp: oorspronkelijke kabelrichtingen behouden (nog geen actieve autoclusteroptie)
 
 ## Brongegevens die de gebruiker heeft bevestigd
