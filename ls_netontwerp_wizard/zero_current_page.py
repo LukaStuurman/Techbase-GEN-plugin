@@ -662,6 +662,18 @@ class ZeroCurrentPage(QWidget):
         if standard.get("FRAMEWORK_VERSION") == "2.0" and kader20_override:
             explicit_type = kader20_override
         if standard.get("FRAMEWORK_VERSION") == "2.0":
+            actual_service = self._field_value(
+                feature, values.get(
+                    "field_passthrough", "service_connection_type_type"
+                )
+            )
+            phases, amps = module.parse_doorlaat(actual_service)
+            if phases and (phases > 3 or amps > 40):
+                raise ValueError(
+                    "Deze woonhuisaansluiting is zwaarder dan 3x40 A. "
+                    "Gebruik de zakelijke Kader 2.0-categorie en kies de "
+                    "toekomstige aansluitwaarde."
+                )
             # Presets must calculate on the selected Kader, not always use
             # the legacy raw WOONHUIS matrix bypassing Kader 2.0.
             normal = float(module.calculate_ontwerpstroom(
