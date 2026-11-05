@@ -31,3 +31,5 @@ jobs:
         run: python ls_netontwerp_wizard/test_kader_20.py
       - name: Bewaak 3.2-waarden en controleer 2.0-futures
         run: python ls_netontwerp_wizard/test_kader_comparison_20_32.py
+      - name: Originele stations, kabelgroepen en aftakkingen controleren
+        run: python ls_netontwerp_wizard/test_existing_station_retention.py
