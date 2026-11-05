@@ -28,13 +28,15 @@ def fixture():
     # S07-00 has NO directly connected consumer. Its only demand
     # is from B99-00 and B99-01 behind the distribution cabinet.
     cables = gpd.GeoDataFrame({
-        "Kabel Subgroep":["S07-00","B99-00","B99-01","S03-00"],
-        "Type":["4*150mm2 Al","4*95mm2 Al","4*50mm2 Cu","4*120mm2 Al"],
+        "Kabel Subgroep":["S07-00","B99-00","B99-01","S03-00","S03-00"],
+        "Type":["4*150mm2 Al","4*95mm2 Al","4*50mm2 Cu",
+                "4*150mm2 Al","4*120mm2 Al"],
     }, geometry=[
         LineString([(0,0),(50,0)]),
         LineString([(50,0),(100,0)]),
         LineString([(75,0),(75,20)]),
-        LineString([(0,0),(0,60)]),
+        LineString([(0,0),(0,30)]),
+        LineString([(0,30),(0,60)]),
     ], crs="EPSG:28992")
     cabinets = gpd.GeoDataFrame({
         "Nummer":["LS-024709"],
@@ -73,6 +75,12 @@ def test():
     assert groups[(station,"S07-00")]["fysiek_uniek_m"]==50.
     assert groups[(station,"B99-00")]["fysiek_uniek_m"]==50.
     assert groups[(station,"B99-01")]["fysiek_uniek_m"]==20.
+    # Direct station groups can be composed of multiple differently typed
+    # successive cable sections, NOT mistaken for a cabinet-fed cable.
+    assert len(groups[(station,"S03-00")]["segmenten"])==2
+    assert {row[1] for row in groups[(station,"S03-00")]["segmenten"]}=={
+        "150AL","120AL"
+    }
     assert all(x["pass"] for x in groups.values()),groups
     # The group really starts AT the cabinet: it must not be silently
     # recast as an additional direct station feeder.
