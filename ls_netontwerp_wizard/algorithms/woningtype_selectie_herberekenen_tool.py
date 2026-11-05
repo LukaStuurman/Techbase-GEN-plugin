@@ -508,6 +508,14 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 if kader20_index >= 0 and point[kader20_index] not in (None, "", "NULL")
                 else None
             )
+            future_field = point.fields().lookupField(
+                "Kader20ToekomstigeAansluitwaarde"
+            )
+            future_connection = (
+                str(point[future_field]).strip()
+                if future_field >= 0 and str(point[future_field]).strip().casefold()
+                not in ("", "null", "none") else None
+            )
             normal = module.calculate_ontwerpstroom(
                 doorlaat,
                 gebruik,
@@ -520,6 +528,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 one_phase,
                 apartment_default,
                 kader20_type,
+                future_connection,
             )
             cable = module.calculate_ontwerpstroom(
                 doorlaat,
@@ -533,14 +542,17 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 one_phase,
                 apartment_default,
                 kader20_type,
+                future_connection,
             )
             generation = module.calculate_opwek_ontwerpstroom(
                 doorlaat, gebruik, new_type, gas, opwek_table,
                 std_config, normal, one_phase, effective_bouwjaar, kader20_type,
+                future_connection,
             )
             generation_cable = module.calculate_opwek_ontwerpstroom(
                 doorlaat, gebruik, new_type, gas, opwek_cable_table,
                 cable_config, cable, one_phase, effective_bouwjaar, kader20_type,
+                future_connection,
             )
             point_changes[int(point.id())] = {
                 output_indices["Ontwerpstroom"]: float(normal),
@@ -563,12 +575,17 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 type_label = ""
                 if std_config.get("FRAMEWORK_VERSION") == "2.0":
                     category = module.map_gebruiksdoel(gebruik, new_type, std_config)
-                    phases, amps = module.parse_doorlaat(doorlaat)
+                    phases, amps = module.parse_doorlaat(
+                        future_connection if category not in (1, 4)
+                        and future_connection else doorlaat
+                    )
                     _amps, type_label, _warning = module.kader_20.current(
                         "trafo", category, new_type, effective_bouwjaar,
                         phases, amps, explicit_type=kader20_type,
                         new_build_year=std_config["DEFAULTS"]["bouwjaar_grens"],
                     )
+                    if category not in (1, 4, 8, 9) and not future_connection:
+                        type_label += " (huidige als toekomst aangenomen)"
                 point_changes[int(point.id())][profile_index] = type_label
             # Keep the Kader Type 3 label synchronized when housing is edited.
             type_index = points.fields().lookupField(NEW_BUILD_TYPE_FIELD)
