@@ -67,6 +67,10 @@ def main():
                 got, label, warn = k.current(level, 10, "", 0, 3, amp, generation=gen)
                 check(got, current)
                 assert not warn and ("Type 6" if amp <= 80 else "Type 7") in label
+        # 't/m' is an inclusive range, not a list of endpoint ratings.
+        for amp, expected_range in ((38, 32), (70, 65)):
+            check(k.current(level, 10, "", 0, 3, amp)[0], expected_range)
+        assert k.current(level, 10, "", 0, 3, 25.5)[2]
         # The workbook contains no fixed 100/125/200/other future connection
         # value. Never fall back silently to Kader 3.x defaults.
         for amp in (100, 125, 200, 315):
@@ -81,6 +85,8 @@ def main():
         for level in ("trafo", "kabel"):
             check(k.current(level, 9, "", 0, 3, amp)[0], rate)
             check(k.current(level, 9, "", 0, 3, amp, generation=True)[0], 0)
+    check(k.current("trafo", 9, "", 0, 3, 45)[0], 22)
+    check(k.current("kabel", 9, "", 0, 3, 75)[0], 36)
     assert k.current("trafo", 9, "", 0, 1, 6)[2]
 
     # Independently supplied rising-main table; no Type 5 simultaneity factor
