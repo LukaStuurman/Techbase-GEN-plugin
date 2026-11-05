@@ -105,7 +105,7 @@ def build(output):
         )
     report.extend([
         "",
-        "De verdeelkast wordt gevoed door S07-00. De aparte "
+        "Verdeelkast LS-024709 wordt gevoed door S07-00. De aparte "
         "B99-00-kastuitgang en B99-01-aftakking behouden ieder een eigen "
         "kabeltype, fysieke lengte, gG-controle en ontwerpstroom. "
         "De upstream S07-00 draagt de totale 50 A van beide kastgroepen "
