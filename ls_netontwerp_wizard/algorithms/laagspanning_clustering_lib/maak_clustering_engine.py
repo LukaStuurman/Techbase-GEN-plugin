@@ -6031,10 +6031,15 @@ def main(_automatic_retry: bool = False) -> None:
             in globals().get("RETIRED_STATION_NAMES", set())
         }
         if retired:
-            name_field=required_column(
-                stations,("Stationsnaa","Stationsnaam","Station"),
-                "oorspronkelijk station",
+            name_field=next(
+                (column for column in ("Stationsnaa","Stationsnaam","Station")
+                 if column in stations.columns),None
             )
+            if not name_field:
+                raise ValueError(
+                    "Bestaande stationslaag mist stationsnaam voor uitsluiten "
+                    "van vervallen stations."
+                )
             excluded=stations[name_field].astype(str).str.strip().isin(retired)
             if bool(excluded.any()):
                 log(
