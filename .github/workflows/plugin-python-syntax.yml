@@ -26,3 +26,6 @@ jobs:
               ast.parse(file.read_text(encoding="utf-8-sig"), filename=str(file))
           print(f"Syntax OK: {len(files)} Python source files")
           PY
+
+      - name: Controleer Kader 2.0 tegen Excel-tabellen
+        run: python ls_netontwerp_wizard/test_kader_20.py
