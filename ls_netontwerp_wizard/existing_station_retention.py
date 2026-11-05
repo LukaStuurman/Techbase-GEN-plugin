@@ -58,21 +58,37 @@ def parent_group(code):
     return match.group(1) + "-00"
 
 
-def is_descendant_group(code, ancestor):
-    """Whether a full subgroup is electrically downstream from ancestor."""
-    current = parent_group(code)
+def supplied_by(station, code, feeder_parents=None):
+    """Physical supply overrides suffix parent, e.g. cabinet V02-00 -> S01-00."""
+    code = group_code(code)
+    if feeder_parents is not None and (station, code) in feeder_parents:
+        return group_code(feeder_parents[(station,code)])
+    return parent_group(code)
+
+
+def is_descendant_group(code, ancestor, station=None, feeder_parents=None):
+    """Whether downstream group is actually supplied through ancestor."""
+    current = supplied_by(station, code, feeder_parents)
+    visited = {group_code(code)}
     while current is not None:
         if current == ancestor:
             return True
-        current = parent_group(current)
+        if current in visited:
+            raise ValueError(f"Voedingslus in Kabel Subgroep voor station {station}.")
+        visited.add(current)
+        current = supplied_by(station, current, feeder_parents)
     return False
 
 
-def direct_child_group(code, ancestor):
-    """Find the first subgroup between a descendant and its ancestor."""
-    current = group_code(code)
+def direct_child_group(code, ancestor, station=None, feeder_parents=None):
+    """First independently controlled subgroup after the parent supply point."""
+    current=group_code(code)
+    visited=set()
     while True:
-        parent = parent_group(current)
+        if current in visited:
+            raise ValueError(f"Voedingslus voor station {station}: {code}.")
+        visited.add(current)
+        parent = supplied_by(station, current, feeder_parents)
         if parent is None:
             raise ValueError(f"Subgroep {code} ligt niet onder {ancestor}")
         if parent == ancestor:
@@ -181,7 +197,8 @@ def _maximum(records,prefix):
     )
 
 
-def check_paths(connections, cables, station_origins=None, branch_roots=None):
+def check_paths(connections, cables, station_origins=None, branch_roots=None,
+                feeder_parents=None):
     """No arbitrary paths, cable mixing or off-branch directional shortcuts.
 
     station_origins maps station->station origin node, branch_roots maps
@@ -195,7 +212,7 @@ def check_paths(connections, cables, station_origins=None, branch_roots=None):
     for c in connections:
         group=group_code(c.group)
         start=None
-        if parent_group(group):
+        if supplied_by(c.station,group,feeder_parents):
             if branch_roots is not None:
                 start=branch_roots.get((c.station,group))
                 if not start: raise ValueError(f"Geen bevestigd aftakpunt voor {c.station}/{group}")
@@ -227,7 +244,8 @@ def check_paths(connections, cables, station_origins=None, branch_roots=None):
 
 def retain_original(stations_a, connections, cables, *, installed_fuses=None,
                     station_origins=None, branch_roots=None,
-                    parent_routes=None, profile="both", max_route_m=None):
+                    parent_routes=None, profile="both", max_route_m=None,
+                    feeder_parents=None):
     """Best-effort conservative removal, never adds a foreign connection.
 
     Returns retained/released IDs and separate per-(station, full group) cable
@@ -240,7 +258,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
     if not connections:raise ValueError("Geen bestaande aansluitingen.")
     if len(set(c.id for c in connections))!=len(connections):
         raise ValueError("Aansluit-ID's niet uniek.")
-    check_paths(connections,cables,station_origins,branch_roots)
+    check_paths(connections,cables,station_origins,branch_roots,feeder_parents)
     edge_by_id={e.id:e for e in cables}
     if max_route_m is not None and (
         not isfinite(float(max_route_m)) or float(max_route_m)<=0
@@ -251,11 +269,15 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         """Physically traverse -00 then branch, never concatenate side branches."""
         full=list(connection.edge_ids)
         code=group_code(connection.group)
-        while parent_group(code):
+        visited=set()
+        while supplied_by(connection.station,code,feeder_parents):
+            if code in visited:
+                raise ValueError(f"Voedingslus bij {connection.station}/{code}.")
+            visited.add(code)
             if parent_routes is None or (connection.station,code) not in parent_routes:
                 raise ValueError(f"Oorspronkelijke bovenliggende route ontbreekt voor {code}.")
             full=list(parent_routes[(connection.station,code)])+full
-            code=parent_group(code)
+            code=supplied_by(connection.station,code,feeder_parents)
         return tuple(full)
 
     route_m={
@@ -279,7 +301,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             direct[(c.station,name)].append(c)
             while name:
                 by_group[(c.station,name)].append(c)
-                name=parent_group(name)
+                name=supplied_by(c.station,name,feeder_parents)
         direction={}
         for key,members in by_group.items():
             own=direct.get(key,[])
@@ -287,9 +309,11 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             # Each child must have a verified physical path on THIS parent
             # group to its tap. Never add the child's length to the parent.
             children=sorted({
-                direct_child_group(c.group,key[1])
+                direct_child_group(c.group,key[1],c.station,feeder_parents)
                 for c in members
-                if c.group!=key[1] and is_descendant_group(c.group,key[1])
+                if c.group!=key[1] and is_descendant_group(
+                    c.group,key[1],c.station,feeder_parents
+                )
             })
             for child in children:
                 link_key=(key[0],child)
@@ -310,7 +334,9 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
                 if consumer.group == key[1]:
                     used_path=consumer.edge_ids
                 else:
-                    child=direct_child_group(consumer.group,key[1])
+                    child=direct_child_group(
+                        consumer.group,key[1],consumer.station,feeder_parents
+                    )
                     if parent_routes is None or (consumer.station,child) not in parent_routes:
                         raise ValueError(f"Bovenliggende route {key[1]} -> {child} ontbreekt.")
                     used_path=parent_routes[(consumer.station,child)]
@@ -396,7 +422,9 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
                    (c.id in bad_route_ids or c.station in bad_stations or any(
                        station == c.station and (
                            group_code(c.group) == group
-                           or is_descendant_group(c.group,group)
+                           or is_descendant_group(
+                               c.group,group,c.station,feeder_parents
+                           )
                        )
                        for station,group in bad_groups
                    ))]
@@ -406,7 +434,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             c.id in bad_route_ids,
             any(station == c.station and (
                 group_code(c.group) == group
-                or is_descendant_group(c.group,group)
+                or is_descendant_group(c.group,group,c.station,feeder_parents)
             ) for station,group in bad_groups),
             max(c.kabel_verbruik_a,c.kabel_opwek_a,c.trafo_verbruik_a,c.trafo_opwek_a),
             route_m[c.id],c.id))
@@ -416,7 +444,9 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             "Kabelrichting of bestaande kabellengte/type onvoldoende" if
             any(station==chosen.station and (
                 group_code(chosen.group)==group
-                or is_descendant_group(chosen.group,group)
+                or is_descendant_group(
+                    chosen.group,group,chosen.station,feeder_parents
+                )
             ) for station,group in bad_groups) else
             "Trafocapaciteit onvoldoende"
         )
