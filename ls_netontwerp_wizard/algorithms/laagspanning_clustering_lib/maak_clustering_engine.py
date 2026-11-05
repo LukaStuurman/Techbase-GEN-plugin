@@ -5141,6 +5141,11 @@ def make_qgis_project(gpkg: Path) -> Path | None:
             layer_specs.append(
                 ("aangevulde_aansluitkabels", "Aangevulde aansluitkabels")
             )
+        if "bestaande_richtingen_controle" in gpkg_layer_names:
+            layer_specs.append(
+                ("bestaande_richtingen_controle",
+                 "Controle bestaande richtingen per Kabel Subgroep")
+            )
         loaded = {}
         palette = list(plt.cm.tab20.colors) + list(plt.cm.Set3.colors)
         overview = pd.read_csv(OUT / "cluster_overzicht.csv", sep=";", decimal=",")
@@ -5557,7 +5562,8 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         ]
         hidden_reference_layers = [
             loaded[name]
-            for name in ("bag_panden_appartementen",)
+            for name in ("bag_panden_appartementen",
+                         "bestaande_richtingen_controle")
             if name in loaded
         ]
         order = [
