@@ -1,3 +1,21 @@
+## v1.33.2 — Kader 2.0 gasadvies en kleinzakelijk 3×25 A
+
+De gasstaffels staan in Kader 2.0 **als twee ingesloten afbeeldingen** rechts van `Ontwerpstroom_trafo` (`image2.emf` en `image3.emf`), niet als gewone Excel-cellen. Ze zijn nu overgenomen met afzonderlijke adviezen op **trafoniveau** en **LS-kabelniveau**. Het advies hangt af van de **huidige** combinatie van gasaansluiting en elektriciteitsdoorlaat, terwijl de basisontwerpstroom Type 6/7 van de **toekomstige** elektriciteitsaansluitwaarde komt.
+
+- **G4/G6/geen gas:** bij huidige elektriciteit kleiner dan 3×35 A geldt gasadvies 3×25 A; tot en met 3×160 A blijft de huidige elektriciteitsaansluitwaarde leidend, boven 3×160 A wordt 3×250 A gebruikt.
+- **G10 t/m G25:** trafo én LS-kabel: onder 3×35 A → 3×50 A, 3×35–50 A → 3×80 A. Bij 3×63–80 A adviseert de afbeelding **trafo 3×160 A** en **LS-kabel 3×80 A**. Vanaf 3×100 A wordt 3×250 A geadviseerd.
+- **Groter dan G25:** tot en met 3×80 A geldt **trafo 3×250 A** en **LS-kabel 3×80 A**; vanaf 3×100 A 3×250 A op beide niveaus.
+- **Kleinzakelijk beneden 3×25 A:** de eerste Type-6-staffel is altijd minimaal **toekomstig 3×25 A** (basis **8,7 A**, vóór eventueel hoger gasadvies). De plugin zet dit zelf in `Kader20ToekomstigeAansluitwaarde`, ook bij kleine één- of tweefase- en niet-residentiële BAG-aansluitingen zonder doorlaatwaarde. Grotere zakelijke aansluitingen zonder toekomstwaarde blijven gemarkeerd als onvolledig en krijgen geen willekeurige lagere staffel.
+- **Huishoudens t/m 3×40 A:** net als andere kaders behouden woningen hun woonhuistabellen **tot en met 3×40 A**. Boven de grens worden ze zakelijk beoordeeld. De woonhuiscorrectie meldt dat je bij zo'n zware aansluiting de zakelijke categorie moet gebruiken.
+- **Gas in de correctie-UI:** de gascategorie wordt ook bij Kader 2.0 getoond en opgeslagen. Bij meerdere geselecteerde zakelijke aansluitingen rekent de plugin de ontwerpstroom opnieuw **per aansluiting** met de werkelijke huidige doorlaatwaarde en de gekozen gascategorie.
+- **Kader 3.2 ongewijzigd:** geen bedragen, matrices of andere rekenregels van de voormalige 3.1-keuze zijn aangepast. De bestaande voronoi/stations-/sleufcorrecties blijven behouden.
+
+**Validatie:** regressiescripts testen de originele 2.0-waarden, de ingesloten gasstaffel op beide netniveaus, minimum 3×25 A, woonhuisaansluitingen bij 3×40/50 A, toekomstwaarde voor groter zakelijk, en onveranderde 3.1/3.2-uitkomsten. De QGIS-projecttest met de echte station- en sleuflagen (waaronder 044.529) is nog niet uitgevoerd.
+
+Zie [Kader 2.0 versus 3.2](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/KADER_20_VS_32.md).
+
+---
+
 ## v1.33.1 — Kader 2.0 zakelijk correct, 3.1 alleen hernoemd naar 3.2
 
 **Vergelijking met de door de gebruiker aangeleverde Eea-0205.K 3.2.xlsx:** Kader 3.2 bevat, net als 2.0, kleinzakelijk en grootverbruik. Kader **2.0** rekent zakelijke aansluitingen echter met de **toekomstige aansluitwaarde, zonder gasstaffel**. Kader **3.2** rekent met de **huidige aansluitwaarde en gascategorie**. Type-indelingen en laadwaarden verschillen ook. Details en voorbeeldbedragen: [KADER_20_VS_32.md](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/KADER_20_VS_32.md).
