@@ -1,3 +1,18 @@
+## v1.33.1 — Kader 2.0 zakelijk correct, 3.1 alleen hernoemd naar 3.2
+
+**Vergelijking met de door de gebruiker aangeleverde Eea-0205.K 3.2.xlsx:** Kader 3.2 bevat, net als 2.0, kleinzakelijk en grootverbruik. Kader **2.0** rekent zakelijke aansluitingen echter met de **toekomstige aansluitwaarde, zonder gasstaffel**. Kader **3.2** rekent met de **huidige aansluitwaarde en gascategorie**. Type-indelingen en laadwaarden verschillen ook. Details en voorbeeldbedragen: [KADER_20_VS_32.md](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/KADER_20_VS_32.md).
+
+- **Kader 3.1 → Kader 3.2:** uitsluitend de zichtbare naam en de opgeslagen nieuwe versienaam zijn aangepast. De vroegere **3.1-tabellen en berekeningsuitkomsten zijn absoluut niet gewijzigd**. Bestaande werkprojecten die `3.1` opgeslagen hebben gebruiken nog precies dezelfde index en instellingen.
+- **Kader 2.0 zakelijke aansluitingen:** zonder expliciete `Kader20ToekomstigeAansluitwaarde` wordt de *huidige* doorlaatwaarde niet langer stilzwijgend overgenomen. De aansluiting krijgt 0 A en een waarschuwing en staat op de correctiepagina. Deze nulwaarde is een **signaal dat invoer ontbreekt**; geen geldig ontwerpadvies.
+- **Waardes invullen vanuit QGIS:** kies op de ontwerpstroom-/nulwaardencorrectiepagina bij Zakelijk de **toekomstige** 3×25, 35–40, 50, 63–80, 160 of 250 A. De plugin schrijft de gekozen toekomstwaarde terug naar de aansluiting en berekent het 2.0-profiel. De gassoort is alleen bij Kader 3.2 zichtbaar/relevant.
+- **Woningverwarming expliciet:** bij Kader 2.0 kun je Type 1–4 kiezen op de ontwerpstroomcorrectiepagina. Het type wordt opgeslagen als `Kader20Type`. Zonder expliciet type toont `KaderType` de gebruikte bouwjaar-aanname. De Type 3 van Kader 3.x wordt niet als Type 3 van Kader 2.0 geïnterpreteerd.
+- **Geen vermenging van laad- of straatregelingen:** Kader 2.0 netbewust laden 3×25 A blijft 5,8 A trafo en 6,7 A kabel. Toekomstige zakelijke aansluitwaarde is voor deze categorieën niet nodig.
+- **Controle:** `test_kader_comparison_20_32.py` bewaakt de oorspronkelijke oude 3.1-getallen en toetst de 2.0-regels; `test_kader_20.py` controleert de Excel 2.0-waarden. Beide draaien in de PR- en releaseworkflow.
+
+De verbeteringen uit v1.33.0 voor bestaande stations, directe Voronoi-berekening en exact getekende sleufroutes zijn behouden. Een volledige praktijkberekening met het oorspronkelijke project, waaronder station 044.529, is nog niet uitgevoerd.
+
+---
+
 ## v1.33.0 — Kader 2.0 + directe Voronoi en exacte sleufroutes
 
 **Ontwerpstroomkader in wizard:** voeg **Kader 2.0 (Eea-0205.K 2.0.xlsx)** toe naast 3.0 en 3.1. Onafhankelijke trafo- en kabelwaarden voor verbruik en opwek; nieuwe categorieën voor individuele/collectieve verwarming, kleinzakelijk op toekomstige aansluitwaarde, grootverbruik 3×160/250, laden en straatmeubilair. Stijgleiding en Type-5-toeslag staan als expliciete rekenhelpers in `kader_20.py` en worden niet dubbel op aansluitingstromen geteld.
