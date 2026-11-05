@@ -438,10 +438,7 @@ class ZeroCurrentPage(QWidget):
         self.current_values_group.setVisible(True)
         self.manual_checkbox.setChecked(False)
         self.unit_group.setVisible(not is_household)
-        gas_relevant = (
-            code == "Zakelijk"
-            and self.host._workflow_field_defaults().get("design_framework") != "2.0"
-        )
+        gas_relevant = code == "Zakelijk"
         self.gas_combo.setVisible(gas_relevant)
         self.gas_label.setVisible(gas_relevant)
         fill_unit_combo(self.unit_combo, code, self.host._workflow_field_defaults().get('design_framework'))
@@ -731,7 +728,7 @@ class ZeroCurrentPage(QWidget):
             original_updates["Kader20Type"] = kader20_override
         if unit_name is not None and category != "Huishoudelijk":
             metadata["HerstelType"] = str(unit_name)
-        if gas_category is not None and category == "Zakelijk" and framework != "2.0":
+        if gas_category is not None and category == "Zakelijk":
             if gas_category not in {stored for _, stored, _ in GAS_CHOICES}:
                 raise ValueError("Kies een geldige gasaansluitcategorie.")
             gas_field = self.host._workflow_field_defaults().get("field_gas", "G_Type")
@@ -743,7 +740,11 @@ class ZeroCurrentPage(QWidget):
                 layer.updateFields()
 
         household_context = (
-            self._household_context() if category == "Huishoudelijk" and not manual_override else None
+            self._household_context()
+            if not manual_override and (
+                category == "Huishoudelijk"
+                or (framework == "2.0" and category == "Zakelijk")
+            ) else None
         )
         selected_ids = {int(feature_id) for feature_id in feature_ids}
         changes = {}
@@ -761,6 +762,50 @@ class ZeroCurrentPage(QWidget):
                     )
                 )
                 stored_house_type = house_type
+            elif framework == "2.0" and category == "Zakelijk" and not manual_override:
+                # Recompute separately for EACH selected connection because its
+                # current electricity supply and gas category may differ.
+                module, values_context, standard, cable_config, opwek, opwek_cable = household_context
+                current_service = self._field_value(
+                    feature, values_context.get(
+                        "field_passthrough", "service_connection_type_type"
+                    )
+                )
+                actual_gas = gas_category or self._field_value(
+                    feature, values_context.get("field_gas", "G_Type")
+                )
+                phases, amps = module.parse_doorlaat(current_service)
+                chosen_future = future_connection or module.kader_20.default_small_business_future(
+                    phases, amps
+                )
+                normal = float(module.calculate_ontwerpstroom(
+                    current_service, "bedrijf", "", 0, actual_gas, standard,
+                    feature.id(), None, True,
+                    kader20_future=chosen_future,
+                ))
+                cable_current = float(module.calculate_ontwerpstroom(
+                    current_service, "bedrijf", "", 0, actual_gas, cable_config,
+                    feature.id(), None, True,
+                    kader20_future=chosen_future,
+                ))
+                generation = float(module.calculate_opwek_ontwerpstroom(
+                    current_service, "bedrijf", "", actual_gas, opwek, standard,
+                    normal, True, kader20_future=chosen_future,
+                ))
+                generation_cable = float(module.calculate_opwek_ontwerpstroom(
+                    current_service, "bedrijf", "", actual_gas, opwek_cable,
+                    cable_config, cable_current, True,
+                    kader20_future=chosen_future,
+                ))
+                stored_house_type = self._field_value(
+                    feature, "Gevonden_Woningtype"
+                )
+                if chosen_future and not future_connection:
+                    field_future = layer.fields().lookupField(
+                        "Kader20ToekomstigeAansluitwaarde"
+                    )
+                    if field_future >= 0:
+                        original_updates["Kader20ToekomstigeAansluitwaarde"] = chosen_future
             else:
                 normal = float(currents["consumption_trafo"])
                 cable_current = float(currents["consumption_cable"])
@@ -799,14 +844,22 @@ class ZeroCurrentPage(QWidget):
                 if framework_index >= 0:
                     attributes[framework_index] = "2.0"
                 if type_index20 >= 0 and category == "Zakelijk":
-                    attributes[type_index20] = (
-                        "Kader 2.0 Type 6/7 - handmatig ingevoerd"
-                        if manual_override
-                        else category_note(category, unit_name and next(
-                            (key for _label, key, doorlaat in UNIT_CHOICES["Zakelijk"]
-                             if doorlaat == future_connection), None
-                        ), "2.0")
-                    )
+                    if manual_override:
+                        attributes[type_index20] = "Kader 2.0 Type 6/7 - handmatig ingevoerd"
+                    else:
+                        current_phases, current_amp = module.parse_doorlaat(
+                            current_service
+                        )
+                        future_phases, future_amp = module.parse_doorlaat(
+                            chosen_future
+                        )
+                        _value, description, _warning = module.kader_20.current(
+                            "trafo", 10, "", 0, future_phases, future_amp,
+                            gas_category=module.normalize_gas(actual_gas),
+                            current_phases=current_phases,
+                            current_amp=current_amp,
+                        )
+                        attributes[type_index20] = description
                 if type_index20 >= 0 and category == "Huishoudelijk":
                     if manual_override:
                         attributes[type_index20] = "Kader 2.0 - handmatig ingevoerd"
@@ -889,7 +942,7 @@ class ZeroCurrentPage(QWidget):
                 unit_name=unit_description(category, self.unit_combo.currentData()) if category != "Huishoudelijk" else None,
                 gas_category=(
                     self.gas_combo.currentData()
-                    if category == "Zakelijk" and self.host._workflow_field_defaults().get("design_framework") != "2.0"
+                    if category == "Zakelijk"
                     else None
                 ),
                 manual_override=self.manual_checkbox.isChecked(),
