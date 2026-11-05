@@ -156,12 +156,38 @@ def main():
         def render_failure(*_args):
             raise RuntimeError('injected PNG export failure')
         engine.make_map = render_failure
+        original_areas=engine.make_cable_based_cluster_polygons
+        area_calls=[]
+        def disconnected_first(*args,**kwargs):
+            polygons,study=original_areas(*args,**kwargs);area_calls.append(1)
+            if len(area_calls)==1:
+                from shapely.geometry import MultiPolygon,box
+                polygons[0]=MultiPolygon([polygons[0],box(1000,1000,1001,1001)])
+            return polygons,study
+        engine.make_cable_based_cluster_polygons=disconnected_first
         engine.main()
+        assert len(area_calls)==2 and engine._AUTO_GEOMETRY_RECOVERY_USED
+        assert (engine.OUT/'gebiedscontrole'/'gebiedscontrole.gpkg').exists()
+        engine.make_cable_based_cluster_polygons=original_areas
         result = engine.gpd.read_file(engine.OUT/'clustering_ontwerp.gpkg', layer='aansluitingen_geclusterd')
         assert len(result) == 2 and set(result.Cluster) == {'S1'}
         warnings = json.loads((engine.OUT/'clustering_waarschuwingen.json').read_text(encoding='utf-8'))
         assert 'PNG export failure' in warnings[0]
         assert (engine.OUT/'cluster_overzicht.csv').exists()
+        saved_out=engine.OUT;engine.OUT=folder/'persistent_geometry_failure'
+        persistent_calls=[]
+        def always_disconnected(*args,**kwargs):
+            polygons,study=original_areas(*args,**kwargs);persistent_calls.append(1)
+            from shapely.geometry import MultiPolygon,box
+            polygons[0]=MultiPolygon([polygons[0],box(1000,1000,1001,1001)])
+            return polygons,study
+        engine.make_cable_based_cluster_polygons=always_disconnected
+        try:engine.main()
+        except RuntimeError as exc:assert 'Exclaves' in str(exc)
+        else:raise AssertionError('Persistent invalid geometry was accepted')
+        assert len(persistent_calls)==2
+        assert not (engine.OUT/'clustering_ontwerp.gpkg').exists()
+        engine.OUT=saved_out;engine.make_cable_based_cluster_polygons=original_areas
         # Exercise the actual Processing wrapper, including both independent
         # presentation failures and the returned warnings/optional artifacts.
         algorithm = LaagspanningClusteringAlgorithm()

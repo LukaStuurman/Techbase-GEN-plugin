@@ -98,6 +98,7 @@ CPU_THREADS = max(
 )
 MAX_AUTOMATIC_TOPOLOGY_RETRIES = 10
 _AUTO_COUNTS_TRIED: set[int] = set()
+_AUTO_GEOMETRY_RECOVERY_USED = False
 _AUTO_TOPOLOGY_MINIMUM_NEW = 0
 MIN_UTILIZATION = (0.80, 0.75, 0.70, 0.60, 0.50, 0.0)
 LEGACY_CHANGE_PENALTY_M = 65.0
@@ -1472,6 +1473,75 @@ def solve_facility_selection(
     raise RuntimeError(
         f"Geen geldige selectie van {N_NEW} nieuwe stations gevonden"
     )
+
+
+def junction_station_candidates(graph, node_list, allowed_indices, main_indices,
+                                unit_indices, loads, new_capacity, radius_m=350., limit=8, seed_indices=()):
+    """Add sites with real demand in distinct main-cable directions.
+
+    Ordinary house service tees do not count. A demand unit is counted only in
+    its shortest direction after removing the junction; ties from loops do not
+    create additional branches. Existing candidate sites remain available.
+    """
+    index_by_node = {node:i for i,node in enumerate(node_list)}
+    main = set(int(i) for i in main_indices)
+    demand_by_node = defaultdict(float)
+    for index,load in zip(unit_indices,loads):demand_by_node[node_list[int(index)]] += float(load)
+    demand_nodes=list(demand_by_node)
+    if not demand_nodes:return []
+    tree=cKDTree(np.asarray(demand_nodes))
+    proposals=[]
+    for index in allowed_indices:
+        index=int(index);node=node_list[index]
+        arms=[neighbor for neighbor in graph[node] if index_by_node[neighbor] in main]
+        if index not in main or len(arms)<3:continue
+        nearby=tree.query_ball_point(node,radius_m)
+        potential=sum(demand_by_node[demand_nodes[i]] for i in nearby)
+        proposals.append((potential,index,arms))
+    # Include sparse edge districts too; globally highest load alone would
+    # spend the entire shortlist in the dense centre and miss dead-end areas.
+    ranked=sorted(proposals,key=lambda item:(-item[0],item[1]))
+    tiles={}
+    for proposal in ranked:
+        xy=node_list[proposal[1]];tile=(int(np.floor(xy[0]/250.)),int(np.floor(xy[1]/250.)))
+        if tile not in tiles:tiles[tile]=proposal
+    shortlist={row[1]:row for row in ranked[:32]}
+    for row in list(tiles.values())[:96]:shortlist[row[1]]=row
+    results=[]
+    for potential,index,arms in shortlist.values():
+        node=node_list[index]
+        view=nx.subgraph_view(graph,filter_node=lambda n,blocked=node:n!=blocked)
+        directional=[]
+        for arm in arms:
+            first=float(graph[node][arm]['weight'])
+            distances=nx.single_source_dijkstra_path_length(view,arm,cutoff=max(0.,radius_m-first),weight='weight') if first<=radius_m else {}
+            directional.append({key:value+first for key,value in distances.items() if key in demand_by_node})
+        branch_loads=np.zeros(len(arms))
+        for target,load in demand_by_node.items():
+            distances=[mapping.get(target,np.inf) for mapping in directional]
+            best=min(distances)
+            if not np.isfinite(best):continue
+            winners=[i for i,value in enumerate(distances) if abs(value-best)<=1e-7]
+            if len(winners)==1:branch_loads[winners[0]]+=load
+        useful=branch_loads[branch_loads>=max(10.,.05*new_capacity)]
+        if len(useful)<2:continue
+        score=float(useful.sum()+min(useful)*min(len(useful),3))
+        results.append({'index':index,'score':score,'load':float(branch_loads.sum()),
+                        'directions':int(len(useful)),'branch_loads':branch_loads.tolist()})
+    ordered=sorted(results,key=lambda row:(-row['score'],row['index']))
+    local=[]
+    for seed in seed_indices:
+        seed_xy=np.asarray(node_list[int(seed)])
+        nearby=[row for row in ordered if np.linalg.norm(np.asarray(node_list[row['index']])-seed_xy)<=radius_m]
+        if nearby:
+            local.append(max(nearby,key=lambda row:row['score']/(1.+np.linalg.norm(np.asarray(node_list[row['index']])-seed_xy)/100.)))
+    selected=[]
+    for result in local+ordered:
+        point=np.asarray(node_list[result['index']])
+        if any(np.linalg.norm(point-np.asarray(node_list[other['index']]))<100. for other in selected):continue
+        selected.append(result)
+        if len(selected)>=limit:break
+    return selected
 
 
 def compact_assignment_milp(objective, integrality, upper_bounds, matrix, lower, upper, options):
@@ -3099,6 +3169,35 @@ def build_refreshed_fixed_routes(
     return route_geometries, route_lengths, point_route_distance
 
 
+def transfer_unanchored_area_fragments(polygons, supports):
+    """Transfer only edge-adjacent fragments with no own route/customer anchor.
+
+    Run after the last boundary noding too: polygonization can introduce a
+    detached atom after the earlier corridor cleanup has already finished.
+    The donor never loses its last part; coverage is unchanged by construction.
+    """
+    repaired=list(polygons);transferred=0
+    for index in range(len(repaired)):
+        geometry=repaired[index]
+        if geometry.geom_type!='MultiPolygon':continue
+        parts=sorted(geometry.geoms,key=lambda part:part.area,reverse=True)
+        anchored=[part for part in parts if part.buffer(1e-7).intersects(supports[index])]
+        retain=anchored or parts[:1]
+        for part in parts:
+            if any(part.equals(kept) for kept in retain):continue
+            neighbours=[]
+            for other,neighbour in enumerate(repaired):
+                if other==index or neighbour.is_empty:continue
+                shared=part.boundary.intersection(neighbour.boundary).length
+                if shared>1e-6:neighbours.append((shared,other))
+            if not neighbours:continue
+            _,owner=max(neighbours)
+            repaired[index]=repaired[index].difference(part).buffer(0)
+            repaired[owner]=unary_union([repaired[owner],part]).buffer(0)
+            transferred+=1
+    return repaired,transferred
+
+
 def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05):
     """Partition repair-corridor overlap without moving cables or customers.
 
@@ -3229,6 +3328,8 @@ def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05)
             repaired[index] = unary_union(parts)
         elif not repaired[index].is_empty:
             raise RuntimeError(f"Clustergebied {index} verdwijnt bij het herstellen van gedeelde grensknopen.")
+    repaired,final_transferred=transfer_unanchored_area_fragments(repaired,supports)
+    transferred+=final_transferred
     coverage = unary_union(repaired)
     if (sum(p.area for p in repaired) - coverage.area > .001 or
             coverage.symmetric_difference(union).area > .001):
@@ -5801,10 +5902,12 @@ def include_pinned_stations(stations, records):
 
 def main(_automatic_retry: bool = False) -> None:
     global N_NEW, _AUTO_COUNTS_TRIED, _AUTO_TOPOLOGY_MINIMUM_NEW
+    global _AUTO_GEOMETRY_RECOVERY_USED
 
     if not _automatic_retry:
         log(f"CPU-versnelling actief met maximaal {CPU_THREADS} threads.")
     if AUTO_NEW_STATIONS and not _automatic_retry:
+        _AUTO_GEOMETRY_RECOVERY_USED = False
         _AUTO_COUNTS_TRIED.clear()
         _AUTO_TOPOLOGY_MINIMUM_NEW = 0
 
@@ -5820,9 +5923,14 @@ def main(_automatic_retry: bool = False) -> None:
     if DISTRIBUTION_CABINETS_PATH is not None and not Path(DISTRIBUTION_CABINETS_PATH).exists():
         raise FileNotFoundError(DISTRIBUTION_CABINETS_PATH)
 
+    diagnostic_path=OUT/'gebiedscontrole'/'gebiedscontrole.gpkg'
+    previous_geometry_diagnostic = diagnostic_path.read_bytes() if _automatic_retry and diagnostic_path.exists() else None
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
+    if previous_geometry_diagnostic is not None:
+        diagnostic_path.parent.mkdir(parents=True,exist_ok=True)
+        diagnostic_path.write_bytes(previous_geometry_diagnostic)
 
     log("Bronbestanden lezen...")
     design_current, design_field_index, design_field_name = extract_design_current(
@@ -6689,6 +6797,17 @@ def main(_automatic_retry: bool = False) -> None:
             "de dichtstbijzijnde beschikbare stationslocatie)"
         )
 
+    junction_candidates = junction_station_candidates(
+        graph,node_list,regular_node_indices,raw_main_node_indices,
+        unit_node_indices,unit_load,new_capacity,radius_m=min(350.,MAX_ROUTE_M),
+        limit=max(8,min(24,len(candidate_node_indices))),seed_indices=candidate_node_indices) if AUTO_NEW_STATIONS else []
+    junction_candidate_nodes = {row['index'] for row in junction_candidates}
+    for row in junction_candidates:
+        index=row['index']
+        if index in candidate_node_indices:continue
+        candidate_node_indices.append(index);candidate_nodes.append(node_list[index])
+        legacy_new_labels.append(f"Knooppunt met {row['directions']} belastbare richtingen")
+        log(f"Extra knooppuntkandidaat {node_list[index]}: {row['directions']} richtingen, {row['load']:.1f} A bereikbaar binnen 350 m.")
     all_source_indices = np.concatenate(
         [station_node_indices, np.asarray(candidate_node_indices, dtype=int)]
     )
@@ -6699,6 +6818,10 @@ def main(_automatic_retry: bool = False) -> None:
     station_legacy_labels_all = stations["Stationsnaa"].astype(str).tolist() + legacy_new_labels
     initial_voronoi_node_cluster = None
     try:
+        if _AUTO_GEOMETRY_RECOVERY_USED:
+            # One bounded retry with all cable candidates instead of the
+            # solver-selected subset which produced a disconnected area.
+            raise RuntimeError(f"Geen geldige selectie van {N_NEW} nieuwe stations gevonden")
         initial_assignment, selected_mask, facility_min_util = solve_facility_selection(
             all_distances,
             unit_load,
@@ -6859,6 +6982,11 @@ def main(_automatic_retry: bool = False) -> None:
         previous_assignment = final_assignment.copy()
         previous_distances = final_distances.copy()
         for new_index in range(N_NEW):
+            if int(new_node_indices[new_index]) in junction_candidate_nodes:
+                # Do not turn a solver-selected multi-direction site back into
+                # a terminal site merely by geometric centring. All ordinary
+                # assignment and exclusive-route checks still follow.
+                continue
             station_index = existing_count + new_index
             mask = final_assignment == station_index
             if not np.any(mask):
@@ -7180,6 +7308,19 @@ def main(_automatic_retry: bool = False) -> None:
         if invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     ]
     if disconnected:
+        # Keep the exact failure geometry. Inputs alone are insufficient to
+        # reproduce a solver-dependent boundary fault without another long run.
+        diagnostic=OUT/'gebiedscontrole'/'gebiedscontrole.gpkg'
+        diagnostic.parent.mkdir(parents=True,exist_ok=True)
+        gpd.GeoDataFrame({'Cluster':cluster_names,'Ongeldig':[i in disconnected for i in range(len(cluster_polygons))]},
+                         geometry=cluster_polygons,crs=CRS_RD).to_file(diagnostic,layer='gebieden',driver='GPKG')
+        gpd.GeoDataFrame({'Cluster':cluster_names},geometry=route_geometries,crs=CRS_RD).to_file(diagnostic,layer='routes',driver='GPKG')
+        if AUTO_NEW_STATIONS and not _AUTO_GEOMETRY_RECOVERY_USED:
+            _AUTO_GEOMETRY_RECOVERY_USED=True
+            _AUTO_COUNTS_TRIED.clear()
+            _AUTO_TOPOLOGY_MINIMUM_NEW=0
+            log('Losliggende clustergebieden gevonden. Exacte controlegeometrie bewaard; één automatische herstelpoging met alle kabelkandidaten. Alle route-, capaciteit- en gebiedscontroles blijven actief.')
+            return main(_automatic_retry=True)
         raise RuntimeError(
             "Exclaves aangetroffen in clusters: "
             + ", ".join(str(index) for index in disconnected)

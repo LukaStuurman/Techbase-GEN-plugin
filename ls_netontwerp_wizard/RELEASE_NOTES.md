@@ -1,4 +1,18 @@
-# LS Netontwerp Wizard v1.31.2
+# LS Netontwerp Wizard v1.32.0
+
+## Begrensd herstel bij losliggende clustergebieden
+
+Na de laatste grensbewerking worden losse vlakken zonder eigen route-/aansluitings-/stationsanker nogmaals aan een werkelijk aangrenzende buur gekoppeld. Alle dekkings-, overlap-, route- en aansluitingscontroles blijven actief. Bij een resterende exclave bewaart de plugin de exacte probleemgebieden en routes. Bij automatisch stationsaantal volgt één nieuwe poging met alle kabelkandidaten via de bestaande kabel-Voronoi-terugval. Een blijvende fout wordt expliciet afgewezen; er wordt geen ongeldig ontwerp als geslaagd aangeboden.
+
+Ook toegevoegd: extra kandidaatlocaties bij hoofdkabelknooppunten met meerdere belaste richtingen. Een gekozen knooppunt wordt niet terug naar een eindtak gecentreerd. Deze voorkeur garandeert geen optimaal stationsaantal of volledige benutting.
+
+**Den Dungen-controle:** een volledige gerichte proef met expliciet afgedwongen bestaande terugval slaagt: 1.928 aansluitingen, 14 nieuwe stations, maximale route 642,8 m en maximale benutting 99,75%. Dekking, overlap, eigen aansluitingen en exclusieve routes zijn gecontroleerd. Dit is een andere zoekroute dan de oorspronkelijk mislukte run. De proef gebruikt de bestaande keuze **buitenroutes toegestaan**; een volledige productierun met buitenroutes uit is hiermee niet aangetoond. Geen bewezen optimale nieuwe ligging van N-01/N-03.
+
+Tests voor herstel én begrensd stoppen bij blijvende fouten, gebiedsfragmenten, grenspartitionering, buitenroutes, knooppuntkandidaten en exact compacte rekenmodellen slagen in QGIS 4.2.3. Geen QGIS 3- of volledige handmatige Desktop-test. [Volledig verslag en beperkingen](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/GEOMETRY_RECOVERY_VALIDATION.md).
+
+Installeer de ZIP en herstart QGIS. Oorspronkelijke brongegevens blijven behouden.
+
+## Behouden uit v1.31.2
 
 ## Leesbare uitgeklapte clusterknoppen
 

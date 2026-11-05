@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.31.2
+## Laatste versie: 1.32.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.2/ls_netontwerp_wizard-1.31.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.2)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.32.0/ls_netontwerp_wizard-1.32.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.32.0)
+
+**Nieuw in 1.32.0:** gecontroleerd herstel van losse gebiedsfragmenten, één automatische kabel-Voronoi-herstelpoging bij exclaves en blijvende exacte foutgeometrie. Nieuwe kandidaten met meerdere belaste hoofdkabelrichtingen. Gerichte Den Dungen-terugvalproef slaagt voor 1.928 aansluitingen en 14 nieuwe stations; buitenroutes stonden in deze proef aan. Geen garantie op optimale stationsplaatsing of foutloos resultaat voor iedere dataset. [Validatie en beperkingen](GEOMETRY_RECOVERY_VALIDATION.md).
 
 **Hersteld in 1.31.2:** de uitgeklapte geavanceerde clusterknoppen overlappen niet meer. Dashboard en kaart groeien mee en blijven scrollbaar. Negen knoppen zijn op twee venstergroottes op leesbaarheid en bereikbaarheid gecontroleerd. De experimentele knooppuntplaatsing is nog niet volledig gevalideerd en zit niet in deze UI-herstelrelease.
 

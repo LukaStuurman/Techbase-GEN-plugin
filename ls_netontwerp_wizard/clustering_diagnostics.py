@@ -51,8 +51,9 @@ def save_failure(error, output_dir, work_dir=None, messages=()):
         computed = work_dir / "resultaat" / "clustering_ontwerp.gpkg"
         if computed.exists():
             shutil.copy2(computed, folder / "berekende_lagen.gpkg")
-        for filename in ("capaciteitsknelpunten.gpkg", "capaciteitsknelpunten.csv", "netwerkcontrole.gpkg"):
+        for filename in ("capaciteitsknelpunten.gpkg", "capaciteitsknelpunten.csv", "netwerkcontrole.gpkg", "gebiedscontrole.gpkg"):
             source = work_dir / "resultaat" / filename
+            if filename=='gebiedscontrole.gpkg':source=work_dir/'resultaat'/'gebiedscontrole'/filename
             if source.exists():
                 target = folder / filename
                 shutil.copy2(source, target)
