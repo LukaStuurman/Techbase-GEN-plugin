@@ -150,6 +150,23 @@ def test():
     )
     assert real["assignment"].tolist()==[0,0,0,0,1],real
     assert real["new_nodes"]==[(120.,0.)],real
+    # Even if old trafo has to release EVERY original consumer,
+    # the mode must continue with only new stations, not error on an empty
+    # set of reserved physical lines or borrow the retired old capacity.
+    tiny_station=stations.copy()
+    tiny_station["Max_A"]=[5.]
+    all_released=prepare_retention(points,tiny_station,cable_frame,850.)
+    assert not all_released["retained_by_index"]
+    assert len(all_released["retention"]["vrijgegeven"])==4
+    released_result=solve_locked_voronoi(
+        graph,nodes,point_indices,np.array([20.,15.,30.,25.,50.]),
+        np.arange(5),[station],np.asarray([node_index[(0.,0.)]]),
+        np.asarray([node_index[(0.,0.)],node_index[(120.,0.)]]),
+        all_released,250.,850.,
+        scope["solve_greedy_voronoi_connected_assignment"],
+        lambda message:None,
+    )
+    assert set(released_result["assignment"])=={1},released_result
     print("OLD_STATIONS_LOCKED_NEW_STATIONS_ONLY_OK")
 
 
