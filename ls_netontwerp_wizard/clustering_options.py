@@ -184,6 +184,10 @@ class ClusteringOptionsDialog(QDialog):
         self.preserve_existing.setChecked(
             self.values.get("preserve_existing_directions", False)
         )
+        self.preserve_existing.setEnabled(self.automatic.isChecked())
+        self.automatic.toggled.connect(
+            lambda checked:self.preserve_existing.setEnabled(checked)
+        )
         self.preserve_existing.setToolTip(
             "Controleer trafo, kabeltypen en gG per originele Kabel Subgroep. "
             "Bestaande stations mogen alleen hun eigen oorspronkelijke aansluitingen "
@@ -191,6 +195,15 @@ class ClusteringOptionsDialog(QDialog):
             "Vereist echte GEN-kabellijnen met Type en Kabel Subgroep."
         )
         form.addRow(self.preserve_existing)
+        form.addRow(
+            QLabel(
+                "Bestaande-richtingenmodus: de werkelijke gG-afzekering moet "
+                "worden gecontroleerd; zonder bevestigde gG is het "
+                "kabelchecker-resultaat alleen een maximaal haalbaar advies. "
+                "Vrijgegeven kabelpunten zonder fysiek gescheiden nieuwe route "
+                "leveren een controlefout op, nooit een fictieve verbinding."
+            )
+        )
         form.addRow("Handmatig aantal nieuwe stations", self.count)
         note = QLabel("Kabelroute en trafocapaciteit zijn harde grenzen. Voorkeursbenutting stuurt de stationskeuze. Capaciteiten van bestaande stations pas je aan bij 2c. Stations aanpassen.")
         note.setWordWrap(True)
