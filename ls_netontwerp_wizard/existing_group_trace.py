@@ -401,14 +401,28 @@ def trace_group_cables(points,stations,cables, *,
         for pair,rows in records_by_pair.items()
     }
     junctions={}
+    feeder_taps={}
+    cabinet_metadata={}
     for station,group in sorted(pairs):
-        parent=parent_group(group)
+        parent=feeder_parents.get((station,group),parent_group(group))
         if not parent:continue
         parent_key=(station,parent)
         if parent_key not in unions:
             raise ValueError(
                 f"Aftakking {group} van {station} heeft geen parent {parent}."
             )
+        if (station,group) in cabinet_links:
+            cabinet_id,child_point,parent_point=cabinet_links[(station,group)]
+            if (unions[(station,group)].distance(child_point)>.02 or
+                unions[parent_key].distance(parent_point)>.02):
+                raise ValueError(
+                    f"Verdeelkast {cabinet_id}: bronkabeldeel is niet op de "
+                    "juiste station- en subgroepcomponent aangetroffen."
+                )
+            junctions[(station,group)]=child_point
+            feeder_taps[(station,group)]=parent_point
+            cabinet_metadata[(station,group)]=cabinet_id
+            continue
         intersection=unions[(station,group)].intersection(unions[parent_key])
         if intersection.length>0.01:
             raise ValueError(
@@ -421,7 +435,9 @@ def trace_group_cables(points,stations,cables, *,
                 f"Aftakking {station}/{group} moet precies één fysiek "
                 f"aftakpunt op {parent} hebben; gevonden {len(candidates)}."
             )
-        junctions[(station,group)]=Point(next(iter(candidates)))
+        point=Point(next(iter(candidates)))
+        junctions[(station,group)]=point
+        feeder_taps[(station,group)]=point
 
     all_groups=defaultdict(list)
     for pair,members in point_members.items():
@@ -437,13 +453,15 @@ def trace_group_cables(points,stations,cables, *,
     for (station,group),members in sorted(all_groups.items()):
         terminals=[row.geometry for _,row in members]
         child_junctions=[
-            point for (other_station,code),point in junctions.items()
-            if other_station==station and parent_group(code)==group
+            feeder_taps[(other_station,code)]
+            for (other_station,code) in junctions
+            if other_station==station and
+            feeder_parents.get((other_station,code),parent_group(code))==group
         ]
         terminals.extend(child_junctions)
         if (station,group) in junctions:
             terminals.append(junctions[(station,group)])
-        if parent_group(group) is None:
+        if feeder_parents.get((station,group),parent_group(group)) is None:
             terminals.append(station_geoms[station])
         rows=records_by_pair[(station,group)]
         noded=list(_parts(unary_union([geom for geom,_type in rows])))
@@ -451,7 +469,10 @@ def trace_group_cables(points,stations,cables, *,
             raise ValueError(f"Geen kabelgeometrie bij {station}/{group}.")
         corrected=[]
         for point in terminals:
-            is_station_root=parent_group(group) is None and point is station_geoms[station]
+            is_station_root=(
+                feeder_parents.get((station,group),parent_group(group)) is None
+                and point is station_geoms[station]
+            )
             limit=station_anchor_tolerance_m if is_station_root else terminal_tolerance_m
             _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {station}/{group}")
             corrected.append(pr)
@@ -470,14 +491,15 @@ def trace_group_cables(points,stations,cables, *,
     direction_roots={}
     for station,group in sorted(pairs):
         graph,_edges=group_graphs[(station,group)]
+        has_parent=feeder_parents.get((station,group),parent_group(group))
         root_point=(
-            junctions[(station,group)] if parent_group(group)
+            junctions[(station,group)] if has_parent
             else station_geoms[station]
         )
         _,root_projection=_closest_unique(
             [p for p,_type in records_by_pair[(station,group)]],
             root_point,
-            station_anchor_tolerance_m if parent_group(group) is None
+            station_anchor_tolerance_m if has_parent is None
             else terminal_tolerance_m,
             f"Begin {station}/{group}",
         )
@@ -485,18 +507,18 @@ def trace_group_cables(points,stations,cables, *,
         if Point(root).distance(root_projection)>0.02:
             raise ValueError(f"Beginpunt {station}/{group} niet op genode kabel.")
         direction_roots[(station,group)]=root
-        if parent_group(group):
+        if has_parent:
             roots[(station,group)]=str(root)
         else:
             origins[(station,group)]=str(root)
 
     parent_routes={}
     for station,group in sorted(pairs):
-        parent=parent_group(group)
+        parent=feeder_parents.get((station,group),parent_group(group))
         if parent is None:continue
         graph,_edges=group_graphs[(station,parent)]
         root=direction_roots[(station,parent)]
-        tap=junctions[(station,group)]
+        tap=feeder_taps[(station,group)]
         target=min(graph.nodes,key=lambda xy:Point(xy).distance(tap))
         if Point(target).distance(tap)>0.02 or not nx.has_path(graph,root,target):
             raise ValueError(
@@ -582,6 +604,8 @@ def trace_group_cables(points,stations,cables, *,
         "station_origins":origins,
         "branch_roots":roots,
         "parent_routes":parent_routes,
+        "feeder_parents":feeder_parents,
+        "cabinet_metadata":cabinet_metadata,
         "point_id_to_index":point_id_to_index,
         "edge_geometries":edge_geometries,
         "group_graphs":group_graphs,
