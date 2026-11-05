@@ -139,10 +139,12 @@ def test():
     assert generation("3 x 160 A","bedrijf","",">G25",[],config20,0,True) == 0
     assert consumption("3 x 25 A","bedrijf","",2015,"G4",config20,1,None,True,
                        True,None,"3 x 160 A") == 138.
+    # Strong current gas service can overrule the future 3x160 base at
+    # transformer level; the separate current-service advice is 3x250.
     assert consumption("3 x 25 A","bedrijf","",2015,">G25",config20,1,None,True,
-                       True,None,"3 x 160 A") == 138.
-    assert generation("3 x 25 A","bedrijf","",">G25",[],config20,138,True,
-                      2015,None,"3 x 160 A") == 138.
+                       True,None,"3 x 160 A") == 210.
+    assert generation("3 x 25 A","bedrijf","",">G25",[],config20,210,True,
+                      2015,None,"3 x 160 A") == 210.
     assert consumption("3 x 25 A","bedrijf","",2015,"G4",config20,1,None,True,
                        True,None,"3 x 100 A") == 0
     config20_kabel = dict(config20, NET_LEVEL="kabel")
@@ -176,6 +178,21 @@ def test():
     assert preset(context, "Zakelijk", "250") == (210., 210., 210., 210.)
     assert preset(context, "Zakelijk", "100") == (0., 0., 0., 0.)
     assert preset(context, "Oplaadpunt", "laad25") == (5.8, 6.7, 0., 0.)
+    assert preset(context, "Zakelijk", "lt35", "G10-G25",
+                  current_service="3 x 63 A") == (138., 65., 138., 65.)
+    assert preset(context, "Zakelijk", "lt35", ">G25",
+                  current_service="3 x 25 A") == (210., 65., 210., 65.)
+    # The complete Kader 2.0 small-business fallback is automatic for
+    # smaller connections, but 3x63 without a FUTURE rating is still unknown.
+    assert consumption("1 x 25 A","bedrijf","",2015,"G4",config20,1,None,True) == 8.7
+    assert consumption("3 x 10 A","bedrijf","",2015,"G10-G25",config20,1,None,True) == 44.
+    assert consumption("3 x 63 A","bedrijf","",2015,"G4",config20,1,None,True) == 0.
+    # Residential connection stays household through exactly 3x40 A.
+    house_cfg = dict(config20, GEBRUIKS_MAP=[(["woonhuis"], 1)])
+    assert consumption("3 x 40 A","woonhuis","vrijstaande woning",2024,">G25",
+                       house_cfg,1,None,True) == 9.5
+    assert consumption("3 x 50 A","woonhuis","vrijstaande woning",2024,">G25",
+                       house_cfg,1,None,True,True,None,"3 x 50 A") == 210.
 
     # The former 3.1 preset still uses precisely the same current/gas path
     # under its renamed 3.2 selection.
