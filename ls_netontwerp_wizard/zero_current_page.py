@@ -32,8 +32,8 @@ from qgis.core import (
 )
 
 from .current_presets import (
-    HOUSEHOLD_UNIT_CHOICES, GAS_CHOICES, fill_gas_combo, fill_unit_combo,
-    unit_currents, unit_description, category_note,
+    HOUSEHOLD_UNIT_CHOICES, GAS_CHOICES, UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
+    unit_currents, unit_description, unit_future_connection, category_note,
 )
 from .current_edit_metadata import current_choice, save_current_choices
 from .current_inputs import connect_current_edits, set_current_values
@@ -413,8 +413,12 @@ class ZeroCurrentPage(QWidget):
         self.current_values_group.setVisible(True)
         self.manual_checkbox.setChecked(False)
         self.unit_group.setVisible(not is_household)
-        self.gas_combo.setVisible(code == "Zakelijk")
-        self.gas_label.setVisible(code == "Zakelijk")
+        gas_relevant = (
+            code == "Zakelijk"
+            and self.host._workflow_field_defaults().get("design_framework") != "2.0"
+        )
+        self.gas_combo.setVisible(gas_relevant)
+        self.gas_label.setVisible(gas_relevant)
         fill_unit_combo(self.unit_combo, code, self.host._workflow_field_defaults().get('design_framework'))
         if code == "Straatmeubilair":
             default_trafo = self._matrix_value("matrix_straat", 5.8)
@@ -470,7 +474,10 @@ class ZeroCurrentPage(QWidget):
         category = self.category_combo.currentData()
         key = self.unit_combo.currentData()
         self.manual_checkbox.setChecked(False)
-        self.unit_note.setText(category_note(category, key) + "\nJe kunt de vier stroomwaarden hieronder ook zelf typen.")
+        self.unit_note.setText(
+            category_note(category, key, self.host._workflow_field_defaults().get("design_framework"))
+            + "\nJe kunt de vier stroomwaarden hieronder ook zelf typen."
+        )
         currents = unit_currents(self._household_context(), category, key, self.gas_combo.currentData())
         if currents is not None:
             set_current_values(self._current_spins(), currents)
@@ -639,6 +646,7 @@ class ZeroCurrentPage(QWidget):
         unit_name=None,
         gas_category=None,
         manual_override=False,
+        future_connection=None,
     ):
         """Write all four component currents and both derived maxima."""
         if layer is None or not layer.isValid():
@@ -671,10 +679,16 @@ class ZeroCurrentPage(QWidget):
                 raise ValueError("Vul geldige stroomwaarden van 0 A of hoger in.")
         metadata = {"HerstelCat": category, "HerstelType": str(house_type or unit_name or ""),
                     "HerstelHandmatig": "1" if manual_override else "0"}
+        framework = self.host._workflow_field_defaults().get("design_framework", "3.0")
         original_updates = {}
+        if (
+            framework == "2.0" and category == "Zakelijk"
+            and future_connection is not None and not manual_override
+        ):
+            original_updates["Kader20ToekomstigeAansluitwaarde"] = future_connection
         if unit_name is not None and category != "Huishoudelijk":
             metadata["HerstelType"] = str(unit_name)
-        if gas_category is not None and category == "Zakelijk":
+        if gas_category is not None and category == "Zakelijk" and framework != "2.0":
             if gas_category not in {stored for _, stored, _ in GAS_CHOICES}:
                 raise ValueError("Kies een geldige gasaansluitcategorie.")
             gas_field = self.host._workflow_field_defaults().get("field_gas", "G_Type")
@@ -735,6 +749,20 @@ class ZeroCurrentPage(QWidget):
                     NEW_BUILD_TYPE_3 if category == "Huishoudelijk" and house_type
                     and "appartement" not in str(house_type).casefold() else ""
                 )
+            if framework == "2.0":
+                framework_index = layer.fields().lookupField("KaderVersie")
+                type_index20 = layer.fields().lookupField("KaderType")
+                if framework_index >= 0:
+                    attributes[framework_index] = "2.0"
+                if type_index20 >= 0 and category == "Zakelijk":
+                    attributes[type_index20] = (
+                        "Kader 2.0 Type 6/7 - handmatig ingevoerd"
+                        if manual_override
+                        else category_note(category, unit_name and next(
+                            (key for _label, key, doorlaat in UNIT_CHOICES["Zakelijk"]
+                             if doorlaat == future_connection), None
+                        ), "2.0")
+                    )
             attributes.update({layer.fields().lookupField(name): val
                                for name, val in original_updates.items()})
             changes[int(feature.id())] = attributes
@@ -792,8 +820,18 @@ class ZeroCurrentPage(QWidget):
                 currents,
                 self.housing_combo.currentData(),
                 unit_name=unit_description(category, self.unit_combo.currentData()) if category != "Huishoudelijk" else None,
-                gas_category=self.gas_combo.currentData() if category == "Zakelijk" else None,
+                gas_category=(
+                    self.gas_combo.currentData()
+                    if category == "Zakelijk" and self.host._workflow_field_defaults().get("design_framework") != "2.0"
+                    else None
+                ),
                 manual_override=self.manual_checkbox.isChecked(),
+                future_connection=(
+                    unit_future_connection(category, self.unit_combo.currentData())
+                    if category == "Zakelijk"
+                    and self.host._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
             )
         except (ValueError, KeyError, TypeError) as exc:
             self.status_label.setText(str(exc))
