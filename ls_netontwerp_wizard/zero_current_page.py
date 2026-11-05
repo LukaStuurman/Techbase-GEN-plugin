@@ -36,6 +36,7 @@ from .current_presets import (
     unit_currents, unit_description, unit_future_connection, category_note,
 )
 from .current_edit_metadata import current_choice, save_current_choices
+from . import kader_20
 from .current_inputs import connect_current_edits, set_current_values
 from .bag_current_rules import (
     NEW_BUILD_FIELD, NEW_BUILD_TYPE_FIELD, NEW_BUILD_TYPE_3,
@@ -806,6 +807,29 @@ class ZeroCurrentPage(QWidget):
                              if doorlaat == future_connection), None
                         ), "2.0")
                     )
+                if type_index20 >= 0 and category == "Huishoudelijk":
+                    if manual_override:
+                        attributes[type_index20] = "Kader 2.0 - handmatig ingevoerd"
+                    else:
+                        raw_year = self._field_value(feature, "Gevonden_Bouwjaar")
+                        try:
+                            effective_year = int(float(raw_year))
+                        except (ValueError, TypeError):
+                            effective_year = 0
+                        if is_new_build_flag(self._field_value(feature, NEW_BUILD_FIELD)):
+                            effective_year = max(effective_year, 2022)
+                        explicit = (
+                            kader20_override
+                            or self._field_value(feature, "Kader20Type")
+                            or None
+                        )
+                        _current, label, _warning = kader_20.current(
+                            "trafo", 4 if kader_20.normalize_housing(house_type)
+                            == "appartement" else 1,
+                            house_type, effective_year, 3, 25,
+                            explicit_type=explicit,
+                        )
+                        attributes[type_index20] = label
             attributes.update({layer.fields().lookupField(name): val
                                for name, val in original_updates.items()})
             changes[int(feature.id())] = attributes
