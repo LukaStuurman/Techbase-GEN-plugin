@@ -1980,6 +1980,21 @@ class LSNetontwerpDialog(QDialog):
         )
         self.value_housing_note.setWordWrap(True)
         housing_layout.addWidget(self.value_housing_note)
+        self.value_kader20_type_combo = QComboBox()
+        for label, key in (
+            ("Bouwjaar-aanname (controleer verwarming)", None),
+            ("Type 1 - laagbouw individuele warmtepomp", "Type 1"),
+            ("Type 2 - laagbouw gas/stadsverwarming", "Type 2"),
+            ("Type 3 - hoogbouw collectieve verwarming", "Type 3"),
+            ("Type 4 - hoogbouw individuele warmtepomp", "Type 4"),
+        ):
+            self.value_kader20_type_combo.addItem(label, key)
+        self.value_kader20_type_label = QLabel("Kader 2.0 verwarmingswijze")
+        housing_layout.addWidget(self.value_kader20_type_label)
+        housing_layout.addWidget(self.value_kader20_type_combo)
+        self.value_kader20_type_combo.currentIndexChanged.connect(
+            self._value_household_changed
+        )
         root.addWidget(self.value_housing_group)
 
         self.value_unit_group = QGroupBox("Type wooneenheid / aansluiting")
@@ -2429,6 +2444,17 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         household = category == "Huishoudelijk"
         self.value_housing_group.setVisible(household)
+        profile20_visible = (
+            household
+            and self._workflow_field_defaults().get("design_framework") == "2.0"
+        )
+        self.value_kader20_type_label.setVisible(profile20_visible)
+        self.value_kader20_type_combo.setVisible(profile20_visible)
+        if profile20_visible:
+            self.value_housing_note.setText(
+                "Kader 2.0: kies het echte verwarmingssysteem Type 1-4. "
+                "Zonder keuze gebruikt de berekening een gemarkeerde bouwjaar-aanname."
+            )
         self.value_manual_group.setVisible(True)
         self.value_manual_checkbox.setChecked(False)
         self.value_unit_group.setVisible(not household)
@@ -2462,7 +2488,17 @@ class LSNetontwerpDialog(QDialog):
         layer = self._layer_from_combo(self.value_layer_combo)
         features = list(layer.selectedFeatures()) if layer is not None else []
         context = self.zero_current_page._household_context()
-        rows = [self.zero_current_page._household_currents(layer, feature, self.value_housing_combo.currentData(), context) for feature in features]
+        try:
+            rows = [
+                self.zero_current_page._household_currents(
+                    layer, feature, self.value_housing_combo.currentData(),
+                    context, self.value_kader20_type_combo.currentData(),
+                )
+                for feature in features
+            ]
+        except (ValueError, TypeError) as exc:
+            self.value_housing_note.setText(str(exc))
+            rows = []
         set_current_values(self._value_current_spins(), [max(column) for column in zip(*rows)] if rows else (0, 0, 0, 0))
         self._update_value_highest_preview()
 
@@ -3729,6 +3765,12 @@ class LSNetontwerpDialog(QDialog):
                 future_connection=(
                     unit_future_connection(category, self.value_unit_combo.currentData())
                     if category == "Zakelijk"
+                    and self._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
+                kader20_override=(
+                    self.value_kader20_type_combo.currentData()
+                    if category == "Huishoudelijk"
                     and self._workflow_field_defaults().get("design_framework") == "2.0"
                     else None
                 ),
