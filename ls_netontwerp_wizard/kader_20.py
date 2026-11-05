@@ -115,9 +115,16 @@ def household_profile(housing, build_year, new_build_year=2022, explicit_type=No
 
 
 def _business_rate(phases, amp):
-    if phases != 3:
+    if phases != 3 or amp is None:
         return None
-    return BUSINESS_FUTURE.get(int(amp)) if amp is not None else None
+    value = float(amp)
+    if not math.isfinite(value):
+        return None
+    if 35 <= value <= 40:
+        return 6, 32.0
+    if 63 <= value <= 80:
+        return 6, 65.0
+    return BUSINESS_FUTURE.get(int(value)) if value.is_integer() else None
 
 
 def _value_business(phases, amp):
@@ -156,12 +163,20 @@ def current(level, category, housing, build_year, phases, amp, *,
         ]
         return row[1 if generation else 0], f"Type {number} ({provenance})", ""
     if category == 8:
-        value = PUBLIC_CHARGING[level].get(int(amp)) if phases == 3 and amp is not None else None
+        value = PUBLIC_CHARGING[level].get(float(amp)) if phases == 3 and amp is not None else None
         if value is None:
             return 0.0, "Type 8 - ongedefinieerde laadaansluiting", "Kader 2.0 definieert netbewust publiek laden alleen voor 3x25 A"
         return (0.0 if generation else value), "Type 8 - netbewust publiek laden", ""
     if category == 9:
-        value = STREET_FURNITURE.get(int(amp)) if phases == 3 and amp is not None else None
+        value = None
+        if phases == 3 and amp is not None:
+            nominal = float(amp)
+            if 40 <= nominal <= 50:
+                value = 22.0
+            elif 63 <= nominal <= 80:
+                value = 36.0
+            elif nominal == 25:
+                value = 5.8
         if value is None:
             return 0.0, "Type 9 - ongedefinieerd straatmeubilair", "Kader 2.0 definieert deze straatmeubilairaansluiting niet"
         return (0.0 if generation else value), "Type 9 - straatmeubilair", ""
@@ -182,8 +197,10 @@ def riser_current(kind, number_of_units, future_connection_amp=None):
         raise ValueError("Aantal eenheden moet eindig en niet-negatief zijn")
     if kind in (3, 4):
         return count * RISER[kind]
-    if kind == 6 and future_connection_amp in RISER_BUSINESS:
-        return count * RISER_BUSINESS[future_connection_amp]
+    if kind == 6 and future_connection_amp is not None:
+        business = _business_rate(3, future_connection_amp)
+        if business is not None and business[0] == 6:
+            return count * business[1]
     raise ValueError("Kader 2.0 geeft geen stijgleidingwaarde voor dit type/aansluitwaarde")
 
 
