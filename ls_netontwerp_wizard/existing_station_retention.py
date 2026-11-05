@@ -169,7 +169,7 @@ def check_paths(connections, cables, station_origins=None, branch_roots=None):
                 start=branch_roots.get((c.station,group))
                 if not start: raise ValueError(f"Geen bevestigd aftakpunt voor {c.station}/{group}")
         elif station_origins is not None:
-            start=station_origins.get(c.station)
+            start=station_origins.get((c.station,group),station_origins.get(c.station))
             if not start: raise ValueError(f"Geen bevestigd stationsbeginpunt voor {c.station}")
         current=start
         history=set([current]) if current else set()
@@ -195,7 +195,8 @@ def check_paths(connections, cables, station_origins=None, branch_roots=None):
 
 
 def retain_original(stations_a, connections, cables, *, installed_fuses=None,
-                    station_origins=None, branch_roots=None, profile="both"):
+                    station_origins=None, branch_roots=None,
+                    parent_routes=None, profile="both"):
     """Best-effort conservative removal, never adds a foreign connection.
 
     Returns retained/released IDs and separate per-(station, full group) cable
@@ -217,21 +218,68 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         raise ValueError("Oorspronkelijk station ontbreekt in stationsinventaris.")
 
     def states():
-        by_group={}
+        # Group -01 starts at its own tap, but all descendant loads also run
+        # through the main group's upstream cable (once per connection).
+        by_group=defaultdict(list)
+        direct=defaultdict(list)
         for c in connections:
-            if c.id in active:
-                by_group.setdefault((c.station,group_code(c.group)),[]).append(c)
+            if c.id not in active:continue
+            name=group_code(c.group)
+            direct[(c.station,name)].append(c)
+            while name:
+                by_group[(c.station,name)].append(c)
+                name=parent_group(name)
         direction={}
         for key,members in by_group.items():
-            used={edge for c in members for edge in c.edge_ids}
-            physical=[edge_by_id[id] for id in sorted(used)]
-            fuse=None if installed_fuses is None else installed_fuses.get(key)
-            test=cable_check(physical,installed_fuse_a=fuse,profile=profile)
+            own=direct.get(key,[])
+            paths=[c.edge_ids for c in own]
+            # Each child must have a verified physical path on THIS parent
+            # group to its tap. Never add the child's length to the parent.
+            children=sorted({
+                group_code(c.group).split(key[1]+"-",1)[1].split("-",1)[0]
+                for c in members
+                if c.group!=key[1] and c.group.startswith(key[1]+"-")
+            })
+            for suffix in children:
+                child=key[1]+"-"+suffix
+                link_key=(key[0],child)
+                if parent_routes is None or link_key not in parent_routes:
+                    raise ValueError(
+                        f"Fysieke bovenliggende route tot aftakking {child} "
+                        "ontbreekt; de belasting van de parent mag niet worden genegeerd."
+                    )
+                paths.append(tuple(parent_routes[link_key]))
+            if not paths:
+                raise ValueError("Richting zonder werkelijk fysiek pad.")
+            checked=[]
+            used=set()
+            for path in paths:
+                path=tuple(path)
+                if not path:raise ValueError(f"Leeg fysiek pad voor {key}")
+                used.update(path)
+                physical=[edge_by_id[id] for id in path]
+                fuse=None if installed_fuses is None else installed_fuses.get(key)
+                checked.append((
+                    sum(x.length_m for x in physical),
+                    cable_check(physical,installed_fuse_a=fuse,profile=profile)
+                ))
+            # CableChecker is a feeder-path impedance calculation, NOT a sum
+            # of disconnected parallel branches. Use worst individual path,
+            # but count every endpoint load on the shared upstream feeder.
+            worst_length=max(length for length,_ in checked)
+            limiting=min(checked,key=lambda row:row[1]["max_ontwerp_a"])[1]
             load=_maximum(members,"kabel")
-            direction[key]={**test,"belasting_a":load,"pass":bool(test["gg_a"]) and load<=test["max_ontwerp_a"]+1e-7,
-                            "length_m":sum(x.length_m for x in physical),
-                            "segmenten":tuple((x.id,x.type,x.length_m) for x in physical),
-                            "behouden_ids":tuple(sorted(c.id for c in members))}
+            union=[edge_by_id[id] for id in sorted(used)]
+            direction[key]={
+                **limiting,
+                "belasting_a":load,
+                "pass":bool(limiting["gg_a"]) and load<=limiting["max_ontwerp_a"]+1e-7,
+                "length_m":worst_length,
+                "fysiek_uniek_m":sum(x.length_m for x in union),
+                "paden":len(paths),
+                "segmenten":tuple((x.id,x.type,x.length_m) for x in union),
+                "behouden_ids":tuple(sorted(c.id for c in members))
+            }
         station={}
         for name,capacity in stations_a.items():
             if not isfinite(capacity) or capacity<=0:
