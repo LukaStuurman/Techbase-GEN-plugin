@@ -58,6 +58,25 @@ def test():
     assert left_to_right==[(0,40,90.),(40,60,75.),(60,80,50.),(80,95,20.)],left_to_right
     assert r["stations"][station]["belasting_a"]==90.
 
+    # The QGIS processing bridge renames the selected 'Hoogste Trafo'
+    # to Ontwerpstroom. Its 4 original verbruik/opwek components must
+    # be used for retaining old cables, NOT that renamed max field.
+    prepared=points.copy()
+    prepared["Ontwerpstroom"]=[99.,99.,99.,99.]
+    prepared["Orig_Trafo_Verbruik"]=[20.,15.,30.,25.]
+    prepared["Orig_Trafo_Opwek"]=[0.,0.,0.,0.]
+    prepared["Orig_Kabel_Verbruik"]=[20.,15.,30.,25.]
+    prepared["Orig_Kabel_Opwek"]=[0.,0.,0.,0.]
+    traced_prepared=trace_group_cables(prepared,stations,cables)
+    retained_prepared=retain_original(
+        {station:217.},traced_prepared["connections"],traced_prepared["cables"],
+        station_origins=traced_prepared["station_origins"],
+        branch_roots=traced_prepared["branch_roots"],
+        parent_routes=traced_prepared["parent_routes"],
+    )
+    assert retained_prepared["stations"][station]["belasting_a"]==90.
+    assert retained_prepared["richtingen"][(station,"K01-00")]["belasting_a"]==90.
+
     # Different stations may legitimately reuse K01-00/-01/-02/-03.
     # Both sets must trace only to their own physical connected component.
     import pandas as pd
