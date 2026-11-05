@@ -85,6 +85,7 @@ class LaagspanningClusteringAlgorithm(QgsProcessingAlgorithm):
     ALLEEN_BINNEN_PLANGEBIED = "ALLEEN_BINNEN_PLANGEBIED"
     KABELROUTES_BUITEN_PLANGEBIED = "KABELROUTES_BUITEN_PLANGEBIED"
     AUTOMATISCH_AANTAL = "AUTOMATISCH_AANTAL"
+    BEHOUD_BESTAANDE_RICHTINGEN = "BEHOUD_BESTAANDE_RICHTINGEN"
     AANTAL_NIEUWE = "AANTAL_NIEUWE"
     NIEUW_KVA = "NIEUW_KVA"
     VOORKEUR_BENUTTING = "VOORKEUR_BENUTTING"
@@ -484,6 +485,16 @@ verzoek zichtbaar worden.
                 self.AUTOMATISCH_AANTAL,
                 self.tr("Aantal nieuwe stations automatisch bepalen"),
                 defaultValue=True,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.BEHOUD_BESTAANDE_RICHTINGEN,
+                self.tr(
+                    "Bestaande stations uitsluitend originele aansluitingen op "
+                    "originele kabelgroepen laten behouden (extra controle)"
+                ),
+                defaultValue=False,
             )
         )
         self.addParameter(
@@ -1336,6 +1347,14 @@ verzoek zichtbaar worden.
         automatic_count = self.parameterAsBool(
             parameters, self.AUTOMATISCH_AANTAL, context
         )
+        preserve_existing = self.parameterAsBool(
+            parameters, self.BEHOUD_BESTAANDE_RICHTINGEN, context
+        )
+        if preserve_existing and not automatic_count:
+            raise QgsProcessingException(
+                "De bestaande-kabelgroepenmodus werkt alleen met automatisch "
+                "gekozen nieuwe stations. Zet automatische stationskeuze aan."
+            )
         n_new = self.parameterAsInt(parameters, self.AANTAL_NIEUWE, context)
         new_kva = self.parameterAsDouble(parameters, self.NIEUW_KVA, context)
         target_utilization = (
@@ -1596,6 +1615,7 @@ verzoek zichtbaar worden.
             engine.N_NEW = n_new
             engine.NEW_KVA = new_kva
             engine.AUTO_NEW_STATIONS = automatic_count
+            engine.PRESERVE_EXISTING_DIRECTIONS = preserve_existing
             engine.TARGET_UTILIZATION = target_utilization
             engine.MAX_ROUTE_M = max_route_m
             engine.WRITE_SHAPEFILES = bool(write_shapefiles)
