@@ -451,10 +451,20 @@ def trace_group_cables(points,stations,cables, *,
             def number(name):
                 try:return float(row[name])
                 except (TypeError,ValueError,KeyError):return 0.
-            consumption=number("Ontwerpstroom")
-            production=number("Opwek ontwerpstroom")
-            cable_consumption=number("Ontwerpstroom kabel")
-            cable_production=number("Kabel opwek ontwerpstroom")
+            # Prepared QGIS inputs preserve these four ORIGINAL electrical
+            # components explicitly, because the general clustering field
+            # "Ontwerpstroom" is a transformed 'Hoogste Trafo' surrogate.
+            if "Orig_Trafo_Verbruik" in row.index:
+                consumption=number("Orig_Trafo_Verbruik")
+                production=number("Orig_Trafo_Opwek")
+                cable_consumption=number("Orig_Kabel_Verbruik")
+                cable_production=number("Orig_Kabel_Opwek")
+            else:
+                # Direct imported GeoPackage tests need no QGIS processing.
+                consumption=number("Ontwerpstroom")
+                production=number("Opwek ontwerpstroom")
+                cable_consumption=number("Ontwerpstroom kabel")
+                cable_production=number("Kabel opwek ontwerpstroom")
             if not (consumption or production or cable_consumption or cable_production):
                 raise ValueError(
                     f"Aansluiting {row_index} mist geldige trafo-/kabelontwerpstromen."
