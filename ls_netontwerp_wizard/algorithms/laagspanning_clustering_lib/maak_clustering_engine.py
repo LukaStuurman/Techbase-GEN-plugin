@@ -7352,6 +7352,9 @@ def main(_automatic_retry: bool = False) -> None:
             "Orig_ID": safe_column("ID"),
             "Master_asset_id": safe_column("master_asset_id", ""),
             "Station": safe_column("Station", ""),
+            # Keep the complete original GEN circuit identity in the result.
+            # 'K01-00' and 'K01-01' are different physical segments.
+            "Kabel Subgroep": safe_column("Kabel Subgroep", ""),
             "Straat": safe_column("Straat", ""),
             "Huisnr": safe_column("Huisnummer"),
             "Toevoeging": safe_column("Toevoeging", ""),
