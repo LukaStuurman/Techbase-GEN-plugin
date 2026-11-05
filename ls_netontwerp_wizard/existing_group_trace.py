@@ -200,9 +200,22 @@ def trace_group_cables(points,stations,cables, *,
         if group not in records:
             raise ValueError(f"Kabelgroep {group} bij {station} heeft geen getypeerde kabeldelen.")
 
+    # Every suffix level is a real direction, also when nobody is connected
+    # directly to the parent and only a -01 or -01-02 descendant is used.
+    pairs=set(point_members)
+    for station,group in tuple(pairs):
+        parent=parent_group(group)
+        while parent:
+            pairs.add((station,parent))
+            parent=parent_group(parent)
+    for station,group in pairs:
+        if group not in records:
+            raise ValueError(
+                f"Kabelgroep {group} (station {station}) heeft geen fysieke GEN-kabeldelen."
+            )
     unions={code:unary_union([geom for geom,_ in rows]) for code,rows in records.items()}
     junctions={}
-    for station,group in point_members:
+    for station,group in sorted(pairs):
         parent=parent_group(group)
         if not parent:continue
         if parent not in unions:
@@ -225,9 +238,8 @@ def trace_group_cables(points,stations,cables, *,
     all_groups=defaultdict(list)
     for (station,group),members in point_members.items():
         all_groups[group].extend(members)
-        if parent_group(group):
-            parent=parent_group(group)
-            all_groups.setdefault(parent,[])
+    for station,group in sorted(pairs):
+        all_groups.setdefault(group,[])
     physical=[]
     result=[]
     origins={}
@@ -244,7 +256,7 @@ def trace_group_cables(points,stations,cables, *,
             point for (station,code),point in junctions.items()
             if parent_group(code)==group
         )
-        origin_station_names={name for name,g in point_members if g==group}
+        origin_station_names={name for name,g in pairs if g==group}
         if parent_group(group) is None:
             terminals.extend(station_geoms[s] for s in origin_station_names)
         # Stations can be outside the cable itself. Project main roots onto
@@ -266,29 +278,57 @@ def trace_group_cables(points,stations,cables, *,
             physical.append(Cable(group+"|"+local_id,group,str(u),str(v),kind,length))
     edge_by_group={}
     for c in physical:edge_by_group.setdefault(c.group,{})[tuple(sorted((c.from_node,c.to_node)))]=c.id
-    for (station,group),members in point_members.items():
+    direction_roots={}
+    for station,group in sorted(pairs):
         graph,_edges=group_graphs[group]
-        root_point=junctions.get((station,group)) if parent_group(group) else station_geoms[station]
+        root_point=(
+            junctions[(station,group)] if parent_group(group)
+            else station_geoms[station]
+        )
         _,root_projection=_closest_unique(
             [p for p,_t in records[group]],root_point,
-            station_anchor_tolerance_m if not parent_group(group) else terminal_tolerance_m,
-            f"Begin {station}/{group}"
+            station_anchor_tolerance_m if not parent_group(group)
+            else terminal_tolerance_m,
+            f"Begin {station}/{group}",
         )
-        # The true root was projected at noding time, so it is a graph node.
         root=min(graph.nodes,key=lambda xy:Point(xy).distance(root_projection))
         if Point(root).distance(root_projection)>0.02:
-            raise ValueError(f"Beginpunt {station}/{group} ligt niet op genood kabeldeel.")
+            raise ValueError(f"Beginpunt {station}/{group} ligt niet op fysieke kabel.")
+        direction_roots[(station,group)]=root
         if parent_group(group):
             roots[(station,group)]=str(root)
         else:
-            previous=origins.setdefault(station,str(root))
-            if previous!=str(root):
-                # Different feeder starts can be distinct terminals near the
-                # substation; use separate roots in the path validation below.
-                raise ValueError(
-                    f"Station {station} heeft meerdere fysieke feeder-vertrekpunten; "
-                    "één enkel stationanker is niet eenduidig."
-                )
+            origins[(station,group)]=str(root)
+
+    parent_routes={}
+    for station,group in sorted(pairs):
+        parent=parent_group(group)
+        if parent is None:
+            continue
+        graph,_edges=group_graphs[parent]
+        root=direction_roots[(station,parent)]
+        tap=junctions[(station,group)]
+        target=min(graph.nodes,key=lambda xy:Point(xy).distance(tap))
+        if Point(target).distance(tap)>0.02 or not nx.has_path(graph,root,target):
+            raise ValueError(
+                f"Aftakpunt {group} is niet verbonden met de parent {parent} van station {station}."
+            )
+        nodes=nx.shortest_path(graph,root,target,weight="length")
+        ids=tuple(
+            edge_by_group[parent][tuple(sorted((str(a),str(b))))]
+            for a,b in zip(nodes[:-1],nodes[1:])
+        )
+        if not ids:
+            raise ValueError(
+                f"Aftakking {group} begint op de station-/parent-root zonder "
+                "eigen bovenliggende kabelroute; valideer de schakelconfiguratie."
+            )
+        parent_routes[(station,group)]=ids
+
+    point_id_to_index={}
+    for (station,group),members in point_members.items():
+        graph,_edges=group_graphs[group]
+        root=direction_roots[(station,group)]
         for row_index,row in members:
             _,pr=_closest_unique(
                 [p for p,_t in records[group]],row.geometry,
@@ -316,6 +356,11 @@ def trace_group_cables(points,stations,cables, *,
                 )
             raw_id=_value(row,("master_asset_id","Master Asset ID","ID"))
             id=str(raw_id or f"IDX-{row_index}")
+            if id in point_id_to_index:
+                raise ValueError(
+                    f"Dubbel Master Asset ID {id}; historische aansluiting niet uniek."
+                )
+            point_id_to_index[id]=row_index
             result.append(OriginalConnection(id,station,group,route,
                              consumption,production,cable_consumption,cable_production))
     return {
@@ -323,6 +368,8 @@ def trace_group_cables(points,stations,cables, *,
         "cables":physical,
         "station_origins":origins,
         "branch_roots":roots,
+        "parent_routes":parent_routes,
+        "point_id_to_index":point_id_to_index,
         "group_graphs":group_graphs,
         "point_members":point_members,
     }
