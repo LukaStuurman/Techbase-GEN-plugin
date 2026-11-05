@@ -6345,6 +6345,8 @@ def main(_automatic_retry: bool = False) -> None:
                 "een oude stationsnaam maar zonder Kabel Subgroep worden "
                 "uitsluitend naar nieuwe stations gerouteerd."
             )
+        for warning in original_info["retention"]["waarschuwingen"]:
+            log("WAARSCHUWING bestaande kabelgroepcontrole: "+str(warning))
     existing_capacity = stations["Max_A"].to_numpy(float)
     new_capacity = NEW_KVA / 0.23 / 3.0
     theoretical_new = math.ceil(
