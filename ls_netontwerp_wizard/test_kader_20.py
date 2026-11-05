@@ -89,6 +89,39 @@ def main():
     check(k.current("kabel", 9, "", 0, 3, 75)[0], 36)
     assert k.current("trafo", 9, "", 0, 1, 6)[2]
 
+    # Two illustrated gas tables to the right of the Kader 2.0 trafo sheet.
+    # Input is CURRENT electricity+gas; base consumption is FUTURE business.
+    for gas, current_amp, expected_trafo, expected_kabel in (
+        ("G4/G6/Geen", 25, 8.7, 8.7),
+        ("G4/G6/Geen", 40, 32, 32),
+        ("G10-G25", 25, 44, 44),
+        ("G10-G25", 40, 65, 65),
+        ("G10-G25", 63, 138, 65),
+        ("G10-G25", 100, 210, 210),
+        (">G25", 25, 210, 65),
+        (">G25", 80, 210, 65),
+        (">G25", 100, 210, 210),
+    ):
+        for level, expected in (("trafo", expected_trafo), ("kabel", expected_kabel)):
+            check(k.current(
+                level, 10, "", 0, 3, 25, generation=False,
+                gas_category=gas, current_phases=3, current_amp=current_amp
+            )[0], expected)
+    # Small-business electricity below 3x25 gets the minimum row.
+    for phases, amp in ((1, 25), (2, 25), (3, 10), (1, 63)):
+        assert k.default_small_business_future(phases, amp) == "3 x 25 A"
+        check(k.current("trafo", 10, "", 0, phases, amp)[0], 8.7)
+    assert k.default_small_business_future(3, 35) is None
+    # Houses up to 3x40 remain households, above become businesses;
+    # the gas category does not convert a 3x40 home into Type 6/7.
+    assert k.classify_category(1, 3, 40) == 1
+    assert k.classify_category(4, 1, 40) == 4
+    assert k.classify_category(1, 3, 50) == 10
+    check(k.current("trafo", 1, "vrijstaand", 2024, 3, 40,
+                    gas_category=">G25")[0], 9.5)
+    check(k.current("trafo", 1, "vrijstaand", 2024, 3, 50,
+                    gas_category=">G25")[0], 210)
+
     # Independently supplied rising-main table; no Type 5 simultaneity factor
     # is guessed from an absent lookup.
     check(k.riser_current(3, 10), 17)
