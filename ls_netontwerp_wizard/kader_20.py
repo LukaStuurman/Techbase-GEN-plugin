@@ -114,6 +114,21 @@ def household_profile(housing, build_year, new_build_year=2022, explicit_type=No
     return (1 if new_build else 2), "aanname op basis van bouwjaar"
 
 
+def classify_category(category, phases, amps):
+    """All Kaders: a household is domestic up to and including 3x40 A.
+
+    Above 40 A per phase, it uses business rating rules. A missing GEN
+    doorlaat (e.g. residential BAG) does not trigger reclassification.
+    """
+    try:
+        nominal = float(amps)
+    except (ValueError, TypeError):
+        return category
+    if category in (1, 4) and phases and (int(phases) > 3 or nominal > 40):
+        return 10
+    return category
+
+
 def _business_rate(phases, amp):
     if amp is None:
         return None
@@ -219,6 +234,10 @@ def current(level, category, housing, build_year, phases, amp, *,
     """
     if level not in HOUSEHOLD:
         raise ValueError(f"Onbekend netvlak: {level}")
+    category = classify_category(
+        category, current_phases if current_phases is not None else phases,
+        current_amp if current_amp is not None else amp,
+    )
     # GEN uses 'Huishoudelijk' for flats as well as detached houses.
     # The housing type, not just the broad use category, determines Type 3/4.
     if category == 1 and normalize_housing(housing) == "appartement":
