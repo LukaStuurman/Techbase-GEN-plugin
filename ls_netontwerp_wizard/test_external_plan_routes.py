@@ -148,8 +148,8 @@ def main():
         # Actual Processing defaults and actual 3a option dialog, including
         # migration from a state written before this setting existed.
         algorithm = LaagspanningClusteringAlgorithm();algorithm.initAlgorithm()
-        assert algorithm.parameterDefinition(algorithm.KABELROUTES_BUITEN_PLANGEBIED).defaultValue() is True
-        assert algorithm.parameterAsBool({}, algorithm.KABELROUTES_BUITEN_PLANGEBIED, QgsProcessingContext())
+        assert algorithm.parameterDefinition(algorithm.KABELROUTES_BUITEN_PLANGEBIED).defaultValue() is False
+        assert not algorithm.parameterAsBool({}, algorithm.KABELROUTES_BUITEN_PLANGEBIED, QgsProcessingContext())
         project = QgsProject.instance();project.clear()
         project.setFileName(str(root/'project.qgz'))
         source = QgsVectorLayer(f'{paths["points"]}|layername=points','LS-aansluitingen ontwerpstroom','ogr')
@@ -167,7 +167,7 @@ def main():
         dialog.prepared_state=state
         option = ClusteringOptionsDialog(dialog)
         option.show();app.processEvents()
-        assert option.allow_external_routes.isChecked() and option.allow_external_routes.isEnabled()
+        assert not option.allow_external_routes.isChecked() and option.allow_external_routes.isEnabled()
         assert option.allow_external_routes.isVisible()
         option.allow_external_routes.setChecked(False)
         assert option.save(),option.status.text()

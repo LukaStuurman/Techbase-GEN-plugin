@@ -58,7 +58,7 @@ PLANGEBIED_PATH: Path | None = None
 BAG_API_BASE_URL = "https://api.pdok.nl/kadaster/bag/ogc/v2"
 BAG_BUILDINGS_PATH: Path | None = None  # Prefer the previously calculated BAG housing layer.
 ONLY_WITHIN_PLAN_AREA = True
-ALLOW_EXTERNAL_ROUTES = True
+ALLOW_EXTERNAL_ROUTES = False
 LS_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
 CONNECTION_FUNCTION_TERMS: tuple[str, ...] = ("LS",)
 LS_FUNCTION_FILTER_ENABLED = False
@@ -306,7 +306,12 @@ def make_equipment_network_links(
                 if enclosure_geometry.geom_type in ("Polygon", "MultiPolygon")
                 else enclosure_geometry
             )
-            target = nearest_points(station.geometry, perimeter)[1]
+            # Use an existing perimeter vertex. A projected floating-point
+            # endpoint can lie a few ulps beside the segment; unary_union then
+            # leaves the station spur disconnected although it looks joined.
+            # The internal conductor has zero calculation length either way.
+            vertices = [Point(xy) for part in line_parts(perimeter) for xy in part.coords]
+            target = min(vertices, key=station.geometry.distance) if vertices else nearest_points(station.geometry, perimeter)[1]
             connector = LineString([station.geometry, target])
             if connector.length > 1e-7:
                 records.append(
@@ -2457,6 +2462,41 @@ def solve_greedy_voronoi_connected_assignment(
         "station(s); alle territoria volgen exclusieve kortste kabelpaden."
     )
     return assignment, min_utilization, node_cluster, selected, unit_distances
+
+
+def absorb_new_territories_into_existing(graph, node_list, node_cluster, source_nodes,
+                                        unit_nodes, assignment, loads, capacities, existing_count):
+    """Remove a whole new territory only after an exclusive-route proof.
+
+    A transfer may use only the two participating territories. It cannot steal
+    another station's cable, exceed capacity or relax the maximum route.
+    """
+    assignment = assignment.copy(); node_cluster = node_cluster.copy()
+    kept = list(range(len(source_nodes)))
+    for new in sorted(range(existing_count, len(source_nodes)),
+                      key=lambda index: (float(loads[assignment == index].sum()), index)):
+        members = np.flatnonzero(assignment == new)
+        if not len(members):continue
+        station_loads = np.bincount(assignment, weights=loads, minlength=len(capacities))
+        proposals = []
+        for old in range(existing_count):
+            if station_loads[old] + station_loads[new] > capacities[old] + 1e-6:continue
+            owned = {node_list[i] for i in np.flatnonzero((node_cluster == old) | (node_cluster == new))}
+            if source_nodes[old] not in owned:continue
+            distances = nx.single_source_dijkstra_path_length(graph.subgraph(owned), source_nodes[old], weight='weight')
+            targets = np.flatnonzero((assignment == old) | (assignment == new))
+            route_distances = [distances.get(unit_nodes[int(i)], np.inf) for i in targets]
+            if route_distances and max(route_distances) <= MAX_ROUTE_M + 1e-7:
+                proposals.append((max(route_distances), old))
+        if proposals:
+            _, old = min(proposals)
+            assignment[assignment == new] = old
+            node_cluster[node_cluster == new] = old
+            kept.remove(new)
+            log(f'Bestaand station {old + 1} neemt nieuw cluster {new - existing_count + 1} volledig over; capaciteit en exclusieve routes gecontroleerd.')
+    remap = {old:new for new,old in enumerate(kept)}
+    return (np.asarray([remap[int(i)] for i in assignment], dtype=int),
+            np.asarray([remap.get(int(i), -1) for i in node_cluster], dtype=int), kept)
 
 
 def build_exclusive_routes(
@@ -6978,6 +7018,21 @@ def main(_automatic_retry: bool = False) -> None:
                     return main(_automatic_retry=True)
         if exc is not None:
             raise exc
+    # The facility model uses a fixed candidate count. Remove candidates which
+    # have become unnecessary after connected assignment/centring, giving
+    # existing capacity priority without weakening any network constraint.
+    if AUTO_NEW_STATIONS:
+        final_assignment, node_cluster, kept = absorb_new_territories_into_existing(
+            graph, node_list, node_cluster, source_nodes, unit_nodes,
+            final_assignment, unit_load, capacities, existing_count)
+        if len(kept) != len(capacities):
+            retained_new = [index - existing_count for index in kept if index >= existing_count]
+            new_nodes = [new_nodes[i] for i in retained_new]
+            new_node_indices = [new_node_indices[i] for i in retained_new]
+            selected_legacy_labels = [selected_legacy_labels[i] for i in retained_new]
+            capacities = capacities[kept]
+            source_nodes = station_nodes + new_nodes
+            N_NEW = len(new_nodes)
     cluster_loads = np.bincount(
         final_assignment, weights=unit_load, minlength=len(capacities)
     )

@@ -147,7 +147,7 @@ class ClusteringOptionsDialog(QDialog):
         form.addRow(self.selected_only)
         form.addRow(self.only_plan)
         self.allow_external_routes = QCheckBox("Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken")
-        self.allow_external_routes.setChecked(bool(self.values.get("allow_external_routes", True)))
+        self.allow_external_routes.setChecked(bool(self.values.get("allow_external_routes", False)))
         self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None)
         self.plan_combo.currentIndexChanged.connect(lambda: self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None))
         self.allow_external_routes.setToolTip("De volledige kabelroute telt mee voor de maximale routelengte. Clustergebieden en nieuwe stations blijven binnen het plangebied.")

@@ -63,6 +63,9 @@ class ClusterEditingGuide:
         row.addWidget(self.select_cluster)
         row.addWidget(self.restore_selection)
         selection.insertLayout(0, row)
+        self.source_map_button = QPushButton("Hele cluster: klik bronstation op kaart")
+        self.source_map_button.clicked.connect(editor.start_source_station_pick)
+        selection.insertWidget(0,self.source_map_button)
         editor.lasso_button.setText("Selectie tekenen op de kaart")
 
         self.action_group = QGroupBox("2. Kies wat je wilt doen")
@@ -80,7 +83,7 @@ class ClusterEditingGuide:
         self.target_combo.currentIndexChanged.connect(self.target_changed)
         self.target_combo.lineEdit().textEdited.connect(self.target_text_changed)
         self.target_combo.activated.connect(self.target_changed)
-        editor.station_button.setText("Of kies een station op de kaart")
+        editor.station_button.setText("Klik doelstation op kaart")
         editor.switch_group.layout().itemAt(1).layout().removeWidget(editor.apply_button)
         editor.apply_button.hide()
 

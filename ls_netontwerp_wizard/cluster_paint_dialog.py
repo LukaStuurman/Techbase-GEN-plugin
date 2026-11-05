@@ -467,6 +467,20 @@ class VisueleClusterEditorDialog(QDialog):
                 runner._add_project_layer(runner._layer(state["import_gpkg"], state["values"][key]), title, visible)
 
     def _selection_changed(self, *args):
+        if self._waiting == 'source_station' and self.sender() is self.layers.get('STATIONS'):
+            layer=self.layers['STATIONS'];features=layer.selectedFeatures()
+            if len(features)!=1:return
+            field=self._field_name(layer,('Cluster','Station','Stationsnaam'))
+            name=str(features[0][field]).strip() if field else ''
+            index=self.guide.cluster_combo.findData(name)
+            if index<0:return
+            self._waiting=None
+            self.guide.cluster_combo.setCurrentIndex(index)
+            self.guide.select_whole_cluster()
+            layer.removeSelection()
+            self._set_status(f'Hele cluster {name} geselecteerd. Klik nu het doelstation op de kaart.')
+            self.start_station_pick()
+            return
         try:
             current = self._active_connection_layer()
             if current is not None and QgsProject.instance().mapLayer(current.id()) is None:
@@ -530,6 +544,16 @@ class VisueleClusterEditorDialog(QDialog):
         self._waiting = "station"
         action.trigger()
         self._set_status("Klik nu precies één bestaand doelstation aan.")
+        self.showMinimized()
+
+    def start_source_station_pick(self):
+        layer=self.layers.get('STATIONS')
+        if self.iface is None or self.mode!='result' or layer is None:
+            self._error('Open een clusterresultaat in QGIS om een bronstation aan te klikken.');return
+        layer.removeSelection();self.iface.setActiveLayer(layer)
+        self._waiting='source_station'
+        self.iface.actionSelect().trigger()
+        self._set_status('Klik één bronstation: alle aansluitingen van dat cluster worden geselecteerd. Daarna kies je het doelstation.')
         self.showMinimized()
 
     def clear_connection_selection(self):

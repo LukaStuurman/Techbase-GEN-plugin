@@ -32,6 +32,9 @@ def main():
     dialog.show_home_page()
     dialog.show()
     app.processEvents()
+    assert not dialog.retire_station_dashboard_button.isVisible()
+    dialog.cluster_advanced_toggle.setChecked(True)
+    app.processEvents()
     retire = dialog.retire_station_dashboard_button
     assert retire.objectName() == "retireExistingStationDashboardButton"
     assert retire.text() == "4c. Bestaand station laten vervallen"

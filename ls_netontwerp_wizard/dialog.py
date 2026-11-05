@@ -120,7 +120,7 @@ BOOL_OPTIONS = {
     "one_phase_exception": ("1-/2-fase woonhuis: tabelwaarde", True),
     "node_trenches": ("Kabels knippen/noden", True),
     "only_plan": ("Alleen aansluitingen en stations binnen plangebied", True),
-    "allow_external_routes": ("Kabelroutes buiten het plangebied toestaan", True),
+    "allow_external_routes": ("Kabelroutes buiten het plangebied toestaan", False),
     "automatic_stations": ("Aantal nieuwe stations automatisch", True),
     "write_shapefiles": ("Ook losse shapefiles schrijven", False),
 }
@@ -477,6 +477,12 @@ class LSNetontwerpDialog(QDialog):
         self.open_control_project_button.clicked.connect(lambda: self._open_clustering_diagnostic(True))
         issue_buttons.addWidget(self.open_diagnostics_button)
         issue_buttons.addWidget(self.open_control_project_button)
+        self.zoom_network_issue_button = QPushButton('Zoom naar kabelknelpunt')
+        self.draw_repair_trench_button = QPushButton('Ontbrekende verbinding tekenen')
+        self.zoom_network_issue_button.clicked.connect(lambda: self._network_repair_action('zoom'))
+        self.draw_repair_trench_button.clicked.connect(lambda: self._network_repair_action('start'))
+        issue_buttons.addWidget(self.zoom_network_issue_button)
+        issue_buttons.addWidget(self.draw_repair_trench_button)
         issue_layout.addLayout(issue_buttons)
         self._clustering_diagnostic_folder = None
         self.clustering_issue_group.hide()
@@ -4192,3 +4198,10 @@ class LSNetontwerpDialog(QDialog):
         if folder is not None:
             path = folder / "controleproject.qgz" if project else folder
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _network_repair_action(self, action):
+        try:
+            from .network_repair import RepairDrawing
+            if not hasattr(self,'_repair_drawing'):self._repair_drawing=RepairDrawing(self)
+            getattr(self._repair_drawing,action)()
+        except Exception as exc:self.clustering_issue_label.setText(str(exc))

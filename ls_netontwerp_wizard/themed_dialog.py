@@ -3,6 +3,7 @@ from __future__ import annotations
 from qgis.PyQt.QtCore import QTimer, Qt
 from qgis.PyQt.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialogButtonBox,
     QFrame,
     QGridLayout,
@@ -422,6 +423,13 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                 ),
             ],
         )
+        self.cluster_advanced_toggle = QCheckBox('Geavanceerde clusterbewerkingen')
+        step4.layout().addWidget(self.cluster_advanced_toggle)
+        advanced_cluster_buttons = [button for button in step4.findChildren(QPushButton)
+                                   if not button.text().startswith('4a.')]
+        for button in advanced_cluster_buttons:button.hide()
+        self.cluster_advanced_toggle.toggled.connect(
+            lambda enabled: [button.setVisible(enabled) for button in advanced_cluster_buttons])
         step5 = self._make_step_card(
             5,
             "Sleuven & routes",

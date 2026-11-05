@@ -85,6 +85,7 @@ def main():
         dialog.show()
         app.processEvents()
         button = next(b for b in dialog._dashboard_widget.findChildren(QPushButton) if b.text().startswith('4i.'))
+        dialog.cluster_advanced_toggle.setChecked(True);app.processEvents()
         assert button.isVisible() and button.isEnabled()
         button.click()
         app.processEvents()

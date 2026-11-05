@@ -209,7 +209,7 @@ Als het veld GebiedLabel bruikbare labels in de vorm 'Trafo 1', 'Trafo 2',
 enzovoort bevat, gebruikt de tool die als kandidaatlocaties. Zonder zulke labels
 maakt de tool zelf kandidaatlocaties op het kabelnet. Een optioneel plangebied
 kan worden opgegeven om de aansluitingen en uiteindelijke clustergebieden exact te
-begrenzen. Kabelroutes mogen standaard buiten het plangebied lopen om een aansluiting
+begrenzen. Kabelroutes blijven standaard binnen het plangebied; optioneel mogen ze buiten het plangebied lopen om een aansluiting
 binnen de grens te bereiken. Zet deze optie uit om het kabelnet op de grens te knippen.
 De volledige route blijft meetellen voor de maximale kabellengte. Het gekozen
 plangebied wordt als blijvende resultaatlaag overgenomen.
@@ -476,7 +476,7 @@ verzoek zichtbaar worden.
             QgsProcessingParameterBoolean(
                 self.KABELROUTES_BUITEN_PLANGEBIED,
                 self.tr("Kabels buiten plangebied gebruiken om aansluitingen binnen plangebied te bereiken"),
-                defaultValue=True,
+                defaultValue=False,
             )
         )
         self.addParameter(

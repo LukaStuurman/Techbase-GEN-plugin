@@ -91,6 +91,19 @@ def main():
         next(b for b in host.findChildren(QPushButton) if b.text().startswith("4a.")).click()
         editor=host._dashboard_visual_cluster_dialog;guide=editor.guide
         assert guide.action=="move" and editor.mode=="result" and not guide.advanced.isChecked()
+        class Action:
+            def trigger(self):pass
+        class MapInterface:
+            def setActiveLayer(self,layer):self.active=layer
+            def actionSelect(self):return Action()
+        editor.iface=MapInterface()
+        guide.source_map_button.click()
+        assert editor._waiting=='source_station'
+        stations.selectByIds([1]);app.processEvents()
+        assert len(points.selectedFeatureIds())==4 and editor._waiting=='station'
+        stations.selectByIds([2]);app.processEvents()
+        assert editor._waiting is None and guide.target_combo.currentData()==2
+        editor.iface=None
         points.selectByIds([4]);guide.target_combo.setCurrentIndex(guide.target_combo.findData(2))
         assert guide.commit.isEnabled() and "70.0 / 80.0" in editor.preview_label.text(), (points.selectedFeatureIds(),stations.selectedFeatureIds(),guide._target_searching,editor.preview_label.text())
         guide.target_combo.setEditText("station dat niet bestaat")

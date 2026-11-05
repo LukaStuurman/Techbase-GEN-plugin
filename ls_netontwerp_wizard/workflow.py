@@ -1079,6 +1079,10 @@ class WorkflowRunner:
         def imported(name, label):
             return self._validate_layer(self._layer(import_gpkg, name), label)
 
+        from .network_repair import merged_cables
+        routing_cables = merged_cables(imported(self.v['layer_main_cables'],'LS-kabels'),
+                                      state.get('repair_trenches',''),self.v['field_main_function'])
+
         clustering_result = self._run_algorithm(
             "clustering",
             {
@@ -1092,7 +1096,7 @@ class WorkflowRunner:
                     self._validate_layer(housing_uri, "BAG-woningtypen")
                     if housing_uri else None
                 ),
-                "KABELS": imported(self.v["layer_main_cables"], "LS-kabels"),
+                "KABELS": routing_cables,
                 "LS_FUNCTION_VELD": self.v["field_main_function"],
                 "LS_FUNCTION_WOORDEN": self.v["main_function_words"],
                 "AANSLUITKABELS": imported(
@@ -1116,7 +1120,7 @@ class WorkflowRunner:
                 ),
                 "PLANGEBIED": plan_uri,
                 "ALLEEN_BINNEN_PLANGEBIED": bool(plan_uri) and self.v["only_plan"],
-                "KABELROUTES_BUITEN_PLANGEBIED": self.v.get("allow_external_routes", True),
+                "KABELROUTES_BUITEN_PLANGEBIED": self.v.get("allow_external_routes", False),
                 "AUTOMATISCH_AANTAL": self.v["automatic_stations"],
                 "AANTAL_NIEUWE": self.v["manual_station_count"],
                 "NIEUW_KVA": self.v["new_station_kva"],

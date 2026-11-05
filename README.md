@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.30.0
+## Laatste versie: 1.31.0
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.30.0/ls_netontwerp_wizard-1.30.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.30.0)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.0/ls_netontwerp_wizard-1.31.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.0)
+
+**Nieuw in 1.31.0:** buitenroutes standaard uit, herstelknoppen bij een netwerkfout met apart opgeslagen verbindingssleuven binnen het plangebied, bronstation → doelstation op de kaart en overige clusteracties achter Geavanceerd. Herstelt numeriek losgeraakte interne stationsverbindingen en controleert of een nieuw kabelgebied door bestaande capaciteit kan worden overgenomen. Gerichte QGIS-tests slagen; de volledige Den Dungen-herberekening is nog niet afgerond. [Gebruik en testbeperkingen](NETWORK_REPAIR_VALIDATION.md).
 
 **Nieuw in 1.30.0:** op dashboardpagina **1.4** staat een zelfstandige **DXF-schema’s + geografische stationslaag**-methode. Zonder veld/rail/smelt-XML of Excel volgt zij getekende kabels, mes-/zekeringposities, mofsymbolen en complete kabeltekstvolgordes langs witte verwijslijnen. Een gewone kruising wordt niet doorverbonden. Geografische stationsankers in RD New en hun stationsnamen worden gecontroleerd; twijfel blijft onbehandeld. Den Dungen: **1.867 gelijk, 0 afwijkend, 131 onbekend** binnen 1.998 controlegevallen. De gecombineerde route controleert nu ook fysieke veldnummers en herstelt vijf foutieve administratieve smelt-/veldrelaties: **1.998 gelijk, 0 afwijkend, 0 onbekend** binnen die controlelijst. Daarmee zijn de vier eerdere verschillen opgelost. Over de volledige bron blijven gecombineerd 38 van 2.763 punten zonder stationsnaam. [Gebruik, oorzaak en onafhankelijke validatie](DXF_SCHEMA_VALIDATION.md).
 

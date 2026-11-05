@@ -1,4 +1,17 @@
-# LS Netontwerp Wizard v1.30.0
+# LS Netontwerp Wizard v1.31.0
+
+## Routes binnen het plangebied, herstel en eenvoudiger clustercorrectie
+
+- Buitenroutes staan standaard **uit** voor nieuwe instellingen. Een eerder opgeslagen keuze blijft behouden; optioneel inschakelen blijft mogelijk.
+- Bij een mislukte clustering kun je naar kabelcontroledelen zoomen en een ontbrekende verbindingssleuf tekenen. De lijn moet geheel binnen het plangebied liggen en met beide uiteinden aansluiten. De aanvulling wordt apart opgeslagen en bij opnieuw clusteren meegenomen, zonder bronkabels te wijzigen. Geen gelokaliseerd rapport beschikbaar? Dan volgt uitleg en blijft het controleproject beschikbaar. Een getoond los deel is een inspectiepunt, niet automatisch de foutoorzaak.
+- De normale correctie blijft direct onder 4a. Overige correctieknoppen zijn bereikbaar via **Geavanceerde clusterbewerkingen**. Kies voor een hele cluster het bronstation op de kaart, daarna het doelstation. Voor losse aansluitingen selecteer je punten en daarna het doelstation. Controle en toepassen blijven vereist; extra instellingen blijven onder Geavanceerd.
+- Interne verbindingen naar stationsomtrekken gebruiken een echte gedeelde vertex. Dit herstelt de aangetoonde afkoppeling van 044.532, 044.505, 044.535 en 044.524 in de nieuwste aangeleverde Den Dungen-clustering. Automatische eindcontrole laat een volledig nieuw kabelgebied overnemen door een bestaand station als capaciteit en exclusieve routes dit toelaten.
+
+Gerichte geometrie-, opslag-, kaartselectie-, dashboard- en hersteltaken slagen in QGIS 4.2.3. De handmatige overzetting N-08 → 044.507 slaagt ook op productiedata. **De volledige Den Dungen-herberekening is nog niet afgerond; deze release claimt daarvoor geen geslaagd totaalontwerp.** Geen QGIS 3-test of volledige fysieke Desktop-muistest. [Gebruik, bewijs en beperkingen](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/NETWORK_REPAIR_VALIDATION.md).
+
+Installeer de ZIP en herstart QGIS. Controleer bij bestaande projecten de opgeslagen buitenroutekeuze; die wordt niet stilzwijgend gewijzigd.
+
+## Behouden uit v1.30.0
 
 ## DXF-schema’s met geografische stationsankers
 
