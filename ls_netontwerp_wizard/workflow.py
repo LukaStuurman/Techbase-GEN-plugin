@@ -929,6 +929,9 @@ class WorkflowRunner:
                 "FLD_GAS": self.v["field_gas"],
                 "FLD_WONINGTYPE": self.v["field_building_type"],
                 "FLD_BOUWJAAR": self.v["field_build_year"],
+                "VAL_KADER": {"3.0": 0, "3.1": 1, "2.0": 2}.get(
+                    str(self.v.get("design_framework", "3.0")), 0
+                ),
                 "VAL_1FASE_EXCEPTION": self.v["one_phase_exception"],
                 "VAL_APPARTEMENT_ZONDER_DOORLAAT": self.v["default_apartment"],
                 "VAL_BOUWJAAR_GRENS": self.v["building_year_limit"],

@@ -58,6 +58,9 @@ jobs:
           print(f"Syntax OK: {len(files)} bestanden")
           PY
 
+      - name: Controleer Kader 2.0 tegen Excel-tabellen
+        run: python ls_netontwerp_wizard/test_kader_20.py
+
       - name: ZIP bouwen
         shell: bash
         env:

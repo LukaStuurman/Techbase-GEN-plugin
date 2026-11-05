@@ -415,7 +415,7 @@ class ZeroCurrentPage(QWidget):
         self.unit_group.setVisible(not is_household)
         self.gas_combo.setVisible(code == "Zakelijk")
         self.gas_label.setVisible(code == "Zakelijk")
-        fill_unit_combo(self.unit_combo, code)
+        fill_unit_combo(self.unit_combo, code, self.host._workflow_field_defaults().get('design_framework'))
         if code == "Straatmeubilair":
             default_trafo = self._matrix_value("matrix_straat", 5.8)
             default_cable = default_trafo
@@ -590,33 +590,43 @@ class ZeroCurrentPage(QWidget):
             is_bag_object(self._field_value(feature, values.get("field_passthrough", "service_connection_type_type")))
             and is_new_build_flag(self._field_value(feature, NEW_BUILD_FIELD))
         )
-        standard_table = standard.get("WOONHUIS_2022") if new_build else standard["WOONHUIS"]
-        cable_table = cable.get("WOONHUIS_2022") if new_build else cable["WOONHUIS"]
-        normal = float(module.woonhuis_ontwerp(house_type, standard_table))
-        cable_current = float(module.woonhuis_ontwerp(house_type, cable_table))
         usage = (
-            "appartement"
-            if "appartement" in str(house_type).casefold()
+            "appartement" if "appartement" in str(house_type).casefold()
             else "woonhuis"
         )
         one_phase = bool(values.get("one_phase_exception", True))
-        generation = float(
-            module.calculate_opwek_ontwerpstroom(
-                None, usage, house_type, "", opwek, standard, normal, one_phase
-            )
+        effective_year = max(year, year_limit) if new_build else year
+        type_field = feature.fields().lookupField("Kader20Type")
+        explicit_type = (
+            str(feature[type_field]).strip()
+            if type_field >= 0 and str(feature[type_field]).strip().casefold()
+            not in ("", "null", "none")
+            else None
         )
-        generation_cable = float(
-            module.calculate_opwek_ontwerpstroom(
-                None,
-                usage,
-                house_type,
-                "",
-                opwek_cable,
-                standard,
-                cable_current,
-                one_phase,
-            )
-        )
+        if standard.get("FRAMEWORK_VERSION") == "2.0":
+            # Presets must calculate on the selected Kader, not always use
+            # the legacy raw WOONHUIS matrix bypassing Kader 2.0.
+            normal = float(module.calculate_ontwerpstroom(
+                "3 x 25 A", usage, house_type, effective_year, "",
+                standard, feature.id(), None, one_phase, True, explicit_type,
+            ))
+            cable_current = float(module.calculate_ontwerpstroom(
+                "3 x 25 A", usage, house_type, effective_year, "",
+                cable, feature.id(), None, one_phase, True, explicit_type,
+            ))
+        else:
+            standard_table = standard.get("WOONHUIS_2022") if new_build else standard["WOONHUIS"]
+            cable_table = cable.get("WOONHUIS_2022") if new_build else cable["WOONHUIS"]
+            normal = float(module.woonhuis_ontwerp(house_type, standard_table))
+            cable_current = float(module.woonhuis_ontwerp(house_type, cable_table))
+        generation = float(module.calculate_opwek_ontwerpstroom(
+            None, usage, house_type, "", opwek, standard, normal, one_phase,
+            effective_year, explicit_type,
+        ))
+        generation_cable = float(module.calculate_opwek_ontwerpstroom(
+            None, usage, house_type, "", opwek_cable, cable, cable_current,
+            one_phase, effective_year, explicit_type,
+        ))
         return normal, cable_current, generation, generation_cable
 
     def apply_values_to_layer(
