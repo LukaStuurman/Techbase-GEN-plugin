@@ -6323,7 +6323,8 @@ def main(_automatic_retry: bool = False) -> None:
         from ls_netontwerp_wizard.existing_locked_clustering import prepare_retention
         log("Oorspronkelijke stations, -00 en aftakkingen per kabeltype controleren...")
         original_info = prepare_retention(
-            points, stations, normal_cables, MAX_ROUTE_M, profile="both",
+            points, stations, normal_cables, MAX_ROUTE_M,
+            profile="both", distribution_cabinets=distribution_cabinets,
         )
         original_records = pd.DataFrame(original_info["records"])
         original_records.to_csv(
