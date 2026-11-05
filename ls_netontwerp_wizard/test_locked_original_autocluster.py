@@ -117,6 +117,36 @@ def test():
     # The documented -00/-01/-02 branches remain owned by 044.529,
     # not by the new station.
     assert set(result["owner_by_node"].values())=={station}
+
+    # Also exercise the ACTUAL production connected-Voronoi solver. Extract
+    # this pure function by AST to avoid requiring QGIS/osgeo/Matplotlib on CI.
+    import ast
+    from threading import Lock
+    from scipy.spatial import cKDTree
+    from scipy.sparse.csgraph import dijkstra
+    from ls_netontwerp_wizard.existing_locked_clustering import np as real_np
+    engine_path=(Path(__file__).resolve().parent /
+                 "algorithms/laagspanning_clustering_lib/maak_clustering_engine.py")
+    module=ast.parse(engine_path.read_text(encoding="utf-8-sig"))
+    solver_ast=next(node for node in module.body
+                    if isinstance(node,ast.FunctionDef)
+                    and node.name=="solve_greedy_voronoi_connected_assignment")
+    scope={"np":real_np, "cKDTree":cKDTree, "dijkstra":dijkstra,
+           "Lock":Lock, "MAX_ROUTE_M":850., "TARGET_UTILIZATION":.9,
+           "TARGET_UTILIZATION_PENALTY":10000.,
+           "log":lambda message:None}
+    exec(compile(ast.Module(body=[solver_ast],type_ignores=[]),
+                 str(engine_path),"exec"),scope)
+    real=solve_locked_voronoi(
+        graph,nodes,point_indices,np.array([20.,15.,30.,25.,50.]),
+        np.arange(5),[station],np.asarray([node_index[(0.,0.)]]),
+        np.asarray([node_index[(0.,0.)],node_index[(120.,0.)]]),
+        retention,250.,850.,
+        scope["solve_greedy_voronoi_connected_assignment"],
+        lambda message:None,
+    )
+    assert real["assignment"].tolist()==[0,0,0,0,1],real
+    assert real["new_nodes"]==[(120.,0.)],real
     print("OLD_STATIONS_LOCKED_NEW_STATIONS_ONLY_OK")
 
 
