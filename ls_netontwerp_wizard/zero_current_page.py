@@ -510,7 +510,24 @@ class ZeroCurrentPage(QWidget):
             category_note(category, key, self.host._workflow_field_defaults().get("design_framework"))
             + "\nJe kunt de vier stroomwaarden hieronder ook zelf typen."
         )
-        currents = unit_currents(self._household_context(), category, key, self.gas_combo.currentData())
+        current_service = None
+        if category == "Zakelijk" and self.layer is not None:
+            selected_ids = self._selected_feature_ids()
+            if selected_ids:
+                selected = next(iter(self.layer.getFeatures(
+                    QgsFeatureRequest().setFilterFids(selected_ids[:1])
+                )), None)
+                if selected is not None:
+                    inputs = self.host._workflow_field_defaults()
+                    current_service = self._field_value(
+                        selected, inputs.get(
+                            "field_passthrough", "service_connection_type_type"
+                        )
+                    )
+        currents = unit_currents(
+            self._household_context(), category, key,
+            self.gas_combo.currentData(), current_service=current_service,
+        )
         if currents is not None:
             set_current_values(self._current_spins(), currents)
         elif category != "Huishoudelijk" and key is None:
@@ -752,6 +769,7 @@ class ZeroCurrentPage(QWidget):
         for feature in layer.getFeatures(request):
             if int(feature.id()) not in selected_ids:
                 continue
+            auto_future_for_feature = None
             if category == "Huishoudelijk" and not manual_override:
                 if house_type is None:
                     raise ValueError("Kies eerst een woningtype.")
@@ -801,11 +819,7 @@ class ZeroCurrentPage(QWidget):
                     feature, "Gevonden_Woningtype"
                 )
                 if chosen_future and not future_connection:
-                    field_future = layer.fields().lookupField(
-                        "Kader20ToekomstigeAansluitwaarde"
-                    )
-                    if field_future >= 0:
-                        original_updates["Kader20ToekomstigeAansluitwaarde"] = chosen_future
+                    auto_future_for_feature = chosen_future
             else:
                 normal = float(currents["consumption_trafo"])
                 cable_current = float(currents["consumption_cable"])
@@ -885,6 +899,12 @@ class ZeroCurrentPage(QWidget):
                         attributes[type_index20] = label
             attributes.update({layer.fields().lookupField(name): val
                                for name, val in original_updates.items()})
+            if auto_future_for_feature:
+                field_future = layer.fields().lookupField(
+                    "Kader20ToekomstigeAansluitwaarde"
+                )
+                if field_future >= 0:
+                    attributes[field_future] = auto_future_for_feature
             changes[int(feature.id())] = attributes
 
         if not changes:
