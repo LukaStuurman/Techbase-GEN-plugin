@@ -1,3 +1,21 @@
+## v1.33.0 — Kader 2.0 + directe Voronoi en exacte sleufroutes
+
+**Ontwerpstroomkader in wizard:** voeg **Kader 2.0 (Eea-0205.K 2.0.xlsx)** toe naast 3.0 en 3.1. Onafhankelijke trafo- en kabelwaarden voor verbruik en opwek; nieuwe categorieën voor individuele/collectieve verwarming, kleinzakelijk op toekomstige aansluitwaarde, grootverbruik 3×160/250, laden en straatmeubilair. Stijgleiding en Type-5-toeslag staan als expliciete rekenhelpers in `kader_20.py` en worden niet dubbel op aansluitingstromen geteld.
+
+**Traceerbaarheid:** `KaderVersie` en `KaderType` worden meegegeven. Een optioneel attribuut `Kader20Type` met Type 1/2/3/4 legt het echte verwarmingssysteem vast; anders wordt de 2022-bouwjaargrens als gemarkeerde **aanname** gebruikt. Een optionele `Kader20ToekomstigeAansluitwaarde` (bijvoorbeeld `3 x 160 A`) wint van huidige doorlaat. Bij ontbreken hiervan wordt huidige = toekomstige slechts als **te controleren aanname** gebruikt.
+
+**Niet uit Excel af te leiden:** toekomstige 3×100/125/200/overig heeft in deze 2.0-sheet geen vast tarief. De plugin geeft daarvoor 0 A met waarschuwing, **geen ongemerkte 3.x-terugval**; corrigeer deze punten via de bestaande nulwaardenpagina voor je clustert. Type 5 vereist een externe gelijktijdigheidsfactor; die wordt niet verzonnen. Hoogbouw stijgleidingen zijn een aparte berekening en worden niet bij trafo-/kabelstromen opgeteld.
+
+**Automatisch clusteren:** de nieuwe, langzame MILP-voorroute is weggehaald. Bij automatisch stationsaantal gaat het proces direct naar de bestaande kabelverbonden Voronoi-methode; de solver voor handmatig exact stationaantal blijft behouden. Bestaande stations krijgen capaciteit uit KVA/Max_A of zo nodig Status. Per-station getekende routelijnen volgen originele sleufcoördinaten in plaats van de afgeronde 0,1 m netwerkknopen; kleine numerieke snaplijnen van nieuwe stations op de hoofdkabel zijn verwijderd.
+
+**Controles:** GitHub compileert alle plugin-Pythonbestanden en test de Kader 2.0-tarieven tegen de aangeleverde workbookwaarden. De bestaande geometrie-regressietest vereist QGIS-Python. De precieze stationstoedeling van 044.529 en alle routes in het aangeleverde screenshot zijn **nog niet op de oorspronkelijke projectlagen integraal herberekend**. Geen ongeteste productievalidatie claimen.
+
+**Installatie:** download de ZIP uit deze release, installeer de map `ls_netontwerp_wizard` in je QGIS-profiel en herstart QGIS. Kies het gewenste Ontwerpstroomkader vóór stap 1. Controleer nieuwe resultaten, waarschuwingen, KaderType, nulwaarden en routes.
+
+Zie [Kader 2.0 vergelijking en beperkingen](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/KADER_20_VALIDATION.md).
+
+---
+
 # LS Netontwerp Wizard v1.32.1
 
 ## Leesbare voortgang in de clustereditor
