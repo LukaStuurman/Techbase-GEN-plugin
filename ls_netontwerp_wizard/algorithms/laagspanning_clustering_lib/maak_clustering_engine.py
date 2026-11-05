@@ -7309,6 +7309,34 @@ def main(_automatic_retry: bool = False) -> None:
         unit_nodes,
         final_assignment,
     )
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # Show the real original cable segment geometries and lengths
+        # determined from Kabel Subgroep, never a rounded or inferred route.
+        original_route_distance_by_point = {
+            index: float(original_info["retention"]["route_m"][record.id])
+            for index,record in original_info["all_original_by_index"].items()
+            if index in original_info["retained_by_index"]
+        }
+        for old_index,station_name in enumerate(stations["Stationsnaa"].astype(str)):
+            physical = list(
+                original_info["physical_by_station"].get(station_name,{}).values()
+            )
+            exact_linework = merge_linework(physical)
+            route_geometries[old_index] = exact_linework
+            route_lengths[old_index] = float(sum(line.length for line in physical))
+            for unit_index in np.flatnonzero(final_assignment==old_index):
+                retained_points = [
+                    original_route_distance_by_point[i]
+                    for i in groups[unit_index]
+                    if i in original_route_distance_by_point
+                ]
+                if retained_points:
+                    unit_route_m[unit_index] = max(retained_points)
+        log(
+            "De bestaande stationsroutes zijn exact teruggezet op hun "
+            "oorspronkelijke getypeerde kabeldelen; hun trajectlengtes en "
+            "elektrische groepscontroles zijn behouden."
+        )
     for new_index, link in enumerate(new_station_links):
         station_index = existing_count + new_index
         if not link.is_empty and link.length > 1e-9:
@@ -7442,6 +7470,37 @@ def main(_automatic_retry: bool = False) -> None:
         geometry=points.geometry,
         crs=CRS_RD,
     )
+
+    if PRESERVE_EXISTING_DIRECTIONS:
+        connections["Oud_besluit"] = [
+            (
+                "Behouden bestaand" if index in original_info["retained_by_index"]
+                else "Vrijgegeven naar nieuw"
+                if index in original_info["all_original_by_index"]
+                else "Nieuw / geen originele groep"
+            )
+            for index in range(len(points))
+        ]
+        connections["Oud_kabelgroep"] = [
+            (
+                str(original_info["all_original_by_index"][index].group)
+                if index in original_info["all_original_by_index"] else ""
+            )
+            for index in range(len(points))
+        ]
+        retained_groups=set(original_info["retained_by_index"])
+        for index in retained_groups:
+            if connections.iloc[index]["Cluster"] != original_info["retained_by_index"][index]:
+                raise RuntimeError(
+                    f"Aansluiting {index} kreeg een ander bestaand station dan "
+                    "de oorspronkelijke geverifieerde stationstoewijzing."
+                )
+        for index in range(len(points)):
+            if index not in retained_groups and int(point_assignment[index])<existing_count:
+                raise RuntimeError(
+                    f"Vrijgegeven aansluiting {index} is onterecht opnieuw "
+                    "aan een bestaand station toegewezen."
+                )
 
     point_counts = np.bincount(point_assignment, minlength=len(capacities))
     max_route = np.asarray(
