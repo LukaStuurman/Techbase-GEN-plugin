@@ -250,16 +250,35 @@ def trace_group_cables(points,stations,cables, *,
         if parent_group(group) is not None:
             continue
         source=group_union[group]
-        # Check its member-connected actual component instead of accepting
-        # another remote station's same-numbered K01-00 as the root.
+        # Select the ENTIRE connected conductor component containing the
+        # direct customers. Checking only their last short physical segment
+        # would make any ordinary multi-type station feeder appear to start at
+        # a distant cabinet.
         direct=[row.geometry for _id,row in point_members.get((station,group),[])]
         if direct:
-            connected_source=unary_union([
-                geom for geom,_typ in raw_records[group]
-                if any(geom.distance(p)<terminal_tolerance_m for p in direct)
-            ])
-            if not connected_source.is_empty:
-                source=connected_source
+            segments=list(_parts(source))
+            physical_graph=nx.Graph()
+            for index,part in enumerate(segments):
+                first=_node(Point(part.coords[0]))
+                last=_node(Point(part.coords[-1]))
+                physical_graph.add_edge(first,last,segment=index)
+            matching=[]
+            for component in nx.connected_components(physical_graph):
+                indices={
+                    data["segment"] for u,v,data
+                    in physical_graph.edges(data=True)
+                    if u in component and v in component
+                }
+                conductor=unary_union([segments[index] for index in indices])
+                if all(conductor.distance(p)<=terminal_tolerance_m for p in direct):
+                    matching.append(conductor)
+            if len(matching)!=1:
+                raise ValueError(
+                    f"Station {station}/{group}: originele aansluitingen liggen "
+                    "niet allemaal op precies één fysiek samenhangende "
+                    "kabelgroep. Geen willekeurige verdeelkast kiezen."
+                )
+            source=matching[0]
         if source.distance(station_geoms[station])<=station_anchor_tolerance_m:
             continue
         if not cabinet_geometries:
