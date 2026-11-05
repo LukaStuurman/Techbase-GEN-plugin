@@ -449,8 +449,25 @@ def trace_group_cables(points,stations,cables, *,
             if not route:
                 raise ValueError(f"Aansluiting {row_index} ligt op feederroot; bevestig uitvoerveld.")
             def number(name):
-                try:return float(row[name])
-                except (TypeError,ValueError,KeyError):return 0.
+                if name not in row.index:
+                    raise ValueError(
+                        f"Aansluiting {row_index}: verplichte originele "
+                        f"ontwerpstroomkolom {name} ontbreekt."
+                    )
+                raw=row[name]
+                try:
+                    value=float(raw)
+                except (TypeError,ValueError) as exc:
+                    raise ValueError(
+                        f"Aansluiting {row_index}: ontwerpstroom {name} "
+                        f"is geen getal ({raw!r}); controleer de bron."
+                    ) from exc
+                if not math.isfinite(value) or value<0:
+                    raise ValueError(
+                        f"Aansluiting {row_index}: ongeldige stroom "
+                        f"in {name}: {value!r}."
+                    )
+                return value
             # Prepared QGIS inputs preserve these four ORIGINAL electrical
             # components explicitly, because the general clustering field
             # "Ontwerpstroom" is a transformed 'Hoogste Trafo' surrogate.
