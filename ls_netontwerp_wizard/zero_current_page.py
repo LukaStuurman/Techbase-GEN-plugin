@@ -177,6 +177,18 @@ class ZeroCurrentPage(QWidget):
         )
         self.housing_note.setWordWrap(True)
         category_form.addRow("", self.housing_note)
+        self.kader20_type_combo = QComboBox()
+        for label, value in (
+            ("Bouwjaar-aanname (controleer verwarming)", None),
+            ("Type 1 - laagbouw met individuele warmtepomp", "Type 1"),
+            ("Type 2 - laagbouw met gas/stadsverwarming", "Type 2"),
+            ("Type 3 - hoogbouw collectieve verwarming", "Type 3"),
+            ("Type 4 - hoogbouw individuele warmtepomp", "Type 4"),
+        ):
+            self.kader20_type_combo.addItem(label, value)
+        category_form.addRow("Kader 2.0 verwarming", self.kader20_type_combo)
+        self.kader20_type_label = category_form.labelForField(self.kader20_type_combo)
+        self.kader20_type_combo.currentIndexChanged.connect(self._household_changed)
 
         self.unit_group = QGroupBox("Type wooneenheid / aansluiting")
         self.unit_group.setProperty("uiContentMinimum", True)
@@ -410,6 +422,18 @@ class ZeroCurrentPage(QWidget):
         self.housing_combo.setVisible(is_household)
         self.housing_label.setVisible(is_household)
         self.housing_note.setVisible(is_household)
+        type20_visible = (
+            is_household
+            and self.host._workflow_field_defaults().get("design_framework") == "2.0"
+        )
+        self.kader20_type_combo.setVisible(type20_visible)
+        self.kader20_type_label.setVisible(type20_visible)
+        if type20_visible:
+            self.housing_note.setText(
+                "Kader 2.0 onderscheidt verwarmingswijze, niet bouwjaar. "
+                "Kies Type 1-4 als deze bekend is; anders is bouwjaar een "
+                "gemarkeerde aanname."
+            )
         self.current_values_group.setVisible(True)
         self.manual_checkbox.setChecked(False)
         self.unit_group.setVisible(not is_household)
@@ -453,7 +477,17 @@ class ZeroCurrentPage(QWidget):
         ids = self._selected_feature_ids()
         features = list(self.layer.getFeatures(QgsFeatureRequest().setFilterFids(ids))) if self.layer is not None and ids else []
         context = self._household_context()
-        rows = [self._household_currents(self.layer, feature, self.housing_combo.currentData(), context) for feature in features]
+        try:
+            rows = [
+                self._household_currents(
+                    self.layer, feature, self.housing_combo.currentData(),
+                    context, self.kader20_type_combo.currentData(),
+                )
+                for feature in features
+            ]
+        except (ValueError, TypeError) as exc:
+            self.housing_note.setText(str(exc))
+            rows = []
         set_current_values(self._current_spins(), [max(column) for column in zip(*rows)] if rows else (0, 0, 0, 0))
 
     def _manual_mode_changed(self, manual):
@@ -584,7 +618,7 @@ class ZeroCurrentPage(QWidget):
         standard, cable, opwek, opwek_cable = _configurations(values, module)
         return module, values, standard, cable, opwek, opwek_cable
 
-    def _household_currents(self, layer, feature, house_type, context):
+    def _household_currents(self, layer, feature, house_type, context, kader20_override=None):
         module, values, standard, cable, opwek, opwek_cable = context
         year_field = layer.fields().lookupField("Gevonden_Bouwjaar")
         year = feature[year_field] if year_field >= 0 else None
@@ -610,6 +644,8 @@ class ZeroCurrentPage(QWidget):
             not in ("", "null", "none")
             else None
         )
+        if standard.get("FRAMEWORK_VERSION") == "2.0" and kader20_override:
+            explicit_type = kader20_override
         if standard.get("FRAMEWORK_VERSION") == "2.0":
             # Presets must calculate on the selected Kader, not always use
             # the legacy raw WOONHUIS matrix bypassing Kader 2.0.
@@ -647,6 +683,7 @@ class ZeroCurrentPage(QWidget):
         gas_category=None,
         manual_override=False,
         future_connection=None,
+        kader20_override=None,
     ):
         """Write all four component currents and both derived maxima."""
         if layer is None or not layer.isValid():
@@ -686,6 +723,11 @@ class ZeroCurrentPage(QWidget):
             and future_connection is not None and not manual_override
         ):
             original_updates["Kader20ToekomstigeAansluitwaarde"] = future_connection
+        if (
+            framework == "2.0" and category == "Huishoudelijk"
+            and kader20_override and not manual_override
+        ):
+            original_updates["Kader20Type"] = kader20_override
         if unit_name is not None and category != "Huishoudelijk":
             metadata["HerstelType"] = str(unit_name)
         if gas_category is not None and category == "Zakelijk" and framework != "2.0":
@@ -713,7 +755,8 @@ class ZeroCurrentPage(QWidget):
                     raise ValueError("Kies eerst een woningtype.")
                 normal, cable_current, generation, generation_cable = (
                     self._household_currents(
-                        layer, feature, house_type, household_context
+                        layer, feature, house_type, household_context,
+                        kader20_override,
                     )
                 )
                 stored_house_type = house_type
@@ -829,6 +872,12 @@ class ZeroCurrentPage(QWidget):
                 future_connection=(
                     unit_future_connection(category, self.unit_combo.currentData())
                     if category == "Zakelijk"
+                    and self.host._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
+                kader20_override=(
+                    self.kader20_type_combo.currentData()
+                    if category == "Huishoudelijk"
                     and self.host._workflow_field_defaults().get("design_framework") == "2.0"
                     else None
                 ),
