@@ -223,6 +223,82 @@ def test():
     assert len(fused["retention"]["vrijgegeven"])>=1
     assert all(g["belasting_a"]<=g["max_ontwerp_a"]+1e-7
                for g in fused["retention"]["richtingen"].values())
+    # Cabinet as a POLYGON: incoming S07-00 and outgoing B99-00 are
+    # physically attached on different sides. Only an existing zero-cost
+    # cabinet equipment route may join them in the clustering graph.
+    import numpy as np
+    import networkx as nx
+    from ast import literal_eval
+    from shapely.geometry import Polygon
+    from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi
+    poly_cables=cables.copy()
+    poly_cables.loc[0,"geometry"]=LineString([(0,0),(49,0)])
+    poly_cables.loc[1,"geometry"]=LineString([(51,0),(100,0)])
+    poly_cabinets=cabinets.copy()
+    poly_cabinets.geometry=[
+        Polygon([(49,-1),(51,-1),(51,1),(49,1)])
+    ]
+    prepared_poly=prepare_retention(
+        points,stations,poly_cables,850.,
+        distribution_cabinets=poly_cabinets,
+    )
+    assert len(prepared_poly["retained_by_index"])==3
+    bridge=prepared_poly["cabinet_bridges"][(station,"B99-00")]
+    assert bridge["incoming"].distance(bridge["outgoing"])==2.
+    assert prepared_poly["retention"]["route_m"]["cab-main"]==98.
+    traced_poly=trace_group_cables(
+        points,stations,poly_cables,distribution_cabinets=poly_cabinets,
+    )
+    graph=nx.Graph()
+    for cable in traced_poly["cables"]:
+        u=literal_eval(cable.from_node)
+        v=literal_eval(cable.to_node)
+        graph.add_edge(
+            u,v,weight=cable.length_m,
+            route_geometry=traced_poly["edge_geometries"][cable.id],
+            calculation_factor=1.,
+        )
+    # Actual cabinet outline and connection are 0-metre in the route
+    # graph, but their physical geometric lengths are not 0 metres.
+    cabinet_nodes=[(49.,0.),(49.,1.),(51.,1.),(51.,0.)]
+    bare=graph.copy()
+    for u,v in zip(cabinet_nodes[:-1],cabinet_nodes[1:]):
+        graph.add_edge(
+            u,v,weight=1e-6,calculation_factor=0.,
+            route_geometry=LineString([u,v]),
+        )
+    def run_cabinet_lock(network):
+        nodes=list(network.nodes)
+        lookup={node:i for i,node in enumerate(nodes)}
+        return solve_locked_voronoi(
+            network,nodes,
+            np.asarray([
+                lookup[(100.,0.)],lookup[(75.,20.)],lookup[(0.,60.)],
+            ],dtype=int),
+            np.asarray([20.,30.,25.]),
+            np.arange(3),[station],
+            np.asarray([lookup[(0.,0.)]],dtype=int),
+            np.asarray([],dtype=int),
+            prepared_poly,250.,850.,
+            lambda *args: (_ for _ in ()).throw(
+                AssertionError("No new station should be needed")
+            ),
+            lambda message:None,
+        )
+    all_locked=run_cabinet_lock(graph)
+    assert all_locked["assignment"].tolist()==[0,0,0]
+    assert all_locked["reserved"]
+    # Missing internal cabinet conductor must FAIL even when all
+    # original consumers are still nominally below capacity.
+    try:
+        run_cabinet_lock(bare)
+    except ValueError as exc:
+        assert ("interne" in str(exc) or "niet via uitsluitend" in str(exc)),exc
+    else:
+        raise AssertionError(
+            "Cabinet inlet/outlet accepted without physical internal links"
+        )
+
     print("DISTRIBUTION_CABINET_INDEPENDENT_FEEDER_OK")
 
 
