@@ -7202,6 +7202,10 @@ def main(_automatic_retry: bool = False) -> None:
     )
     if np.any(cluster_loads > capacities + 1e-5):
         raise RuntimeError("Capaciteitsoverschrijding in eindresultaat")
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # The old facilities may legitimately retain zero original demand;
+        # the minimum is a measured outcome, not a solver guarantee.
+        final_min_util = float(np.min(cluster_loads / capacities))
     utilization = cluster_loads / capacities * 100.0
     log(
         f"Eindbenutting: minimum {utilization.min():.1f}%, "
@@ -7775,7 +7779,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   De grenzen zijn afgeleid van de dichtstbijzijnde exclusieve kabelroutes; bij
   een knooppunt wordt zo nodig een smalle corridor om de eigen kabel gereserveerd.
   Alle eigen aansluitingen, routes en het station liggen binnen het eigen gebied.
-- Gegarandeerde minimale benutting in de eindoplossing: {final_min_util * 100:.0f}%.
+- {'Gemeten minimale benutting (behouden bestaande stations mogen leeg zijn)' if PRESERVE_EXISTING_DIRECTIONS else 'Gegarandeerde minimale benutting in de eindoplossing'}: {final_min_util * 100:.0f}%.
 
 ## Bestanden
 
