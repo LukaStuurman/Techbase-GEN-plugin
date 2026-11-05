@@ -187,6 +187,12 @@ def test():
     assert consumption("1 x 25 A","bedrijf","",2015,"G4",config20,1,None,True) == 8.7
     assert consumption("3 x 10 A","bedrijf","",2015,"G10-G25",config20,1,None,True) == 44.
     assert consumption("3 x 63 A","bedrijf","",2015,"G4",config20,1,None,True) == 0.
+    # Non-residential BAG has no GEN electrical rating; Kader 2.0 now
+    # supplies the explicit first small-business row instead of 0 A.
+    assert consumption("verblijfsobject","bedrijf","",2015,"G4",
+                       config20,1,None,True) == 8.7
+    assert consumption("verblijfsobject","bedrijf","",2015,">G25",
+                       config20,1,None,True) == 210.
     # Residential connection stays household through exactly 3x40 A.
     house_cfg = dict(config20, GEBRUIKS_MAP=[(["woonhuis"], 1)])
     assert consumption("3 x 40 A","woonhuis","vrijstaande woning",2024,">G25",
