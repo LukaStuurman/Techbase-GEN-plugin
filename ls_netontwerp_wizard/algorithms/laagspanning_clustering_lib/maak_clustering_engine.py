@@ -7548,9 +7548,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - Aantal nieuwe stations: {N_NEW} x {NEW_KVA:g} kVA. Het aantal is
   {'automatisch gekozen op de voorkeursbenutting' if AUTO_NEW_STATIONS else 'handmatig ingesteld'};
   de harde rekenkundige ondergrens op alleen capaciteit is {theoretical_new}.
-- Toedeling: {'directe kabelverbonden Voronoi met vaste bestaande stations,
-  zonder voorafgaande MILP-solvers' if AUTO_NEW_STATIONS else
-  'exacte optimalisatie voor het handmatig opgegeven stationsaantal'}.
+- Toedeling: {'directe kabel-Voronoi zonder voorafgaande MILP' if AUTO_NEW_STATIONS else 'exacte optimalisatie bij handmatig stationsaantal'}.
   Harde capaciteit, maximale route en exclusief kabelnet blijven leidend.
   De kaartgeometrie van routes volgt originele sleufsegmenten.
 - Voorkeursbenutting: zo dicht mogelijk bij {TARGET_UTILIZATION * 100:.1f}% per
