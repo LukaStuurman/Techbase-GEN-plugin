@@ -217,7 +217,7 @@ def trace_group_cables(points,stations,cables, *,
         if station not in station_geoms:
             raise ValueError(f"Bestaand station {station} ontbreekt in de stationslaag.")
         if group not in raw_records:
-            raise ValueError(f"Kabelgroep {group} (station {station}) heeft geen fysieke GEN-kabeldelen.")
+            raise ValueError(f"Kabelgroep {group} (station {station}) heeft geen getypeerde kabeldelen in GEN.")
 
     # Cabinet-backed directions are independent -00 feeders with a different
     # group code from the station's supply cable. Their physical feeding
