@@ -54,7 +54,7 @@ from .current_inputs import connect_current_edits, set_current_values, has_manua
 from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
-    unit_currents, unit_description, category_note, current_context,
+    unit_currents, unit_description, unit_future_connection, category_note, current_context,
 )
 from .station_name_csv import (
     find_master_asset_id_column,
@@ -2432,8 +2432,12 @@ class LSNetontwerpDialog(QDialog):
         self.value_manual_group.setVisible(True)
         self.value_manual_checkbox.setChecked(False)
         self.value_unit_group.setVisible(not household)
-        self.value_gas_combo.setVisible(category == "Zakelijk")
-        self.value_gas_label.setVisible(category == "Zakelijk")
+        gas_relevant = (
+            category == "Zakelijk"
+            and self._workflow_field_defaults().get("design_framework") != "2.0"
+        )
+        self.value_gas_combo.setVisible(gas_relevant)
+        self.value_gas_label.setVisible(gas_relevant)
         fill_unit_combo(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
         if category == "Straatmeubilair":
             trafo = self._value_matrix_current("matrix_straat", 5.8)
@@ -2474,7 +2478,10 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         key = self.value_unit_combo.currentData()
         self.value_manual_checkbox.setChecked(False)
-        self.value_unit_note.setText(category_note(category, key) + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast.")
+        self.value_unit_note.setText(
+            category_note(category, key, self._workflow_field_defaults().get("design_framework"))
+            + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast."
+        )
         currents = unit_currents(current_context(self), category, key, self.value_gas_combo.currentData())
         if currents is not None:
             set_current_values(self._value_current_spins(), currents)
@@ -3712,8 +3719,19 @@ class LSNetontwerpDialog(QDialog):
                 },
                 house_type,
                 unit_name=unit_description(category, self.value_unit_combo.currentData()) if category != "Huishoudelijk" else None,
-                gas_category=self.value_gas_combo.currentData() if category == "Zakelijk" else None,
+                gas_category=(
+                    self.value_gas_combo.currentData()
+                    if category == "Zakelijk"
+                    and self._workflow_field_defaults().get("design_framework") != "2.0"
+                    else None
+                ),
                 manual_override=self.value_manual_checkbox.isChecked(),
+                future_connection=(
+                    unit_future_connection(category, self.value_unit_combo.currentData())
+                    if category == "Zakelijk"
+                    and self._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")
