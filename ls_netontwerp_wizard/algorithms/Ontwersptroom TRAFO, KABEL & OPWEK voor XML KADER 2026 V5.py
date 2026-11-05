@@ -528,7 +528,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterEnum(
             self.VAL_KADER,
             self.tr("Ontwerpstroomkader (2.0 heeft eigen Excel-tabellen)"),
-            options=["Kader 3.0", "Kader 3.1", "Kader 2.0"],
+            options=["Kader 3.0", "Kader 3.2", "Kader 2.0"],
             defaultValue=0,
         ))
         # Nieuwe Uitzondering Toggle
@@ -641,7 +641,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             return cfg
 
         framework_index = self.parameterAsEnum(parameters, self.VAL_KADER, context)
-        framework = {0: "3.0", 1: "3.1", 2: "2.0"}.get(framework_index, "3.0")
+        framework = {0: "3.0", 1: "3.2", 2: "2.0"}.get(framework_index, "3.0")
         feedback.pushInfo(f"Ontwerpstroom wordt berekend met Kader {framework}.")
         use_1fase_exc = self.parameterAsBool(parameters, self.VAL_1FASE_EXCEPTION, context)
         default_appartement_zonder_doorlaat = self.parameterAsBool(
