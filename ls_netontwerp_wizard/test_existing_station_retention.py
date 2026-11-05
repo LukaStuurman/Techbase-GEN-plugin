@@ -41,6 +41,7 @@ def test():
         {"044.529":217.},connections,[trunk,trunk_end,branch],
         station_origins={"044.529":"s"},
         branch_roots={("044.529","K01-01"):"junction"},
+        parent_routes={("044.529","K01-01"):("trunk",)},
     )
     assert result["behouden"]==("b","m"),result
     assert result["richtingen"][("044.529","K01")]["length_m"]==185.,result
@@ -55,6 +56,7 @@ def test():
         {"044.529":217.},more,[trunk,trunk_end,branch],
         station_origins={"044.529":"s"},
         branch_roots={("044.529","K01-01"):"junction"},
+        parent_routes={("044.529","K01-01"):("trunk",)},
     )
     assert result["vrijgegeven"],result
     assert set(result["behouden"]).issubset({"main","side"})
