@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.33.0
+## Laatste versie: 1.33.1
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.0/ls_netontwerp_wizard-1.33.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.0)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.1/ls_netontwerp_wizard-1.33.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.1)
+
+**Nieuw in 1.33.1:** Kader **3.1** heet nu **3.2**, maar **geen enkele bestaande 3.1-ontwerpstroomwaarde is gewijzigd**. Kader **2.0** gebruikt nu verplicht een **toekomstige** aansluitwaarde voor kleinzakelijk/grootverbruik, zonder gascorrectie; ontbrekende toekomstwaarden worden 0 A met waarschuwing en zijn via de ontwerpstroomcorrectie vast te leggen. In die correctie kun je ook Kader-2.0-verwarmingstype 1–4 instellen. [Uitgebreide Excelvergelijking 2.0/3.2](KADER_20_VS_32.md).
 
 **Nieuw in 1.33.0:** selecteer **Kader 2.0** naast 3.0/3.1 voor de exacte Excel 2.0-trafo- en kabelwaarden voor woningen, opwek, toekomstige kleinzakelijke/grootzakelijke aansluitingen, laadpunten en straatmeubilair. KaderType toont de uitgangspunten en waarschuwingen. Automatisch clusteren gaat direct via de kabelverbonden Voronoi-methode; bestaande stations gebruiken KVA/Max_A en de getekende routes volgen exacte sleufcoördinaten. [Vergelijking, aannames en tests](KADER_20_VALIDATION.md).\n\n**Hersteld in 1.32.1:** de clustereditor toont één leesbare voortgangsbalk met losse staptekst; stationsbenutting is gewone tekst. De controlegroep groeit mee, annuleren blijft leesbaar onderaan en lagen vernieuwen staat onder Geavanceerd. Gecontroleerd in rust- en rekenstand op twee venstergroottes.
 
