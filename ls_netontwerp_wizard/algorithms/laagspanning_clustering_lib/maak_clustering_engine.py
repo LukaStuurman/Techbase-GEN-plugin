@@ -68,6 +68,7 @@ CRS_RD = "EPSG:28992"
 N_NEW = 0  # Filled automatically unless AUTO_NEW_STATIONS is disabled.
 NEW_KVA = 630.0
 AUTO_NEW_STATIONS = True
+PRESERVE_EXISTING_DIRECTIONS = False
 CREATE_QGIS_PROJECT = True
 TARGET_UTILIZATION = 0.90
 TARGET_UTILIZATION_PENALTY = 10_000.0
@@ -6302,6 +6303,37 @@ def main(_automatic_retry: bool = False) -> None:
     )
 
     stations["Max_A"] = stations["KVA"] / 0.23 / 3.0
+    original_info = None
+    if PRESERVE_EXISTING_DIRECTIONS:
+        if not AUTO_NEW_STATIONS:
+            raise ValueError(
+                "Behoud originele kabelgroepen vereist automatische nieuwe stations."
+            )
+        from ls_netontwerp_wizard.existing_locked_clustering import prepare_retention
+        log("Oorspronkelijke stations, -00 en aftakkingen per kabeltype controleren...")
+        original_info = prepare_retention(
+            points, stations, normal_cables, MAX_ROUTE_M, profile="both",
+        )
+        original_records = pd.DataFrame(original_info["records"])
+        original_records.to_csv(
+            OUT / "bestaande_stations_kabelgroepen_controle.csv",
+            sep=";", decimal=",", index=False, encoding="utf-8-sig",
+        )
+        retained_count = len(original_info["retained_by_index"])
+        released_count = (
+            len(original_info["all_original_by_index"]) - retained_count
+        )
+        log(
+            f"Historische kabelgroepcontrole: {retained_count} aansluiting(en) "
+            f"behouden; {released_count} vrijgegeven. "
+            "Bestaande kabels mogen niet naar een ander station overspringen."
+        )
+        if original_info["missing_groups"]:
+            log(
+                f"{len(original_info['missing_groups'])} aansluiting(en) met "
+                "een oude stationsnaam maar zonder Kabel Subgroep worden "
+                "uitsluitend naar nieuwe stations gerouteerd."
+            )
     existing_capacity = stations["Max_A"].to_numpy(float)
     new_capacity = NEW_KVA / 0.23 / 3.0
     theoretical_new = math.ceil(
@@ -6616,487 +6648,268 @@ def main(_automatic_retry: bool = False) -> None:
     gpd.GeoDataFrame(component_records, geometry="geometry", crs=CRS_RD).to_file(
         OUT / "netwerkcontrole.gpkg", layer="kabelcomponenten", driver="GPKG")
 
-    legacy_new_labels = sorted(
-        {
-            label
-            for label in unit_legacy
-            if re.fullmatch(r"Trafo\s+\d+", label, flags=re.I)
-        },
-        key=lambda value: int(re.search(r"\d+", value).group()),
-    )
-    candidate_nodes: list[tuple[float, float]] = []
-    candidate_node_indices: list[int] = []
-    for label in legacy_new_labels:
-        mask = unit_legacy_array == label
-        median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
-        representative = int(np.flatnonzero(mask)[0])
-        nearest = regular_graph_index_near(
-            median, unit_node_indices[representative]
+    if PRESERVE_EXISTING_DIRECTIONS:
+        from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi
+        preserved_solution = solve_locked_voronoi(
+            graph, node_list, unit_node_indices, unit_load,
+            point_to_unit, stations["Stationsnaa"].astype(str).tolist(),
+            station_node_indices, regular_node_indices, original_info,
+            new_capacity, MAX_ROUTE_M,
+            solve_greedy_voronoi_connected_assignment, log,
         )
-        candidate_node_indices.append(nearest)
-        candidate_nodes.append(node_list[nearest])
-        log(f"Kandidaat {label}: kabelknoop {candidate_nodes[-1]}")
+        existing_count = len(stations)
+        final_assignment = preserved_solution["assignment"]
+        node_cluster = preserved_solution["node_cluster"]
+        new_node_indices = preserved_solution["new_node_indices"]
+        new_nodes = preserved_solution["new_nodes"]
+        selected_legacy_labels = preserved_solution["new_labels"]
+        N_NEW = len(new_nodes)
+        capacities = np.concatenate(
+            [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
+        )
+        source_nodes = station_nodes + new_nodes
+        log(
+            f"Autocluster behoudmodus: {N_NEW} nieuwe stations; "
+            "bestaande stations zijn uitsluitend met hun oude aansluitingen "
+            "en echte Kabel Subgroep-tracés verbonden."
+        )
+    else:
+        legacy_new_labels = sorted(
+            {
+                label
+                for label in unit_legacy
+                if re.fullmatch(r"Trafo\s+\d+", label, flags=re.I)
+            },
+            key=lambda value: int(re.search(r"\d+", value).group()),
+        )
+        candidate_nodes: list[tuple[float, float]] = []
+        candidate_node_indices: list[int] = []
+        for label in legacy_new_labels:
+            mask = unit_legacy_array == label
+            median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
+            representative = int(np.flatnonzero(mask)[0])
+            nearest = regular_graph_index_near(
+                median, unit_node_indices[representative]
+            )
+            candidate_node_indices.append(nearest)
+            candidate_nodes.append(node_list[nearest])
+            log(f"Kandidaat {label}: kabelknoop {candidate_nodes[-1]}")
 
-    # When GebiedLabel falls back to the existing Station assignment, create
-    # candidate sites inside every overloaded/missing station area. This puts
-    # new roots on the cable branches that actually need capacity instead of
-    # relying only on globally farthest geometry.
-    used_candidate_indices = set(candidate_node_indices)
-    capacity_by_label = {
-        str(stations.iloc[index]["Stationsnaa"]).strip(): float(existing_capacity[index])
-        for index in range(len(stations))
-    }
-    station_node_by_label = {
-        str(stations.iloc[index]["Stationsnaa"]).strip(): int(station_node_indices[index])
-        for index in range(len(stations))
-    }
-    non_trafo_labels = sorted(
-        {
-            str(label).strip()
-            for label in unit_legacy
-            if str(label).strip()
-            and not re.fullmatch(r"Trafo\s+\d+", str(label).strip(), flags=re.I)
+        # When GebiedLabel falls back to the existing Station assignment, create
+        # candidate sites inside every overloaded/missing station area. This puts
+        # new roots on the cable branches that actually need capacity instead of
+        # relying only on globally farthest geometry.
+        used_candidate_indices = set(candidate_node_indices)
+        capacity_by_label = {
+            str(stations.iloc[index]["Stationsnaa"]).strip(): float(existing_capacity[index])
+            for index in range(len(stations))
         }
-    )
-    for label in non_trafo_labels:
-        members = np.flatnonzero(unit_legacy_array == label)
-        area_load = float(unit_load[members].sum())
-        current_capacity = capacity_by_label.get(label, 0.0)
-        required_candidates = max(
-            0,
-            int(
-                math.ceil(
-                    max(
-                        0.0,
-                        area_load / TARGET_UTILIZATION - current_capacity,
-                    )
-                    / new_capacity
-                    - 1e-12
-                )
-            ),
+        station_node_by_label = {
+            str(stations.iloc[index]["Stationsnaa"]).strip(): int(station_node_indices[index])
+            for index in range(len(stations))
+        }
+        non_trafo_labels = sorted(
+            {
+                str(label).strip()
+                for label in unit_legacy
+                if str(label).strip()
+                and not re.fullmatch(r"Trafo\s+\d+", str(label).strip(), flags=re.I)
+            }
         )
-        local_seed_indices: list[int] = []
-        if label in station_node_by_label:
-            local_seed_indices.append(station_node_by_label[label])
+        for label in non_trafo_labels:
+            members = np.flatnonzero(unit_legacy_array == label)
+            area_load = float(unit_load[members].sum())
+            current_capacity = capacity_by_label.get(label, 0.0)
+            required_candidates = max(
+                0,
+                int(
+                    math.ceil(
+                        max(
+                            0.0,
+                            area_load / TARGET_UTILIZATION - current_capacity,
+                        )
+                        / new_capacity
+                        - 1e-12
+                    )
+                ),
+            )
+            local_seed_indices: list[int] = []
+            if label in station_node_by_label:
+                local_seed_indices.append(station_node_by_label[label])
 
-        for candidate_number in range(1, required_candidates + 1):
-            available_members = [
-                int(unit_index)
-                for unit_index in members
-                if regular_graph_index_near(
+            for candidate_number in range(1, required_candidates + 1):
+                available_members = [
+                    int(unit_index)
+                    for unit_index in members
+                    if regular_graph_index_near(
+                        unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
+                    )
+                    not in used_candidate_indices
+                ]
+                if not available_members:
+                    break
+                if local_seed_indices:
+                    local_seed_xy = node_xy[np.asarray(local_seed_indices, dtype=int)]
+                    member_xy = unit_xy[np.asarray(available_members, dtype=int)]
+                    nearest_sq = np.min(
+                        np.sum(
+                            (member_xy[:, None, :] - local_seed_xy[None, :, :]) ** 2,
+                            axis=2,
+                        ),
+                        axis=1,
+                    )
+                    member_loads = unit_load[np.asarray(available_members, dtype=int)]
+                    chosen_unit = available_members[
+                        int(np.argmax(nearest_sq * (member_loads + 0.5)))
+                    ]
+                else:
+                    median = weighted_geometric_median(
+                        unit_xy[members], unit_load[members]
+                    )
+                    chosen_unit = min(
+                        available_members,
+                        key=lambda unit_index: float(
+                            np.sum((unit_xy[unit_index] - median) ** 2)
+                        ),
+                    )
+                graph_index = regular_graph_index_near(
+                    unit_xy[chosen_unit], unit_node_indices[chosen_unit]
+                )
+                legacy_new_labels.append(label)
+                candidate_node_indices.append(graph_index)
+                candidate_nodes.append(node_list[graph_index])
+                used_candidate_indices.add(graph_index)
+                local_seed_indices.append(graph_index)
+                log(
+                    f"Belastingskandidaat {label} {candidate_number}/"
+                    f"{required_candidates}: kabelknoop {candidate_nodes[-1]}"
+                )
+
+        # If the automatically selected station count is larger than the supplied
+        # Trafo candidate labels, add deterministic demand-weighted farthest sites.
+        # They start on a real connection cable node and are relocated to the
+        # load-weighted center of their assigned cluster in the normal iterations.
+        seed_indices = list(station_node_indices) + candidate_node_indices
+        if seed_indices:
+            seed_xy = node_xy[np.asarray(seed_indices, dtype=int)]
+            closest_sq = np.min(
+                np.sum((unit_xy[:, None, :] - seed_xy[None, :, :]) ** 2, axis=2),
+                axis=1,
+            )
+        else:
+            closest_sq = np.full(len(unit_xy), np.inf)
+        auto_number = 1
+        candidate_pool_target = max(len(candidate_nodes), N_NEW + 4) if N_NEW > 0 else 0
+        while len(candidate_nodes) < candidate_pool_target:
+            scores = closest_sq * (unit_load + 0.5)
+            chosen_unit = None
+            for unit_index in np.argsort(scores)[::-1]:
+                graph_index = regular_graph_index_near(
                     unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
                 )
-                not in used_candidate_indices
-            ]
-            if not available_members:
-                break
-            if local_seed_indices:
-                local_seed_xy = node_xy[np.asarray(local_seed_indices, dtype=int)]
-                member_xy = unit_xy[np.asarray(available_members, dtype=int)]
-                nearest_sq = np.min(
-                    np.sum(
-                        (member_xy[:, None, :] - local_seed_xy[None, :, :]) ** 2,
-                        axis=2,
-                    ),
-                    axis=1,
-                )
-                member_loads = unit_load[np.asarray(available_members, dtype=int)]
-                chosen_unit = available_members[
-                    int(np.argmax(nearest_sq * (member_loads + 0.5)))
-                ]
-            else:
-                median = weighted_geometric_median(
-                    unit_xy[members], unit_load[members]
-                )
-                chosen_unit = min(
-                    available_members,
-                    key=lambda unit_index: float(
-                        np.sum((unit_xy[unit_index] - median) ** 2)
-                    ),
-                )
+                if graph_index not in used_candidate_indices:
+                    chosen_unit = int(unit_index)
+                    break
+            if chosen_unit is None:
+                raise RuntimeError("Geen extra unieke kabelknopen voor nieuwe stations")
             graph_index = regular_graph_index_near(
                 unit_xy[chosen_unit], unit_node_indices[chosen_unit]
             )
+            automatic_name = f"Auto kandidaat {auto_number}"
+            legacy_hint = str(unit_legacy[chosen_unit]).strip()
+            label = legacy_hint or automatic_name
+            auto_number += 1
             legacy_new_labels.append(label)
             candidate_node_indices.append(graph_index)
             candidate_nodes.append(node_list[graph_index])
             used_candidate_indices.add(graph_index)
-            local_seed_indices.append(graph_index)
+            delta = unit_xy - node_xy[graph_index]
+            closest_sq = np.minimum(closest_sq, np.sum(delta * delta, axis=1))
+            hint_text = f" voor {legacy_hint}" if legacy_hint else ""
             log(
-                f"Belastingskandidaat {label} {candidate_number}/"
-                f"{required_candidates}: kabelknoop {candidate_nodes[-1]}"
+                f"Kandidaat {automatic_name}{hint_text}: "
+                f"kabelknoop {candidate_nodes[-1]}"
             )
 
-    # If the automatically selected station count is larger than the supplied
-    # Trafo candidate labels, add deterministic demand-weighted farthest sites.
-    # They start on a real connection cable node and are relocated to the
-    # load-weighted center of their assigned cluster in the normal iterations.
-    seed_indices = list(station_node_indices) + candidate_node_indices
-    if seed_indices:
-        seed_xy = node_xy[np.asarray(seed_indices, dtype=int)]
-        closest_sq = np.min(
-            np.sum((unit_xy[:, None, :] - seed_xy[None, :, :]) ** 2, axis=2),
-            axis=1,
+        # The geometric/farthest candidate pool can still miss a long, winding
+        # cable branch: a unit may look close on the map while its network route is
+        # longer than MAX_ROUTE_M. Add deterministic candidates at uncovered unit
+        # nodes until every unit has at least one available station location within
+        # the hard route limit. The facility MILP still decides which N_NEW sites
+        # are actually selected.
+        coverage_sources = np.asarray(
+            list(station_node_indices) + candidate_node_indices, dtype=int
         )
-    else:
-        closest_sq = np.full(len(unit_xy), np.inf)
-    auto_number = 1
-    candidate_pool_target = max(len(candidate_nodes), N_NEW + 4) if N_NEW > 0 else 0
-    while len(candidate_nodes) < candidate_pool_target:
-        scores = closest_sq * (unit_load + 0.5)
-        chosen_unit = None
-        for unit_index in np.argsort(scores)[::-1]:
+        coverage_distances = network_distance_matrix(
+            adjacency, coverage_sources, unit_node_indices
+        )
+        nearest_coverage = np.min(coverage_distances, axis=1)
+        route_candidate_number = 1
+        while np.any(nearest_coverage > MAX_ROUTE_M + 1e-7):
+            uncovered = np.flatnonzero(nearest_coverage > MAX_ROUTE_M + 1e-7)
+            chosen_unit = int(
+                uncovered[np.argmax(nearest_coverage[uncovered] * (unit_load[uncovered] + 0.5))]
+            )
             graph_index = regular_graph_index_near(
-                unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
+                unit_xy[chosen_unit], unit_node_indices[chosen_unit]
             )
-            if graph_index not in used_candidate_indices:
-                chosen_unit = int(unit_index)
-                break
-        if chosen_unit is None:
-            raise RuntimeError("Geen extra unieke kabelknopen voor nieuwe stations")
-        graph_index = regular_graph_index_near(
-            unit_xy[chosen_unit], unit_node_indices[chosen_unit]
-        )
-        automatic_name = f"Auto kandidaat {auto_number}"
-        legacy_hint = str(unit_legacy[chosen_unit]).strip()
-        label = legacy_hint or automatic_name
-        auto_number += 1
-        legacy_new_labels.append(label)
-        candidate_node_indices.append(graph_index)
-        candidate_nodes.append(node_list[graph_index])
-        used_candidate_indices.add(graph_index)
-        delta = unit_xy - node_xy[graph_index]
-        closest_sq = np.minimum(closest_sq, np.sum(delta * delta, axis=1))
-        hint_text = f" voor {legacy_hint}" if legacy_hint else ""
-        log(
-            f"Kandidaat {automatic_name}{hint_text}: "
-            f"kabelknoop {candidate_nodes[-1]}"
-        )
-
-    # The geometric/farthest candidate pool can still miss a long, winding
-    # cable branch: a unit may look close on the map while its network route is
-    # longer than MAX_ROUTE_M. Add deterministic candidates at uncovered unit
-    # nodes until every unit has at least one available station location within
-    # the hard route limit. The facility MILP still decides which N_NEW sites
-    # are actually selected.
-    coverage_sources = np.asarray(
-        list(station_node_indices) + candidate_node_indices, dtype=int
-    )
-    coverage_distances = network_distance_matrix(
-        adjacency, coverage_sources, unit_node_indices
-    )
-    nearest_coverage = np.min(coverage_distances, axis=1)
-    route_candidate_number = 1
-    while np.any(nearest_coverage > MAX_ROUTE_M + 1e-7):
-        uncovered = np.flatnonzero(nearest_coverage > MAX_ROUTE_M + 1e-7)
-        chosen_unit = int(
-            uncovered[np.argmax(nearest_coverage[uncovered] * (unit_load[uncovered] + 0.5))]
-        )
-        graph_index = regular_graph_index_near(
-            unit_xy[chosen_unit], unit_node_indices[chosen_unit]
-        )
-        if graph_index in used_candidate_indices:
-            raise RuntimeError(
-                "Route-dekkingskandidaat kon niet op een unieke kabelknoop "
-                "worden geplaatst"
-            )
-        previous_distance = float(nearest_coverage[chosen_unit])
-        automatic_name = f"Route kandidaat {route_candidate_number}"
-        legacy_hint = str(unit_legacy[chosen_unit]).strip()
-        label = legacy_hint or automatic_name
-        route_candidate_number += 1
-        legacy_new_labels.append(label)
-        candidate_node_indices.append(graph_index)
-        candidate_nodes.append(node_list[graph_index])
-        used_candidate_indices.add(graph_index)
-
-        new_coverage = network_distance_matrix(
-            adjacency, np.asarray([graph_index], dtype=int), unit_node_indices
-        )[:, 0]
-        nearest_coverage = np.minimum(nearest_coverage, new_coverage)
-        hint_text = f" voor {legacy_hint}" if legacy_hint else ""
-        log(
-            f"Kandidaat {automatic_name}{hint_text}: kabelknoop "
-            f"{candidate_nodes[-1]} (voorheen {previous_distance:.1f} m van "
-            "de dichtstbijzijnde beschikbare stationslocatie)"
-        )
-
-    junction_candidates = junction_station_candidates(
-        graph,node_list,regular_node_indices,raw_main_node_indices,
-        unit_node_indices,unit_load,new_capacity,radius_m=min(350.,MAX_ROUTE_M),
-        limit=max(8,min(24,len(candidate_node_indices))),seed_indices=candidate_node_indices) if AUTO_NEW_STATIONS else []
-    junction_candidate_nodes = {row['index'] for row in junction_candidates}
-    for row in junction_candidates:
-        index=row['index']
-        if index in candidate_node_indices:continue
-        candidate_node_indices.append(index);candidate_nodes.append(node_list[index])
-        legacy_new_labels.append(f"Knooppunt met {row['directions']} belastbare richtingen")
-        log(f"Extra knooppuntkandidaat {node_list[index]}: {row['directions']} richtingen, {row['load']:.1f} A bereikbaar binnen 350 m.")
-    initial_voronoi_node_cluster = None
-    all_distances = None
-    if AUTO_NEW_STATIONS:
-        # Skip slow MILP station selection and connected assignment. The old
-        # cable-Voronoi fallback is the automatic method from the start.
-        log("Automatische berekening: direct kabel-Voronoi, zonder voorafgaande MILP-solvers.")
-        try:
-            (
-                voronoi_assignment,
-                facility_min_util,
-                initial_voronoi_node_cluster,
-                voronoi_candidate_indices,
-                _voronoi_unit_distances,
-            ) = solve_greedy_voronoi_connected_assignment(
-                adjacency, node_list, unit_node_indices, unit_load,
-                station_node_indices, candidate_node_indices,
-                existing_capacity, new_capacity, regular_node_indices,
-                graph_component_by_node_index, None,
-            )
-        except RuntimeError as exc:
-            count_options = automatic_new_station_count_options(
-                float(design_current.sum()),
-                float(existing_capacity.sum()),
-                float(new_capacity),
-            )
-            remaining_counts = [
-                count for count in count_options if count not in _AUTO_COUNTS_TRIED
-            ]
-            if remaining_counts:
-                log(
-                    f"Kabel-Voronoi nog niet geldig; opnieuw proberen met "
-                    f"{remaining_counts[0]} als automatisch startaantal."
+            if graph_index in used_candidate_indices:
+                raise RuntimeError(
+                    "Route-dekkingskandidaat kon niet op een unieke kabelknoop "
+                    "worden geplaatst"
                 )
-                return main(_automatic_retry=True)
-            raise RuntimeError(
-                "De directe kabel-Voronoi-berekening kon geen capaciteitsgeldige "
-                "en kabelverbonden stationsverdeling vinden."
-            ) from exc
-        while len(candidate_nodes) < len(candidate_node_indices):
-            index = len(candidate_nodes)
-            candidate_nodes.append(node_list[candidate_node_indices[index]])
-            legacy_new_labels.append(f"Capaciteitskandidaat {index + 1}")
-        selected_mask = np.zeros(len(candidate_node_indices), dtype=bool)
-        selected_mask[voronoi_candidate_indices] = True
-        existing_count = len(stations)
-        compact_to_global = np.asarray(
-            list(range(existing_count))
-            + [existing_count + int(index) for index in voronoi_candidate_indices],
-            dtype=int,
-        )
-        initial_assignment = compact_to_global[voronoi_assignment]
-        N_NEW = len(voronoi_candidate_indices)
-        _AUTO_COUNTS_TRIED.add(N_NEW)
-        log(
-            f"Directe kabel-Voronoi selecteert {N_NEW} nieuwe stations en "
-            "behoudt de bestaande stations als vaste bronnen."
-        )
-    else:
-        # A manually fixed count still requires the exact-count solver.
-        all_source_indices = np.concatenate(
-            [station_node_indices, np.asarray(candidate_node_indices, dtype=int)]
-        )
-        all_distances = network_distance_matrix(
-            adjacency, all_source_indices, unit_node_indices
-        )
-        initial_assignment, selected_mask, facility_min_util = solve_facility_selection(
-            all_distances, unit_load, existing_capacity, unit_legacy_array,
-            stations["Stationsnaa"].astype(str).tolist() + legacy_new_labels,
-            len(legacy_new_labels),
-        )
-    selected_candidate_indices = np.flatnonzero(selected_mask)
-    selected_legacy_labels = [legacy_new_labels[i] for i in selected_candidate_indices]
-    log("Geselecteerde kandidaatgebieden: " + ", ".join(selected_legacy_labels))
+            previous_distance = float(nearest_coverage[chosen_unit])
+            automatic_name = f"Route kandidaat {route_candidate_number}"
+            legacy_hint = str(unit_legacy[chosen_unit]).strip()
+            label = legacy_hint or automatic_name
+            route_candidate_number += 1
+            legacy_new_labels.append(label)
+            candidate_node_indices.append(graph_index)
+            candidate_nodes.append(node_list[graph_index])
+            used_candidate_indices.add(graph_index)
 
-    # Collapse the assignment indices from all candidates to the selected set.
-    existing_count = len(stations)
-    selected_global_station_indices = list(range(existing_count)) + [
-        existing_count + int(i) for i in selected_candidate_indices
-    ]
-    selected_assignment = np.empty(len(groups), dtype=int)
-    global_to_selected = {
-        global_index: selected_index
-        for selected_index, global_index in enumerate(selected_global_station_indices)
-    }
-    for unit_index, global_station_index in enumerate(initial_assignment):
-        if int(global_station_index) not in global_to_selected:
-            raise RuntimeError("Een aansluiting is aan een niet-geselecteerd station toegewezen")
-        selected_assignment[unit_index] = global_to_selected[int(global_station_index)]
-
-    new_nodes = [candidate_nodes[i] for i in selected_candidate_indices]
-    new_node_indices = [candidate_node_indices[i] for i in selected_candidate_indices]
-    capacities = np.concatenate(
-        [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
-    )
-    final_legacy_labels = stations["Stationsnaa"].astype(str).tolist() + selected_legacy_labels
-
-    # Relocate each new station to the load-weighted middle of its assigned area,
-    # snap it to a real cable node, and optimize the assignment once. A second
-    # centre pass can make a marginally feasible component needlessly unstable.
-    final_assignment = selected_assignment
-    final_min_util = facility_min_util
-    if AUTO_NEW_STATIONS:
-        # Compute distances only for surviving sources, not every candidate.
-        source_indices = np.concatenate(
-            [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-        )
-        final_distances = network_distance_matrix(
-            adjacency, source_indices, unit_node_indices
-        )
-    else:
-        final_distances = all_distances[:, selected_global_station_indices].copy()
-    # A Voronoi fallback already places every demand node in an exclusive,
-    # connected shortest-path territory.  Keep those proven source locations;
-    # moving them and solving the same large MILP again would only reintroduce
-    # the solver failure that triggered the fallback.
-    for iteration in range(0 if initial_voronoi_node_cluster is not None else 1):
-        log(f"Nieuwe stations centreren, iteratie {iteration + 1}/1...")
-        previous_new_nodes = list(new_nodes)
-        previous_new_node_indices = list(new_node_indices)
-        previous_assignment = final_assignment.copy()
-        previous_distances = final_distances.copy()
-        for new_index in range(N_NEW):
-            if int(new_node_indices[new_index]) in junction_candidate_nodes:
-                # Do not turn a solver-selected multi-direction site back into
-                # a terminal site merely by geometric centring. All ordinary
-                # assignment and exclusive-route checks still follow.
-                continue
-            station_index = existing_count + new_index
-            mask = final_assignment == station_index
-            if not np.any(mask):
-                raise RuntimeError("Leeg nieuw cluster tijdens centreren")
-            median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
-            assigned_units = np.flatnonzero(mask)
-            representative = int(assigned_units[0])
-            nearest = regular_graph_index_near(
-                median, unit_node_indices[representative]
-            )
-            new_node_indices[new_index] = nearest
-            new_nodes[new_index] = node_list[nearest]
-        source_indices = np.concatenate(
-            [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-        )
-        final_distances = network_distance_matrix(
-            adjacency, source_indices, unit_node_indices
-        )
-        try:
-            final_assignment, final_min_util = solve_fixed_assignment(
-                final_distances,
-                unit_load,
-                capacities,
-                unit_legacy_array,
-                final_legacy_labels,
-            )
-        except RuntimeError:
-            new_nodes = previous_new_nodes
-            new_node_indices = previous_new_node_indices
-            final_assignment = previous_assignment
-            final_distances = previous_distances
+            new_coverage = network_distance_matrix(
+                adjacency, np.asarray([graph_index], dtype=int), unit_node_indices
+            )[:, 0]
+            nearest_coverage = np.minimum(nearest_coverage, new_coverage)
+            hint_text = f" voor {legacy_hint}" if legacy_hint else ""
             log(
-                "Centreren zou de capaciteit- of routevoorwaarden breken; "
-                "de laatst geldige stationslocaties blijven behouden."
+                f"Kandidaat {automatic_name}{hint_text}: kabelknoop "
+                f"{candidate_nodes[-1]} (voorheen {previous_distance:.1f} m van "
+                "de dichtstbijzijnde beschikbare stationslocatie)"
             )
-            break
 
-    source_nodes = station_nodes + new_nodes
-    try:
-        if initial_voronoi_node_cluster is not None:
-            node_cluster = initial_voronoi_node_cluster
-            log(
-                "De geldige kabel-Voronoi-verdeling wordt rechtstreeks als "
-                "eindtoedeling gebruikt."
-            )
-        else:
-            final_assignment, final_min_util, node_cluster = solve_cable_connected_assignment(
-                graph,
-                node_list,
-                adjacency,
-                final_distances,
-                unit_load,
-                capacities,
-                unit_nodes,
-                unit_node_indices,
-                source_nodes,
-                final_assignment,
-            )
-    except RuntimeError as exc:
-        if (
-            AUTO_NEW_STATIONS
-            and str(exc)
-            == "Geen capaciteitsgeldige kabelverbonden toedeling gevonden"
-        ):
+        junction_candidates = junction_station_candidates(
+            graph,node_list,regular_node_indices,raw_main_node_indices,
+            unit_node_indices,unit_load,new_capacity,radius_m=min(350.,MAX_ROUTE_M),
+            limit=max(8,min(24,len(candidate_node_indices))),seed_indices=candidate_node_indices) if AUTO_NEW_STATIONS else []
+        junction_candidate_nodes = {row['index'] for row in junction_candidates}
+        for row in junction_candidates:
+            index=row['index']
+            if index in candidate_node_indices:continue
+            candidate_node_indices.append(index);candidate_nodes.append(node_list[index])
+            legacy_new_labels.append(f"Knooppunt met {row['directions']} belastbare richtingen")
+            log(f"Extra knooppuntkandidaat {node_list[index]}: {row['directions']} richtingen, {row['load']:.1f} A bereikbaar binnen 350 m.")
+        initial_voronoi_node_cluster = None
+        all_distances = None
+        if AUTO_NEW_STATIONS:
+            # Skip slow MILP station selection and connected assignment. The old
+            # cable-Voronoi fallback is the automatic method from the start.
+            log("Automatische berekening: direct kabel-Voronoi, zonder voorafgaande MILP-solvers.")
             try:
                 (
                     voronoi_assignment,
-                    voronoi_min_util,
-                    voronoi_node_cluster,
+                    facility_min_util,
+                    initial_voronoi_node_cluster,
                     voronoi_candidate_indices,
                     _voronoi_unit_distances,
                 ) = solve_greedy_voronoi_connected_assignment(
-                    adjacency,
-                    node_list,
-                    unit_node_indices,
-                    unit_load,
-                    station_node_indices,
-                    candidate_node_indices,
-                    existing_capacity,
-                    new_capacity,
-                    regular_node_indices,
-                    graph_component_by_node_index,
-                    # Reconsider every prepared main-cable candidate. Starting
-                    # only with the failed MILP selection can otherwise cause
-                    # dozens of almost coincident emergency candidates to be
-                    # added before a connected balance is found.
-                    None,
+                    adjacency, node_list, unit_node_indices, unit_load,
+                    station_node_indices, candidate_node_indices,
+                    existing_capacity, new_capacity, regular_node_indices,
+                    graph_component_by_node_index, None,
                 )
-            except RuntimeError as voronoi_exc:
-                log(f"Kabel-Voronoi-terugval nog niet geldig: {voronoi_exc}")
-            else:
-                while len(candidate_nodes) < len(candidate_node_indices):
-                    appended_index = len(candidate_nodes)
-                    candidate_nodes.append(
-                        node_list[candidate_node_indices[appended_index]]
-                    )
-                    legacy_new_labels.append(
-                        f"Capaciteitskandidaat {appended_index + 1}"
-                    )
-                selected_candidate_indices = np.asarray(
-                    voronoi_candidate_indices, dtype=int
-                )
-                N_NEW = len(voronoi_candidate_indices)
-                selected_legacy_labels = [
-                    legacy_new_labels[index]
-                    for index in voronoi_candidate_indices
-                ]
-                new_nodes = [
-                    candidate_nodes[index] for index in voronoi_candidate_indices
-                ]
-                new_node_indices = [
-                    candidate_node_indices[index]
-                    for index in voronoi_candidate_indices
-                ]
-                capacities = np.concatenate(
-                    [
-                        existing_capacity,
-                        np.full(N_NEW, new_capacity, dtype=float),
-                    ]
-                )
-                final_legacy_labels = (
-                    stations["Stationsnaa"].astype(str).tolist()
-                    + selected_legacy_labels
-                )
-                source_nodes = station_nodes + new_nodes
-                source_indices = np.concatenate(
-                    [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-                )
-                final_distances = network_distance_matrix(
-                    adjacency, source_indices, unit_node_indices
-                )
-                final_assignment = voronoi_assignment
-                final_min_util = voronoi_min_util
-                node_cluster = voronoi_node_cluster
-                exc = None
-            if exc is None:
-                pass
-            else:
+            except RuntimeError as exc:
                 count_options = automatic_new_station_count_options(
                     float(design_current.sum()),
                     float(existing_capacity.sum()),
@@ -7107,27 +6920,272 @@ def main(_automatic_retry: bool = False) -> None:
                 ]
                 if remaining_counts:
                     log(
-                        f"{N_NEW} nieuwe stations is niet kabeltopologisch haalbaar; "
-                        f"automatisch opnieuw proberen met {remaining_counts[0]}."
+                        f"Kabel-Voronoi nog niet geldig; opnieuw proberen met "
+                        f"{remaining_counts[0]} als automatisch startaantal."
                     )
                     return main(_automatic_retry=True)
-        if exc is not None:
-            raise exc
-    # The facility model uses a fixed candidate count. Remove candidates which
-    # have become unnecessary after connected assignment/centring, giving
-    # existing capacity priority without weakening any network constraint.
-    if AUTO_NEW_STATIONS:
-        final_assignment, node_cluster, kept = absorb_new_territories_into_existing(
-            graph, node_list, node_cluster, source_nodes, unit_nodes,
-            final_assignment, unit_load, capacities, existing_count)
-        if len(kept) != len(capacities):
-            retained_new = [index - existing_count for index in kept if index >= existing_count]
-            new_nodes = [new_nodes[i] for i in retained_new]
-            new_node_indices = [new_node_indices[i] for i in retained_new]
-            selected_legacy_labels = [selected_legacy_labels[i] for i in retained_new]
-            capacities = capacities[kept]
-            source_nodes = station_nodes + new_nodes
-            N_NEW = len(new_nodes)
+                raise RuntimeError(
+                    "De directe kabel-Voronoi-berekening kon geen capaciteitsgeldige "
+                    "en kabelverbonden stationsverdeling vinden."
+                ) from exc
+            while len(candidate_nodes) < len(candidate_node_indices):
+                index = len(candidate_nodes)
+                candidate_nodes.append(node_list[candidate_node_indices[index]])
+                legacy_new_labels.append(f"Capaciteitskandidaat {index + 1}")
+            selected_mask = np.zeros(len(candidate_node_indices), dtype=bool)
+            selected_mask[voronoi_candidate_indices] = True
+            existing_count = len(stations)
+            compact_to_global = np.asarray(
+                list(range(existing_count))
+                + [existing_count + int(index) for index in voronoi_candidate_indices],
+                dtype=int,
+            )
+            initial_assignment = compact_to_global[voronoi_assignment]
+            N_NEW = len(voronoi_candidate_indices)
+            _AUTO_COUNTS_TRIED.add(N_NEW)
+            log(
+                f"Directe kabel-Voronoi selecteert {N_NEW} nieuwe stations en "
+                "behoudt de bestaande stations als vaste bronnen."
+            )
+        else:
+            # A manually fixed count still requires the exact-count solver.
+            all_source_indices = np.concatenate(
+                [station_node_indices, np.asarray(candidate_node_indices, dtype=int)]
+            )
+            all_distances = network_distance_matrix(
+                adjacency, all_source_indices, unit_node_indices
+            )
+            initial_assignment, selected_mask, facility_min_util = solve_facility_selection(
+                all_distances, unit_load, existing_capacity, unit_legacy_array,
+                stations["Stationsnaa"].astype(str).tolist() + legacy_new_labels,
+                len(legacy_new_labels),
+            )
+        selected_candidate_indices = np.flatnonzero(selected_mask)
+        selected_legacy_labels = [legacy_new_labels[i] for i in selected_candidate_indices]
+        log("Geselecteerde kandidaatgebieden: " + ", ".join(selected_legacy_labels))
+
+        # Collapse the assignment indices from all candidates to the selected set.
+        existing_count = len(stations)
+        selected_global_station_indices = list(range(existing_count)) + [
+            existing_count + int(i) for i in selected_candidate_indices
+        ]
+        selected_assignment = np.empty(len(groups), dtype=int)
+        global_to_selected = {
+            global_index: selected_index
+            for selected_index, global_index in enumerate(selected_global_station_indices)
+        }
+        for unit_index, global_station_index in enumerate(initial_assignment):
+            if int(global_station_index) not in global_to_selected:
+                raise RuntimeError("Een aansluiting is aan een niet-geselecteerd station toegewezen")
+            selected_assignment[unit_index] = global_to_selected[int(global_station_index)]
+
+        new_nodes = [candidate_nodes[i] for i in selected_candidate_indices]
+        new_node_indices = [candidate_node_indices[i] for i in selected_candidate_indices]
+        capacities = np.concatenate(
+            [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
+        )
+        final_legacy_labels = stations["Stationsnaa"].astype(str).tolist() + selected_legacy_labels
+
+        # Relocate each new station to the load-weighted middle of its assigned area,
+        # snap it to a real cable node, and optimize the assignment once. A second
+        # centre pass can make a marginally feasible component needlessly unstable.
+        final_assignment = selected_assignment
+        final_min_util = facility_min_util
+        if AUTO_NEW_STATIONS:
+            # Compute distances only for surviving sources, not every candidate.
+            source_indices = np.concatenate(
+                [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+            )
+            final_distances = network_distance_matrix(
+                adjacency, source_indices, unit_node_indices
+            )
+        else:
+            final_distances = all_distances[:, selected_global_station_indices].copy()
+        # A Voronoi fallback already places every demand node in an exclusive,
+        # connected shortest-path territory.  Keep those proven source locations;
+        # moving them and solving the same large MILP again would only reintroduce
+        # the solver failure that triggered the fallback.
+        for iteration in range(0 if initial_voronoi_node_cluster is not None else 1):
+            log(f"Nieuwe stations centreren, iteratie {iteration + 1}/1...")
+            previous_new_nodes = list(new_nodes)
+            previous_new_node_indices = list(new_node_indices)
+            previous_assignment = final_assignment.copy()
+            previous_distances = final_distances.copy()
+            for new_index in range(N_NEW):
+                if int(new_node_indices[new_index]) in junction_candidate_nodes:
+                    # Do not turn a solver-selected multi-direction site back into
+                    # a terminal site merely by geometric centring. All ordinary
+                    # assignment and exclusive-route checks still follow.
+                    continue
+                station_index = existing_count + new_index
+                mask = final_assignment == station_index
+                if not np.any(mask):
+                    raise RuntimeError("Leeg nieuw cluster tijdens centreren")
+                median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
+                assigned_units = np.flatnonzero(mask)
+                representative = int(assigned_units[0])
+                nearest = regular_graph_index_near(
+                    median, unit_node_indices[representative]
+                )
+                new_node_indices[new_index] = nearest
+                new_nodes[new_index] = node_list[nearest]
+            source_indices = np.concatenate(
+                [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+            )
+            final_distances = network_distance_matrix(
+                adjacency, source_indices, unit_node_indices
+            )
+            try:
+                final_assignment, final_min_util = solve_fixed_assignment(
+                    final_distances,
+                    unit_load,
+                    capacities,
+                    unit_legacy_array,
+                    final_legacy_labels,
+                )
+            except RuntimeError:
+                new_nodes = previous_new_nodes
+                new_node_indices = previous_new_node_indices
+                final_assignment = previous_assignment
+                final_distances = previous_distances
+                log(
+                    "Centreren zou de capaciteit- of routevoorwaarden breken; "
+                    "de laatst geldige stationslocaties blijven behouden."
+                )
+                break
+
+        source_nodes = station_nodes + new_nodes
+        try:
+            if initial_voronoi_node_cluster is not None:
+                node_cluster = initial_voronoi_node_cluster
+                log(
+                    "De geldige kabel-Voronoi-verdeling wordt rechtstreeks als "
+                    "eindtoedeling gebruikt."
+                )
+            else:
+                final_assignment, final_min_util, node_cluster = solve_cable_connected_assignment(
+                    graph,
+                    node_list,
+                    adjacency,
+                    final_distances,
+                    unit_load,
+                    capacities,
+                    unit_nodes,
+                    unit_node_indices,
+                    source_nodes,
+                    final_assignment,
+                )
+        except RuntimeError as exc:
+            if (
+                AUTO_NEW_STATIONS
+                and str(exc)
+                == "Geen capaciteitsgeldige kabelverbonden toedeling gevonden"
+            ):
+                try:
+                    (
+                        voronoi_assignment,
+                        voronoi_min_util,
+                        voronoi_node_cluster,
+                        voronoi_candidate_indices,
+                        _voronoi_unit_distances,
+                    ) = solve_greedy_voronoi_connected_assignment(
+                        adjacency,
+                        node_list,
+                        unit_node_indices,
+                        unit_load,
+                        station_node_indices,
+                        candidate_node_indices,
+                        existing_capacity,
+                        new_capacity,
+                        regular_node_indices,
+                        graph_component_by_node_index,
+                        # Reconsider every prepared main-cable candidate. Starting
+                        # only with the failed MILP selection can otherwise cause
+                        # dozens of almost coincident emergency candidates to be
+                        # added before a connected balance is found.
+                        None,
+                    )
+                except RuntimeError as voronoi_exc:
+                    log(f"Kabel-Voronoi-terugval nog niet geldig: {voronoi_exc}")
+                else:
+                    while len(candidate_nodes) < len(candidate_node_indices):
+                        appended_index = len(candidate_nodes)
+                        candidate_nodes.append(
+                            node_list[candidate_node_indices[appended_index]]
+                        )
+                        legacy_new_labels.append(
+                            f"Capaciteitskandidaat {appended_index + 1}"
+                        )
+                    selected_candidate_indices = np.asarray(
+                        voronoi_candidate_indices, dtype=int
+                    )
+                    N_NEW = len(voronoi_candidate_indices)
+                    selected_legacy_labels = [
+                        legacy_new_labels[index]
+                        for index in voronoi_candidate_indices
+                    ]
+                    new_nodes = [
+                        candidate_nodes[index] for index in voronoi_candidate_indices
+                    ]
+                    new_node_indices = [
+                        candidate_node_indices[index]
+                        for index in voronoi_candidate_indices
+                    ]
+                    capacities = np.concatenate(
+                        [
+                            existing_capacity,
+                            np.full(N_NEW, new_capacity, dtype=float),
+                        ]
+                    )
+                    final_legacy_labels = (
+                        stations["Stationsnaa"].astype(str).tolist()
+                        + selected_legacy_labels
+                    )
+                    source_nodes = station_nodes + new_nodes
+                    source_indices = np.concatenate(
+                        [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+                    )
+                    final_distances = network_distance_matrix(
+                        adjacency, source_indices, unit_node_indices
+                    )
+                    final_assignment = voronoi_assignment
+                    final_min_util = voronoi_min_util
+                    node_cluster = voronoi_node_cluster
+                    exc = None
+                if exc is None:
+                    pass
+                else:
+                    count_options = automatic_new_station_count_options(
+                        float(design_current.sum()),
+                        float(existing_capacity.sum()),
+                        float(new_capacity),
+                    )
+                    remaining_counts = [
+                        count for count in count_options if count not in _AUTO_COUNTS_TRIED
+                    ]
+                    if remaining_counts:
+                        log(
+                            f"{N_NEW} nieuwe stations is niet kabeltopologisch haalbaar; "
+                            f"automatisch opnieuw proberen met {remaining_counts[0]}."
+                        )
+                        return main(_automatic_retry=True)
+            if exc is not None:
+                raise exc
+        # The facility model uses a fixed candidate count. Remove candidates which
+        # have become unnecessary after connected assignment/centring, giving
+        # existing capacity priority without weakening any network constraint.
+        if AUTO_NEW_STATIONS:
+            final_assignment, node_cluster, kept = absorb_new_territories_into_existing(
+                graph, node_list, node_cluster, source_nodes, unit_nodes,
+                final_assignment, unit_load, capacities, existing_count)
+            if len(kept) != len(capacities):
+                retained_new = [index - existing_count for index in kept if index >= existing_count]
+                new_nodes = [new_nodes[i] for i in retained_new]
+                new_node_indices = [new_node_indices[i] for i in retained_new]
+                selected_legacy_labels = [selected_legacy_labels[i] for i in retained_new]
+                capacities = capacities[kept]
+                source_nodes = station_nodes + new_nodes
+                N_NEW = len(new_nodes)
     cluster_loads = np.bincount(
         final_assignment, weights=unit_load, minlength=len(capacities)
     )
