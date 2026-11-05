@@ -242,7 +242,11 @@ def solve_locked_voronoi(
             for u,v,data in graph.edges(data=True):
                 owner=reserved.get(frozenset((u,v)))
                 if owner is not None and owner!=station:continue
-                if owner == station or float(data.get("weight",1.0)) < 1e-9:
+                internal=(
+                    float(data.get("calculation_factor",1.0))<=1e-9
+                    or float(data.get("weight",1.0))<=1e-5
+                )
+                if owner == station or internal:
                     topology.add_edge(u,v,**data)
             if source not in topology:
                 raise ValueError(f"Bestaand stationsanker {station} niet in kabelnet.")
@@ -268,6 +272,93 @@ def solve_locked_voronoi(
         else:
             owner_by_node[source]=station
             by_station[station].add(source)
+
+    # A distribution-box polygon can have different in- and outgoing
+    # cable terminals. Confirm its existing equipment conductors IN THE
+    # QGIS routing graph before electrically joining the two original
+    # groups. These are 0-calculation-metre cabinet links, never invented
+    # new trench cables or extensions.
+    retained_cabinet_links=set()
+    feeder_parents=original_info.get("feeder_parents",{})
+    for point_index,station in retained_points.items():
+        record=original_info["all_original_by_index"].get(point_index)
+        if record is None:
+            raise ValueError("Behouden oorspronkelijke aansluitingsrecord ontbreekt.")
+        code=group_code(record.group)
+        visited=set()
+        while code is not None:
+            if code in visited:
+                raise ValueError(f"Voedingslus bij {station}/{code}.")
+            visited.add(code)
+            if (station,code) in original_info.get("cabinet_bridges",{}):
+                retained_cabinet_links.add((station,code))
+            code=feeder_parents.get((station,code),parent_group(code))
+
+    if retained_cabinet_links:
+        snap_tree=cKDTree(np.asarray(node_list,dtype=float))
+        from shapely.geometry import LineString
+        for station,code in sorted(retained_cabinet_links):
+            link=original_info["cabinet_bridges"][(station,code)]
+            parent_point=link["incoming"]
+            child_point=link["outgoing"]
+            def confirmed_node(point):
+                distance,position=snap_tree.query((point.x,point.y))
+                if float(distance)>.20:
+                    raise ValueError(
+                        f"Verdeelkast {link['cabinet']}: een origineel "
+                        "kabeleind is niet op een echte QGIS-netwerkknoop aanwezig."
+                    )
+                return node_list[int(position)]
+            parent_node=confirmed_node(parent_point)
+            child_node=confirmed_node(child_point)
+            for node in (parent_node,child_node):
+                if owner_by_node.get(node)!=station:
+                    raise ValueError(
+                        f"Verdeelkast {link['cabinet']}: fysiek kabeleind is "
+                        "niet uitsluitend van zijn oorspronkelijk station."
+                    )
+            if parent_node==child_node:
+                continue
+            equipment_graph=nx.Graph()
+            cabinet_boundary=link["geometry"].buffer(.25)
+            for u,v,data in graph.edges(data=True):
+                weight=float(data.get("weight",1.))
+                if not (
+                    float(data.get("calculation_factor",1.))<=1e-9
+                    or weight<=1e-5
+                ):
+                    continue
+                conductor=data.get("route_geometry") or LineString([u,v])
+                if cabinet_boundary.covers(conductor):
+                    equipment_graph.add_edge(u,v)
+            if not (parent_node in equipment_graph and
+                    child_node in equipment_graph and
+                    nx.has_path(equipment_graph,parent_node,child_node)):
+                raise ValueError(
+                    f"Verdeelkast {link['cabinet']}: geen bestaande interne "
+                    "0-meterverbinding tussen inkomende en uitgaande "
+                    "Kabel Subgroep gevonden. Geen kabel verzinnen."
+                )
+            physical_nodes=nx.shortest_path(
+                equipment_graph,parent_node,child_node,
+            )
+            for u,v in zip(physical_nodes[:-1],physical_nodes[1:]):
+                edge=frozenset((u,v))
+                previous=reserved.get(edge)
+                if previous is not None and previous!=station:
+                    raise ValueError(
+                        f"Verdeelkast {link['cabinet']} deelt een interne "
+                        "verbinding tussen twee oorspronkelijke stations."
+                    )
+                reserved[edge]=station
+                for node in (u,v):
+                    old=owner_by_node.setdefault(node,station)
+                    if old!=station:
+                        raise ValueError(
+                            "Verschillende oude stations delen één "
+                            "verdeelkastknooppunt; controleer het schakelschema."
+                        )
+                    by_station[station].add(node)
 
     n=len(node_list)
     if n!=len(graph.nodes):
@@ -300,6 +391,31 @@ def solve_locked_voronoi(
             raise ValueError(
                 "Historisch toegewezen aansluiting ligt niet op het "
                 "aan zijn oude station voorbehouden kabelpad."
+            )
+    # Require an EXCLUSIVE, original-station-rooted path even if no
+    # new station is necessary. The previous no-free-units shortcut could
+    # return success on two disjoint old cable routes inside a cabinet.
+    proof_graph=nx.Graph()
+    proof_graph.add_nodes_from(owner_by_node)
+    for owned_edge,station in reserved.items():
+        u,v=tuple(owned_edge)
+        if owner_by_node.get(u)==station and owner_by_node.get(v)==station:
+            proof_graph.add_edge(u,v)
+    by_name={}
+    for station,index in names.items():
+        start=node_list[int(existing_station_node_indices[index])]
+        by_name[station]=(
+            nx.node_connected_component(proof_graph,start)
+            if start in proof_graph else set()
+        )
+    for unit in np.flatnonzero(locked>=0):
+        station=old_station_names[int(locked[unit])]
+        target=node_list[int(unit_node_indices[unit])]
+        if target not in by_name[station]:
+            raise ValueError(
+                f"Oorspronkelijke aansluiting {unit} is niet via uitsluitend "
+                f"bestaande kabeldelen en verdeelkastverbindingen vanaf "
+                f"station {station} bereikbaar."
             )
     free_units=np.flatnonzero(locked<0)
     for unit in free_units:
