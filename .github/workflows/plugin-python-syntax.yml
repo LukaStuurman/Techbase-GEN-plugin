@@ -39,3 +39,10 @@ jobs:
           python ls_netontwerp_wizard/test_existing_group_trace.py
           python ls_netontwerp_wizard/test_locked_original_autocluster.py
           python ls_netontwerp_wizard/test_existing_cabinet_feeders.py
+          python ls_netontwerp_wizard/generate_existing_station_control.py --output-dir controle_verdeelkasten
+      - name: Publiceer controlebestand en vier CSV-overzichten
+        uses: actions/upload-artifact@v4
+        with:
+          name: controle-bestaande-stations-verdeelkast
+          path: controle_verdeelkasten/
+          if-no-files-found: error
