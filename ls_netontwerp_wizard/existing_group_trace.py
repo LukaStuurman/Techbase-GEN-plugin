@@ -226,10 +226,23 @@ def trace_group_cables(points,stations,cables, *,
     feeder_parents={}
     cabinet_links={}
     cabinet_geometries=(
-        [(str(i),row.geometry) for i,row in distribution_cabinets.iterrows()
-         if row.geometry is not None and not row.geometry.is_empty]
+        [
+            (
+                _value(row,("Nummer","number","ID","master_asset_id","Name"))
+                or str(i),
+                row.geometry,
+            )
+            for i,row in distribution_cabinets.iterrows()
+            if row.geometry is not None and not row.geometry.is_empty
+        ]
         if distribution_cabinets is not None else []
     )
+    cabinet_ids=[id for id,_geometry in cabinet_geometries]
+    if len(set(cabinet_ids))!=len(cabinet_ids):
+        raise ValueError(
+            "Verdeelkasten hebben dubbele of niet-eenduidige kastnummers; "
+            "er kan geen betrouwbare originele voeding worden vastgesteld."
+        )
     group_union={
         code:unary_union([geom for geom,_type in rows])
         for code,rows in raw_records.items()
