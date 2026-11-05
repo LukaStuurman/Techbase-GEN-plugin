@@ -1,11 +1,11 @@
-# Kader 2.0 ontwerpstroom en routeherstel — v1.33.0
+# Kader 2.0 ontwerpstroom en routeherstel — v1.33.1
 
 ## Workbookbron
 
 De gebruiker leverde **Eea-0205.K 2.0.xlsx** aan (SHA-256 `229d6343c333c98023a609e5d16fc0d98c2c1498c7c6005732e3223885efa195`).
 Het werkblad **Versie beheer** meldt bij 2.0: *nieuwe tabellen voor toekomstige aansluitwaarden kleinzakelijk en grootzakelijk*. De spreadsheet bevat tevens afzonderlijke trafo-, kabel- en stijgleidingtabellen en kabelselectiviteitscontroles.
 
-De plugin biedt nu een **extra** Kader **2.0** naast de bestaande **3.0/3.1**. De eerdere 3.x-tabellen zijn niet vervangen. Voor Kader 2.0 gebruiken de berekeningen de tabellen uit `kader_20.py`, onafhankelijk van de aanpasbare historische 3.x-matrices.
+De plugin biedt nu een **extra** Kader **2.0** naast de bestaande **3.0/3.2** (3.2 is de ongewijzigde oude 3.1-keuze). De eerdere 3.x-tabellen zijn niet vervangen. Voor Kader 2.0 gebruiken de berekeningen de tabellen uit `kader_20.py`, onafhankelijk van de aanpasbare historische 3.x-matrices.
 
 ## Exact overgenomen ontwerpstroomwaarden (A per eenheid)
 
@@ -34,7 +34,7 @@ De ontwerpstromen op trafo- en kabelniveau komen onafhankelijk uit hun eigen wer
 ## Verschillen / belangrijke aannames
 
 - **Verwarmingswijze is niet hetzelfde als bouwjaar.** In Kader 2.0 worden Type 1/2 (laagbouw) en Type 3/4 (hoogbouw) op verwarmingswijze onderscheiden. De GEN-invoer kent dit niet altijd. Zonder expliciete kolom `Kader20Type` gebruikt de plugin de bestaande bouwjaargrens 2022 slechts als *planningsaanname*: jonger = individuele warmtepomp. In `KaderType` wordt deze aanname vermeld. Vul `Kader20Type` met `Type 1`, `Type 2`, `Type 3` of `Type 4` om deze te overschrijven. De eerdere veldwaarde `OntwerpstroomType` uit Kader 3.x is opzettelijk **geen** Kader 2.0-type.
-- **Toekomstige aansluitwaarde is niet automatisch gelijk aan huidige.** Voor zakelijke aansluitingen kan de invoerkolom `Kader20ToekomstigeAansluitwaarde` (bv. `3 x 160 A`) worden toegevoegd. Die krijgt voorrang op het huidige doorlaatveld. Ontbreekt deze, dan gebruiken we voorlopig de huidige waarde als aanname en verschijnt een waarschuwing en een aantekening in `KaderType`.
+- **Toekomstige aansluitwaarde is niet automatisch gelijk aan huidige.** Voor zakelijke aansluitingen kan de invoerkolom `Kader20ToekomstigeAansluitwaarde` (bv. `3 x 160 A`) worden toegevoegd. Die krijgt voorrang op het huidige doorlaatveld. Ontbreekt deze, dan krijgt de zakelijke aansluiting **0 A met waarschuwing** tot de toekomstige waarde via de ontwerpstroomcorrectie is vastgelegd; de huidige waarde wordt nooit als toekomst aangenomen.
 - **Type 7 ‘overig’ is leeg in Excel.** Voor 3×100, 3×125, 3×200, hogere of onbekende zakelijke toekomstige aansluitwaarden bestaat geen vaste Kader 2.0-waarde in deze bron. De plugin verzint geen waarde en valt ook niet stilzwijgend terug naar Kader 3.x: de berekening levert **0 A met waarschuwing** op. Herstel deze via de bestaande nulwaarden-/handmatige ontwerpstroomcorrectie vóór clusteren.
 - **Type 5 aanvullende warmtecomponenten** vereist aantal × elektrisch vermogen × gelijktijdigheidsfactor. De aangeleverde workbook bevat geen volledige gelijktijdigheidsfactortabel. `kader_20.type5_surcharge_a` is beschikbaar voor expliciet aangeleverde getallen; de plugin voegt zonder invoer **geen** toeslag toe.
 - **Stijgleiding is een afzonderlijke berekening**, niet te mengen met trafo/kabel. De exacte Type 3 = 1,7 A en Type 4 = 4,3 A per appartement en Type 6 zakelijke staffel zijn beschikbaar als `kader_20.riser_current`. Zij zijn niet automatisch een extra veld op LS-aansluitpunten, omdat één stijgleiding meerdere aansluitingen kan omvatten.
@@ -53,3 +53,7 @@ De ontwerpstromen op trafo- en kabelniveau komen onafhankelijk uit hun eigen wer
 Een volledige echte herberekening van het project met **station 044.529** is niet bij deze release uitgevoerd. De originele projectlagen zijn niet meegeleverd. Daarom is nog geen bewijs dat deze specifieke stationstoedeling en alle kaartlijnen in dat project helemaal correct zijn. Ook de snelheidswinst en end-to-end kantoorwerkwijze zijn niet met een volledig productieproject gemeten.
 
 Installeer de versie-ZIP, herstart QGIS, kies **Kader 2.0** in het hoofdscherm en controleer de `KaderVersie`, `KaderType` en nulwaardenaansluitingen vóór het starten van de clustering.
+
+## Belangrijk verschil met Excel 3.2
+
+De meegeleverde 3.2-Excel bevat óók kleinzakelijk en grootverbruik, maar rekent daar met **huidige aansluitwaarde + gascategorie**, anders dan de **toekomstige** waarde van 2.0. De pluginkeuze Kader 3.2 is de oorspronkelijke **3.1-methode met uitsluitend een nieuwe naam**: geen bestaande waarde is gewijzigd. De volledige vergelijking en invoer via de correctiepagina staan in [KADER_20_VS_32.md](KADER_20_VS_32.md).

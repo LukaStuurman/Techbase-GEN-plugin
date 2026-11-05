@@ -929,7 +929,7 @@ class WorkflowRunner:
                 "FLD_GAS": self.v["field_gas"],
                 "FLD_WONINGTYPE": self.v["field_building_type"],
                 "FLD_BOUWJAAR": self.v["field_build_year"],
-                "VAL_KADER": {"3.0": 0, "3.1": 1, "2.0": 2}.get(
+                "VAL_KADER": {"3.0": 0, "3.1": 1, "3.2": 1, "2.0": 2}.get(
                     str(self.v.get("design_framework", "3.0")), 0
                 ),
                 "VAL_1FASE_EXCEPTION": self.v["one_phase_exception"],

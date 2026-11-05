@@ -222,8 +222,15 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
+        if category not in (1, 4, 8, 9) and not kader20_future:
+            if feedback is not None:
+                feedback.pushWarning(
+                    f"Kader 2.0 aansluiting {fid}: toekomstige zakelijke "
+                    "aansluitwaarde ontbreekt; 0 A tot handmatige controle."
+                )
+            return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4) and kader20_future else doorlaat
+            kader20_future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, label, warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
@@ -386,8 +393,10 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
+        if category not in (1, 4, 8, 9) and not kader20_future:
+            return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4) and kader20_future else doorlaat
+            kader20_future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, _label, _warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
@@ -528,7 +537,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterEnum(
             self.VAL_KADER,
             self.tr("Ontwerpstroomkader (2.0 heeft eigen Excel-tabellen)"),
-            options=["Kader 3.0", "Kader 3.1", "Kader 2.0"],
+            options=["Kader 3.0", "Kader 3.2", "Kader 2.0"],
             defaultValue=0,
         ))
         # Nieuwe Uitzondering Toggle
@@ -641,7 +650,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             return cfg
 
         framework_index = self.parameterAsEnum(parameters, self.VAL_KADER, context)
-        framework = {0: "3.0", 1: "3.1", 2: "2.0"}.get(framework_index, "3.0")
+        framework = {0: "3.0", 1: "3.2", 2: "2.0"}.get(framework_index, "3.0")
         feedback.pushInfo(f"Ontwerpstroom wordt berekend met Kader {framework}.")
         use_1fase_exc = self.parameterAsBool(parameters, self.VAL_1FASE_EXCEPTION, context)
         default_appartement_zonder_doorlaat = self.parameterAsBool(
@@ -777,6 +786,12 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         for f in text_output_fields:
             if fields.lookupField(f) < 0:
                 fields.append(QgsField(f, QVariant.String))
+        if framework == "2.0":
+            # Keep these as editable fields in the review GeoPackage. Previously
+            # they were only read if someone had already created them upstream.
+            for f in ("Kader20Type", "Kader20ToekomstigeAansluitwaarde"):
+                if fields.lookupField(f) < 0:
+                    fields.append(QgsField(f, QVariant.String))
             
         (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT, context, fields, source_points.wkbType(), source_points.sourceCrs())
         
@@ -876,9 +891,9 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                     if inferred_business_future_count <= 10:
                         feedback.pushWarning(
                             f"Kader 2.0 aansluiting {feat.id()}: geen "
-                            "Kader20ToekomstigeAansluitwaarde ingevuld; "
-                            "huidige doorlaat wordt tijdelijk als toekomstige "
-                            "aansluitwaarde aangenomen. Controleer handmatig."
+                            "Kader20ToekomstigeAansluitwaarde ingevuld. "
+                            "Deze zakelijke aansluiting krijgt 0 A en moet "
+                            "in stap 2 met een toekomstwaarde worden hersteld."
                         )
             res_std = calculate_ontwerpstroom(
                 val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
@@ -907,17 +922,18 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 not is_bag_object(val_door) or has_residential_usage(val_gebr)
             ):
                 cat = map_gebruiksdoel(val_gebr, val_woning, full_config_std)
-                phases, amps = parse_doorlaat(
-                    future_connection
-                    if cat not in (1, 4) and future_connection else val_door
-                )
-                _value, kader_type, _warning = kader_20.current(
-                    "trafo", cat, val_woning, effective_bouwjaar, phases, amps,
-                    explicit_type=explicit_kader20,
-                    new_build_year=full_config_std["DEFAULTS"]["bouwjaar_grens"],
-                )
                 if cat not in (1, 4, 8, 9) and not future_connection:
-                    kader_type += " (huidige als toekomst aangenomen)"
+                    kader_type = "Type 6/7 - toekomstige aansluitwaarde ontbreekt (herstellen)"
+                else:
+                    phases, amps = parse_doorlaat(
+                        future_connection
+                        if cat not in (1, 4) else val_door
+                    )
+                    _value, kader_type, _warning = kader_20.current(
+                        "trafo", cat, val_woning, effective_bouwjaar, phases, amps,
+                        explicit_type=explicit_kader20,
+                        new_build_year=full_config_std["DEFAULTS"]["bouwjaar_grens"],
+                    )
 
             # Explicit BAG choices survive a general recalculation. A residential
             # table choice still follows the current pand unless manually overridden.
@@ -965,6 +981,6 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             feedback.pushWarning(
                 f"Kader 2.0: {inferred_business_future_count} zakelijke/onzekere "
                 "aansluitingen zonder expliciete toekomstige aansluitwaarde. "
-                "Controleer en corrigeer deze vóór de clustering."
+                "Deze staan op 0 A en moeten vóór de clustering worden hersteld."
             )
         return {self.OUTPUT: dest_id}

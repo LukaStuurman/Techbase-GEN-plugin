@@ -54,7 +54,7 @@ from .current_inputs import connect_current_edits, set_current_values, has_manua
 from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
     HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
-    unit_currents, unit_description, category_note, current_context,
+    unit_currents, unit_description, unit_future_connection, category_note, current_context,
 )
 from .station_name_csv import (
     find_master_asset_id_column,
@@ -405,13 +405,13 @@ class LSNetontwerpDialog(QDialog):
         self.framework_combo = QComboBox()
         self.framework_combo.addItem("Kader 3.0 (huidige methode)", "3.0")
         self.framework_combo.addItem(
-            "Kader 3.1 (nieuwe straatmeubilairwaarden)", "3.1"
+            "Kader 3.2 (bestaande rekenwaarden behouden)", "3.2"
         )
         self.framework_combo.addItem(
             "Kader 2.0 (Excel 2.0: warmtepomp, toekomstwaarde zakelijk)", "2.0"
         )
         self.framework_combo.setToolTip(
-            "Kader 3.1 wijzigt alleen straatmeubilair. Kader 2.0 gebruikt eigen "
+            "Kader 3.2 gebruikt dezelfde instellingen als de eerdere keuze 3.1. Kader 2.0 gebruikt eigen "
             "Excelwaarden voor verbruik en opwek op trafo-/kabelniveau. "
             "Kader 2.0 onderscheidt verwarmingssystemen; zonder expliciet "
             "Kader20Type is bouwjaar slechts een aanname. Onbekende toekomstige "
@@ -1980,6 +1980,21 @@ class LSNetontwerpDialog(QDialog):
         )
         self.value_housing_note.setWordWrap(True)
         housing_layout.addWidget(self.value_housing_note)
+        self.value_kader20_type_combo = QComboBox()
+        for label, key in (
+            ("Bouwjaar-aanname (controleer verwarming)", None),
+            ("Type 1 - laagbouw individuele warmtepomp", "Type 1"),
+            ("Type 2 - laagbouw gas/stadsverwarming", "Type 2"),
+            ("Type 3 - hoogbouw collectieve verwarming", "Type 3"),
+            ("Type 4 - hoogbouw individuele warmtepomp", "Type 4"),
+        ):
+            self.value_kader20_type_combo.addItem(label, key)
+        self.value_kader20_type_label = QLabel("Kader 2.0 verwarmingswijze")
+        housing_layout.addWidget(self.value_kader20_type_label)
+        housing_layout.addWidget(self.value_kader20_type_combo)
+        self.value_kader20_type_combo.currentIndexChanged.connect(
+            self._value_household_changed
+        )
         root.addWidget(self.value_housing_group)
 
         self.value_unit_group = QGroupBox("Type wooneenheid / aansluiting")
@@ -2429,11 +2444,26 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         household = category == "Huishoudelijk"
         self.value_housing_group.setVisible(household)
+        profile20_visible = (
+            household
+            and self._workflow_field_defaults().get("design_framework") == "2.0"
+        )
+        self.value_kader20_type_label.setVisible(profile20_visible)
+        self.value_kader20_type_combo.setVisible(profile20_visible)
+        if profile20_visible:
+            self.value_housing_note.setText(
+                "Kader 2.0: kies het echte verwarmingssysteem Type 1-4. "
+                "Zonder keuze gebruikt de berekening een gemarkeerde bouwjaar-aanname."
+            )
         self.value_manual_group.setVisible(True)
         self.value_manual_checkbox.setChecked(False)
         self.value_unit_group.setVisible(not household)
-        self.value_gas_combo.setVisible(category == "Zakelijk")
-        self.value_gas_label.setVisible(category == "Zakelijk")
+        gas_relevant = (
+            category == "Zakelijk"
+            and self._workflow_field_defaults().get("design_framework") != "2.0"
+        )
+        self.value_gas_combo.setVisible(gas_relevant)
+        self.value_gas_label.setVisible(gas_relevant)
         fill_unit_combo(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
         if category == "Straatmeubilair":
             trafo = self._value_matrix_current("matrix_straat", 5.8)
@@ -2458,7 +2488,17 @@ class LSNetontwerpDialog(QDialog):
         layer = self._layer_from_combo(self.value_layer_combo)
         features = list(layer.selectedFeatures()) if layer is not None else []
         context = self.zero_current_page._household_context()
-        rows = [self.zero_current_page._household_currents(layer, feature, self.value_housing_combo.currentData(), context) for feature in features]
+        try:
+            rows = [
+                self.zero_current_page._household_currents(
+                    layer, feature, self.value_housing_combo.currentData(),
+                    context, self.value_kader20_type_combo.currentData(),
+                )
+                for feature in features
+            ]
+        except (ValueError, TypeError) as exc:
+            self.value_housing_note.setText(str(exc))
+            rows = []
         set_current_values(self._value_current_spins(), [max(column) for column in zip(*rows)] if rows else (0, 0, 0, 0))
         self._update_value_highest_preview()
 
@@ -2474,7 +2514,10 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         key = self.value_unit_combo.currentData()
         self.value_manual_checkbox.setChecked(False)
-        self.value_unit_note.setText(category_note(category, key) + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast.")
+        self.value_unit_note.setText(
+            category_note(category, key, self._workflow_field_defaults().get("design_framework"))
+            + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast."
+        )
         currents = unit_currents(current_context(self), category, key, self.value_gas_combo.currentData())
         if currents is not None:
             set_current_values(self._value_current_spins(), currents)
@@ -3226,7 +3269,7 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = widget.value()
         if not values["plan"]:
             values["only_plan"] = False
-        if values["design_framework"] == "3.1":
+        if values["design_framework"] in ("3.1", "3.2"):
             values["matrix_straat"] = list(values["matrix_straat_kader31"])
         return values
 
@@ -3242,7 +3285,7 @@ class LSNetontwerpDialog(QDialog):
         framework = str(
             self.settings.value(self.SETTINGS_PREFIX + "design_framework", "3.0")
         )
-        index = self.framework_combo.findData(framework)
+        index = self.framework_combo.findData("3.2" if framework == "3.1" else framework)
         self.framework_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _save_settings(self, values):
@@ -3275,7 +3318,7 @@ class LSNetontwerpDialog(QDialog):
             return
         self.prepared_state = state
         restored_framework = str(state["values"].get("design_framework", "3.0"))
-        restored_index = self.framework_combo.findData(restored_framework)
+        restored_index = self.framework_combo.findData("3.2" if restored_framework == "3.1" else restored_framework)
         if restored_index >= 0:
             self.framework_combo.setCurrentIndex(restored_index)
         self.plan_edit.setText(str(state["values"].get("plan", "")))
@@ -3712,8 +3755,25 @@ class LSNetontwerpDialog(QDialog):
                 },
                 house_type,
                 unit_name=unit_description(category, self.value_unit_combo.currentData()) if category != "Huishoudelijk" else None,
-                gas_category=self.value_gas_combo.currentData() if category == "Zakelijk" else None,
+                gas_category=(
+                    self.value_gas_combo.currentData()
+                    if category == "Zakelijk"
+                    and self._workflow_field_defaults().get("design_framework") != "2.0"
+                    else None
+                ),
                 manual_override=self.value_manual_checkbox.isChecked(),
+                future_connection=(
+                    unit_future_connection(category, self.value_unit_combo.currentData())
+                    if category == "Zakelijk"
+                    and self._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
+                kader20_override=(
+                    self.value_kader20_type_combo.currentData()
+                    if category == "Huishoudelijk"
+                    and self._workflow_field_defaults().get("design_framework") == "2.0"
+                    else None
+                ),
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")

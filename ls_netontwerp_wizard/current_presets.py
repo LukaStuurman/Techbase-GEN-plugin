@@ -73,6 +73,15 @@ def unit_description(category, key):
     return next((label for label, stored, _ in UNIT_CHOICES.get(category, ()) if stored == key), "Zelf invullen")
 
 
+def unit_future_connection(category, key):
+    """A deliberate Type 6/7 choice is a FUTURE rating, not GEN current."""
+    return next(
+        (doorlaat for _label, stored, doorlaat in UNIT_CHOICES.get(category, ())
+         if stored == key),
+        None,
+    )
+
+
 def current_context(host):
     from .algorithms.woningtype_selectie_herberekenen_tool import _configurations, _load_design_module
     module = _load_design_module()
@@ -89,14 +98,38 @@ def unit_currents(context, category, key, gas_category="G4/G6/Geen"):
     usage = {"Zakelijk": "bedrijf", "Oplaadpunt": "oplaadpunt", "Straatmeubilair": "straatmeubilair"}[category]
     gas = gas_category if category == "Zakelijk" else "G4/G6/Geen"
     one_phase = bool(values.get("one_phase_exception", True))
-    normal = module.calculate_ontwerpstroom(doorlaat, usage, "", 0, gas, standard, 0, None, one_phase)
-    cable_current = module.calculate_ontwerpstroom(doorlaat, usage, "", 0, gas, cable, 0, None, one_phase)
-    generation = module.calculate_opwek_ontwerpstroom(doorlaat, usage, "", gas, opwek, standard, normal, one_phase)
-    generation_cable = module.calculate_opwek_ontwerpstroom(doorlaat, usage, "", gas, opwek_cable, cable, cable_current, one_phase)
+    # Selecting a named business preset in Kader 2.0 is an explicit choice
+    # of the FUTURE connection. Pass it as such to the shared calculator;
+    # simply using it as the current GEN 'doorlaat' would now correctly be
+    # rejected as an unspecified future rating (0 A).
+    future = (
+        doorlaat if category == "Zakelijk"
+        and str(values.get("design_framework")) == "2.0" else None
+    )
+    kwargs = {"kader20_future": future} if future else {}
+    normal = module.calculate_ontwerpstroom(
+        doorlaat, usage, "", 0, gas, standard, 0, None, one_phase, **kwargs
+    )
+    cable_current = module.calculate_ontwerpstroom(
+        doorlaat, usage, "", 0, gas, cable, 0, None, one_phase, **kwargs
+    )
+    generation = module.calculate_opwek_ontwerpstroom(
+        doorlaat, usage, "", gas, opwek, standard, normal, one_phase, **kwargs
+    )
+    generation_cable = module.calculate_opwek_ontwerpstroom(
+        doorlaat, usage, "", gas, opwek_cable, cable, cable_current,
+        one_phase, **kwargs
+    )
     return normal, cable_current, generation, generation_cable
 
 
-def category_note(category, key):
+def category_note(category, key, framework=None):
+    if category == "Zakelijk" and str(framework) == "2.0":
+        if key in {"100", "125", "200"}:
+            return "Kader 2.0 Type 7: overig; de toekomstige ontwerpstroom is niet vastgelegd en vereist handmatige invoer"
+        if key in {"160", "250"}:
+            return "Kader 2.0 Type 7: grootverbruik LS op toekomstige aansluitwaarde; gas heeft geen invloed"
+        return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde; gas heeft geen invloed"
     if category == "Zakelijk":
         if key in {"100", "125", "160", "200", "250"}:
             return "Type 9: Grootverbruik LS (eigen richting >3x80A)"

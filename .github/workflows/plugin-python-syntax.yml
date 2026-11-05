@@ -29,3 +29,5 @@ jobs:
 
       - name: Controleer Kader 2.0 tegen Excel-tabellen
         run: python ls_netontwerp_wizard/test_kader_20.py
+      - name: Bewaak 3.2-waarden en controleer 2.0-futures
+        run: python ls_netontwerp_wizard/test_kader_comparison_20_32.py
