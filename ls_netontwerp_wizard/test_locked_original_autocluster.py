@@ -122,6 +122,7 @@ def test():
     # this pure function by AST to avoid requiring QGIS/osgeo/Matplotlib on CI.
     import ast
     from threading import Lock
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from scipy.spatial import cKDTree
     from scipy.sparse.csgraph import dijkstra
     from ls_netontwerp_wizard.existing_locked_clustering import np as real_np
@@ -132,7 +133,9 @@ def test():
                     if isinstance(node,ast.FunctionDef)
                     and node.name=="solve_greedy_voronoi_connected_assignment")
     scope={"np":real_np, "cKDTree":cKDTree, "dijkstra":dijkstra,
-           "Lock":Lock, "MAX_ROUTE_M":850., "TARGET_UTILIZATION":.9,
+           "Lock":Lock, "CPU_THREADS":2,
+           "ThreadPoolExecutor":ThreadPoolExecutor, "as_completed":as_completed,
+           "MAX_ROUTE_M":850., "TARGET_UTILIZATION":.9,
            "TARGET_UTILIZATION_PENALTY":10000.,
            "log":lambda message:None}
     exec(compile(ast.Module(body=[solver_ast],type_ignores=[]),
