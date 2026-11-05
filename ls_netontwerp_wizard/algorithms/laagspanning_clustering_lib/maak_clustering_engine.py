@@ -6345,6 +6345,13 @@ def main(_automatic_retry: bool = False) -> None:
                 "een oude stationsnaam maar zonder Kabel Subgroep worden "
                 "uitsluitend naar nieuwe stations gerouteerd."
             )
+        if original_info["unknown_stations"]:
+            log(
+                f"{len(original_info['unknown_stations'])} aansluiting(en) "
+                "verwijzen naar een niet-beschikbaar oud station. Deze "
+                "mogen niet bij een ander bestaand station terechtkomen "
+                "en worden uitsluitend voor nieuwe stations aangeboden."
+            )
         for warning in original_info["retention"]["waarschuwingen"]:
             log("WAARSCHUWING bestaande kabelgroepcontrole: "+str(warning))
     existing_capacity = stations["Max_A"].to_numpy(float)
