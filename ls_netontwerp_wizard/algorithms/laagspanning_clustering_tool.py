@@ -1628,6 +1628,10 @@ verzoek zichtbaar worden.
             engine.PINNED_NEW_STATIONS = [{**rule, "name": name} for name, rule in policies.items()
                                           if rule.get("protected") and rule.get("type", "").casefold() == "nieuw"]
             engine.RESERVED_STATION_NAMES = set(policies)
+            engine.RETIRED_STATION_NAMES = {
+                name for name,rule in policies.items()
+                if rule.get("status") == "Vervallen"
+            }
             engine.STATION_CAPACITY_OVERRIDES = {name: rule["kva"] for name, rule in policies.items()
                                                  if rule.get("capacity_override") and not rule.get("status")}
             engine.STATIONS_PATH = stations_path
