@@ -12,7 +12,7 @@ from .workflow import WorkflowRunner
 from .ui_theme import apply_theme, branded_header, role
 
 CLUSTER_KEYS = ("field_design_current", "max_route", "new_station_kva", "target_utilization",
-    "node_tolerance", "automatic_stations", "manual_station_count", "node_trenches", "only_plan",
+    "node_tolerance", "automatic_stations", "preserve_existing_directions", "manual_station_count", "node_trenches", "only_plan",
     "write_shapefiles", "field_multistory", "field_flat_id", "allow_external_routes")
 
 
@@ -178,6 +178,19 @@ class ClusteringOptionsDialog(QDialog):
         self.count.setEnabled(not self.automatic.isChecked())
         self.automatic.toggled.connect(lambda checked: self.count.setEnabled(not checked))
         form.addRow(self.automatic)
+        self.preserve_existing = QCheckBox(
+            "Behoud originele bestaande stations en kabelrichtingen (-00/-01/-02/...)"
+        )
+        self.preserve_existing.setChecked(
+            self.values.get("preserve_existing_directions", False)
+        )
+        self.preserve_existing.setToolTip(
+            "Controleer trafo, kabeltypen en gG per originele Kabel Subgroep. "
+            "Bestaande stations mogen alleen hun eigen oorspronkelijke aansluitingen "
+            "behouden. Afgevallen aansluitingen gaan uitsluitend naar nieuwe stations. "
+            "Vereist echte GEN-kabellijnen met Type en Kabel Subgroep."
+        )
+        form.addRow(self.preserve_existing)
         form.addRow("Handmatig aantal nieuwe stations", self.count)
         note = QLabel("Kabelroute en trafocapaciteit zijn harde grenzen. Voorkeursbenutting stuurt de stationskeuze. Capaciteiten van bestaande stations pas je aan bij 2c. Stations aanpassen.")
         note.setWordWrap(True)
@@ -237,7 +250,9 @@ class ClusteringOptionsDialog(QDialog):
             values.update({key: spin.value() for key, spin in self.numbers.items()})
             values.update(field_design_current=self.current_field.currentText(), only_plan=self.only_plan.isChecked(),
                 allow_external_routes=self.allow_external_routes.isChecked(),
-                automatic_stations=self.automatic.isChecked(), manual_station_count=self.count.value(),
+                automatic_stations=self.automatic.isChecked(),
+                preserve_existing_directions=self.preserve_existing.isChecked(),
+                manual_station_count=self.count.value(),
                 node_trenches=self.node.isChecked(), use_flat_cabinets=self.flat.isChecked(), write_shapefiles=self.shapes.isChecked())
             plan = QgsProject.instance().mapLayer(self.plan_combo.currentData())
             self.host.prepared_state = save_options(self.host.prepared_state, values, plan, self.selected_only.isChecked())
