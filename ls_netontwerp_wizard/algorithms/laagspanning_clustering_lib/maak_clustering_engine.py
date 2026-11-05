@@ -7690,6 +7690,12 @@ def main(_automatic_retry: bool = False) -> None:
             direction_features.append({
                 "Orig_station":station,
                 "Kabel_Subgroep":group,
+                "Via_verdeelkast":original_info["cabinet_metadata"].get(
+                    (station,group),""
+                ),
+                "Bovenliggende_groep":original_info["feeder_parents"].get(
+                    (station,group),""
+                ),
                 "Lengte_m":float(assessment["length_m"]),
                 "Fysiek_m":float(assessment["fysiek_uniek_m"]),
                 "Belasting_A":float(assessment["belasting_a"]),
