@@ -216,30 +216,43 @@ def parse_bouwjaar(val):
 
 def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
-        category = map_gebruiksdoel(gebruiksdoel, type_woning, config)
         if is_bag_object(doorlaat) and (
             not has_residential_usage(gebruiksdoel)
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
-        if category not in (1, 4, 8, 9) and not kader20_future:
-            if feedback is not None:
-                feedback.pushWarning(
-                    f"Kader 2.0 aansluiting {fid}: toekomstige zakelijke "
-                    "aansluitwaarde ontbreekt; 0 A tot handmatige controle."
-                )
-            return 0.0
+        current_phases, current_amp = parse_doorlaat(doorlaat)
+        category = kader_20.classify_category(
+            map_gebruiksdoel(gebruiksdoel, type_woning, config),
+            current_phases, current_amp,
+        )
+        future = kader20_future
+        if category not in (1, 4, 8, 9) and not future:
+            future = kader_20.default_small_business_future(
+                current_phases, current_amp
+            )
+            if not future:
+                if feedback is not None:
+                    feedback.pushWarning(
+                        f"Kader 2.0 aansluiting {fid}: toekomstige zakelijke "
+                        "aansluitwaarde ontbreekt; herstel deze vóór clusteren."
+                    )
+                return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4, 8, 9) else doorlaat
+            future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, label, warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
             bouwjaar_raw, phases, amp, generation=False,
             explicit_type=kader20_type,
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
+            gas_category=normalize_gas(ld_gas_type),
+            current_phases=current_phases, current_amp=current_amp,
         )
         if warning and feedback is not None:
-            feedback.pushWarning(f"Kader 2.0 aansluiting {fid}: {warning} ({label})")
+            feedback.pushWarning(
+                f"Kader 2.0 aansluiting {fid}: {warning} ({label})"
+            )
         return float(value)
     fases, el_amp = parse_doorlaat(doorlaat)
     g_type = map_gebruiksdoel(gebruiksdoel, type_woning, config)
@@ -387,22 +400,33 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
 
 def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
-        category = map_gebruiksdoel(gebruiksdoel, type_woning, config)
         if is_bag_object(doorlaat) and (
             not has_residential_usage(gebruiksdoel)
             or clean_text(type_woning) in ("", "null", "none")
         ):
             return 0.0
-        if category not in (1, 4, 8, 9) and not kader20_future:
-            return 0.0
+        current_phases, current_amp = parse_doorlaat(doorlaat)
+        category = kader_20.classify_category(
+            map_gebruiksdoel(gebruiksdoel, type_woning, config),
+            current_phases, current_amp,
+        )
+        future = kader20_future
+        if category not in (1, 4, 8, 9) and not future:
+            future = kader_20.default_small_business_future(
+                current_phases, current_amp
+            )
+            if not future:
+                return 0.0
         phases, amp = parse_doorlaat(
-            kader20_future if category not in (1, 4, 8, 9) else doorlaat
+            future if category not in (1, 4, 8, 9) else doorlaat
         )
         value, _label, _warning = kader_20.current(
             config.get("NET_LEVEL", "trafo"), category, type_woning,
             bouwjaar_raw, phases, amp, generation=True,
             explicit_type=kader20_type,
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
+            gas_category=normalize_gas(ld_gas_type),
+            current_phases=current_phases, current_amp=current_amp,
         )
         return float(value)
     if is_bag_object(doorlaat):
