@@ -2458,10 +2458,7 @@ class LSNetontwerpDialog(QDialog):
         self.value_manual_group.setVisible(True)
         self.value_manual_checkbox.setChecked(False)
         self.value_unit_group.setVisible(not household)
-        gas_relevant = (
-            category == "Zakelijk"
-            and self._workflow_field_defaults().get("design_framework") != "2.0"
-        )
+        gas_relevant = category == "Zakelijk"
         self.value_gas_combo.setVisible(gas_relevant)
         self.value_gas_label.setVisible(gas_relevant)
         fill_unit_combo(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
@@ -2518,7 +2515,21 @@ class LSNetontwerpDialog(QDialog):
             category_note(category, key, self._workflow_field_defaults().get("design_framework"))
             + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast."
         )
-        currents = unit_currents(current_context(self), category, key, self.value_gas_combo.currentData())
+        current_service = None
+        if category == "Zakelijk":
+            layer = self._layer_from_combo(self.value_layer_combo)
+            selected = list(layer.selectedFeatures()) if layer is not None else []
+            if selected:
+                field = self._workflow_field_defaults().get(
+                    "field_passthrough", "service_connection_type_type"
+                )
+                index = layer.fields().lookupField(field)
+                if index >= 0:
+                    current_service = str(selected[0][index] or "")
+        currents = unit_currents(
+            current_context(self), category, key,
+            self.value_gas_combo.currentData(), current_service=current_service,
+        )
         if currents is not None:
             set_current_values(self._value_current_spins(), currents)
         elif category != "Huishoudelijk" and key is None:
@@ -3758,7 +3769,6 @@ class LSNetontwerpDialog(QDialog):
                 gas_category=(
                     self.value_gas_combo.currentData()
                     if category == "Zakelijk"
-                    and self._workflow_field_defaults().get("design_framework") != "2.0"
                     else None
                 ),
                 manual_override=self.value_manual_checkbox.isChecked(),
