@@ -6015,7 +6015,43 @@ def main(_automatic_retry: bool = False) -> None:
             "onderlinge kruisingen en T-aansluitingen worden gezamenlijk genood."
         )
     stations = gpd.read_file(STATIONS_PATH).to_crs(CRS_RD)
-    stations = include_pinned_stations(stations, globals().get("PINNED_NEW_STATIONS", []))
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # Never disguise a manually pinned NEW station as an existing one.
+        # The independent new-only Voronoi cannot treat it as an old source;
+        # require explicit review instead of silently mis-assigning users.
+        if globals().get("PINNED_NEW_STATIONS", []):
+            raise ValueError(
+                "De originele-richtingenmodus ondersteunt nog geen handmatig "
+                "vastgezette NIEUWE stations. Verwijder die vastzetting of "
+                "gebruik de gewone autocluster; bestaande stations mogen "
+                "geen nieuwe aansluitingen overnemen."
+            )
+        retired={
+            str(name).strip() for name
+            in globals().get("RETIRED_STATION_NAMES", set())
+        }
+        if retired:
+            name_field=required_column(
+                stations,("Stationsnaa","Stationsnaam","Station"),
+                "oorspronkelijk station",
+            )
+            excluded=stations[name_field].astype(str).str.strip().isin(retired)
+            if bool(excluded.any()):
+                log(
+                    f"Behoudmodus: {int(excluded.sum())} vervallen station(s) "
+                    "uit oorspronkelijke stationsbronnen verwijderd. "
+                    "Hun aansluitingen worden uitsluitend nieuwe clusters."
+                )
+                stations=stations.loc[~excluded].reset_index(drop=True)
+        if stations.empty:
+            raise ValueError(
+                "Er zijn geen actieve bestaande stations over. "
+                "Gebruik de gewone autocluster voor een volledig nieuw net."
+            )
+    else:
+        stations = include_pinned_stations(
+            stations, globals().get("PINNED_NEW_STATIONS", [])
+        )
     flat_cabinets = None
     if FLAT_CABINETS_PATH is not None:
         flat_cabinets = gpd.read_file(FLAT_CABINETS_PATH).to_crs(CRS_RD)
