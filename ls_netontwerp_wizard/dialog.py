@@ -122,6 +122,7 @@ BOOL_OPTIONS = {
     "only_plan": ("Alleen aansluitingen en stations binnen plangebied", True),
     "allow_external_routes": ("Kabelroutes buiten het plangebied toestaan", False),
     "automatic_stations": ("Aantal nieuwe stations automatisch", True),
+    "preserve_existing_directions": ("Bestaande stations en kabelgroepen exact behouden", False),
     "write_shapefiles": ("Ook losse shapefiles schrijven", False),
 }
 
