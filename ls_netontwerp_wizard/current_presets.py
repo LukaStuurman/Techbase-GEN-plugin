@@ -53,10 +53,14 @@ def fill_gas_combo(combo):
         combo.setItemData(index, QColor("black" if color == "#FFFF00" else "white"), foreground)
 
 
-def fill_unit_combo(combo, category):
+def fill_unit_combo(combo, category, framework_version=None):
     combo.blockSignals(True)
     combo.clear()
     for label, key, _doorlaat in UNIT_CHOICES.get(category, ()):
+        if category == "Zakelijk" and str(framework_version) == "2.0":
+            label = label.replace("Huidige aansluitwaarde:", "Toekomstige aansluitwaarde:")
+            if key in {"100", "125", "200"}:
+                label += " — overig, kaderwaarde ontbreekt"
         combo.addItem(label, key)
     combo.addItem("Zelf invullen", None)
     default = {"Zakelijk": "lt35", "Straatmeubilair": "straat25", "Oplaadpunt": "laad25"}.get(category)
