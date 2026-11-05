@@ -407,9 +407,15 @@ class LSNetontwerpDialog(QDialog):
         self.framework_combo.addItem(
             "Kader 3.1 (nieuwe straatmeubilairwaarden)", "3.1"
         )
+        self.framework_combo.addItem(
+            "Kader 2.0 (Excel 2.0: warmtepomp, toekomstwaarde zakelijk)", "2.0"
+        )
         self.framework_combo.setToolTip(
-            "Kader 3.1 wijzigt alleen de straatmeubilairstaffel. De overige "
-            "ontwerpstroomregels blijven gelijk aan de huidige pluginmethode."
+            "Kader 3.1 wijzigt alleen straatmeubilair. Kader 2.0 gebruikt eigen "
+            "Excelwaarden voor verbruik en opwek op trafo-/kabelniveau. "
+            "Kader 2.0 onderscheidt verwarmingssystemen; zonder expliciet "
+            "Kader20Type is bouwjaar slechts een aanname. Onbekende toekomstige "
+            "zakelijke waarden moeten handmatig worden gecontroleerd."
         )
         right_form.addRow("Ontwerpstroomkader", self.framework_combo)
         root.addWidget(basic)
@@ -3268,6 +3274,10 @@ class LSNetontwerpDialog(QDialog):
         ):
             return
         self.prepared_state = state
+        restored_framework = str(state["values"].get("design_framework", "3.0"))
+        restored_index = self.framework_combo.findData(restored_framework)
+        if restored_index >= 0:
+            self.framework_combo.setCurrentIndex(restored_index)
         self.plan_edit.setText(str(state["values"].get("plan", "")))
         self.no_plan.setChecked(not bool(state.get("plan_gpkg")))
         from .clustering_options import CLUSTER_KEYS
