@@ -89,12 +89,20 @@ def current_context(host):
     return module, values, *_configurations(values, module)
 
 
-def unit_currents(context, category, key, gas_category="G4/G6/Geen"):
+def unit_currents(context, category, key, gas_category="G4/G6/Geen", current_service=None):
     choice = next((row for row in UNIT_CHOICES.get(category, ()) if row[1] == key), None)
     if choice is None:
         return None
     module, values, standard, cable, opwek, opwek_cable = context
     doorlaat = choice[2]
+    if (
+        category == "Zakelijk"
+        and str(values.get("design_framework")) == "2.0"
+        and current_service
+    ):
+        # The future rating remains the selected preset. The gas advice
+        # instead uses the actual, separate CURRENT GEN connection.
+        doorlaat = current_service
     usage = {"Zakelijk": "bedrijf", "Oplaadpunt": "oplaadpunt", "Straatmeubilair": "straatmeubilair"}[category]
     gas = gas_category if category == "Zakelijk" else "G4/G6/Geen"
     one_phase = bool(values.get("one_phase_exception", True))
@@ -103,7 +111,7 @@ def unit_currents(context, category, key, gas_category="G4/G6/Geen"):
     # simply using it as the current GEN 'doorlaat' would now correctly be
     # rejected as an unspecified future rating (0 A).
     future = (
-        doorlaat if category == "Zakelijk"
+        choice[2] if category == "Zakelijk"
         and str(values.get("design_framework")) == "2.0" else None
     )
     kwargs = {"kader20_future": future} if future else {}
@@ -128,8 +136,8 @@ def category_note(category, key, framework=None):
         if key in {"100", "125", "200"}:
             return "Kader 2.0 Type 7: overig; de toekomstige ontwerpstroom is niet vastgelegd en vereist handmatige invoer"
         if key in {"160", "250"}:
-            return "Kader 2.0 Type 7: grootverbruik LS op toekomstige aansluitwaarde; gas heeft geen invloed"
-        return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde; gas heeft geen invloed"
+            return "Kader 2.0 Type 7: grootverbruik LS op toekomstige aansluitwaarde, met apart huidig gasadvies per trafo/kabel"
+        return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde, met apart huidig gasadvies per trafo/kabel"
     if category == "Zakelijk":
         if key in {"100", "125", "160", "200", "250"}:
             return "Type 9: Grootverbruik LS (eigen richting >3x80A)"
