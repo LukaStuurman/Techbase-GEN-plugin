@@ -30,7 +30,8 @@ from .existing_station_retention import (
 
 
 def prepare_retention(points, stations, original_cables, max_route_m, *,
-                      profile="both", installed_fuses=None):
+                      profile="both", installed_fuses=None,
+                      distribution_cabinets=None):
     """Read original Station+Kabel Subgroep per connection; no guessed groups.
 
     Unassigned/new connections are *not* put on an existing station.
@@ -65,15 +66,18 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
             "geldige volledige Kabel Subgroep gevonden. Controleer de "
             "Lovion/CSV-koppeling vóór deze behoudmodus."
         )
-    traced=trace_group_cables(points.loc[original],stations,original_cables,
-                              point_station_field=point_station,
-                              point_group_field=point_group)
+    traced=trace_group_cables(
+        points.loc[original],stations,original_cables,
+        point_station_field=point_station,point_group_field=point_group,
+        distribution_cabinets=distribution_cabinets,
+    )
     retained=retain_original(
         names,traced["connections"],traced["cables"],
         installed_fuses=installed_fuses,
         station_origins=traced["station_origins"],
         branch_roots=traced["branch_roots"],
         parent_routes=traced["parent_routes"],
+        feeder_parents=traced["feeder_parents"],
         profile=profile,max_route_m=max_route_m,
     )
     retained_ids=set(retained["behouden"])
@@ -84,11 +88,15 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         for edge_id in connection.edge_ids:
             routes[connection.station].add(edge_id)
         current=group_code(connection.group)
-        while parent_group(current) is not None:
+        while True:
+            parent=traced["feeder_parents"].get(
+                (connection.station,current),parent_group(current)
+            )
+            if parent is None:break
             routes[connection.station].update(
                 traced["parent_routes"][(connection.station,current)]
             )
-            current=parent_group(current)
+            current=parent
     physical_by_station={
         name:{eid:traced["edge_geometries"][eid] for eid in sorted(ids)}
         for name,ids in routes.items()
@@ -101,6 +109,17 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
             "Aansluiting":connection.id,
             "Orig_station":connection.station,
             "Kabel_Subgroep":connection.group,
+            "Via_verdeelkast":next(
+                (
+                    str(cabinet_id) for (name,group),cabinet_id
+                    in traced["cabinet_metadata"].items()
+                    if name==connection.station and
+                    (
+                        group==connection.group or
+                        parent_group(connection.group)==group
+                    )
+                ),""
+            ),
             "Besluit":"Behouden" if connection.id in retained_ids else "Vrijgegeven",
             "Reden":retained["redenen"].get(connection.id,""),
             "Trafo_verbruik_A":connection.trafo_verbruik_a,
@@ -121,6 +140,8 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         "physical_by_station":physical_by_station,
         "edge_geometries":traced["edge_geometries"],
         "retention":retained,
+        "cabinet_metadata":traced["cabinet_metadata"],
+        "feeder_parents":traced["feeder_parents"],
         "records":records,
         "unknown_stations":unknown_station,
         "missing_groups":missing_group,
