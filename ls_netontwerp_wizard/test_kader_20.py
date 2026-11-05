@@ -94,6 +94,10 @@ def main():
     for gas, current_amp, expected_trafo, expected_kabel in (
         ("G4/G6/Geen", 25, 8.7, 8.7),
         ("G4/G6/Geen", 40, 32, 32),
+        ("G4/G6/Geen", 100, 85, 85),
+        ("G4/G6/Geen", 125, 106, 106),
+        ("G4/G6/Geen", 160, 138, 138),
+        ("G4/G6/Geen", 200, 210, 210),
         ("G10-G25", 25, 44, 44),
         ("G10-G25", 40, 65, 65),
         ("G10-G25", 63, 138, 65),
