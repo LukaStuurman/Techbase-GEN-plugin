@@ -8,6 +8,7 @@ group-coded physical cable geometry.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from math import hypot, isfinite
 import re
@@ -44,9 +45,39 @@ def group_code(code):
 
 
 def parent_group(code):
+    """K01-00 = hoofdroute; K01-01/-02/-03 = aparte aftakkingen.
+
+    Do not invent a parent "K01" for K01-00: the main electrical route
+    is explicitly marked -00 in the 'Kabel Subgroep' source column.
+    Legacy un-suffixed codes remain valid standalone main directions.
+    """
     code = group_code(code)
-    match = re.match(r"^(.*)-(\d+)$",code)
-    return match.group(1) if match else None
+    match = re.fullmatch(r"(.+)-(\d{2})", code)
+    if match is None or match.group(2) == "00":
+        return None
+    return match.group(1) + "-00"
+
+
+def is_descendant_group(code, ancestor):
+    """Whether a full subgroup is electrically downstream from ancestor."""
+    current = parent_group(code)
+    while current is not None:
+        if current == ancestor:
+            return True
+        current = parent_group(current)
+    return False
+
+
+def direct_child_group(code, ancestor):
+    """Find the first subgroup between a descendant and its ancestor."""
+    current = group_code(code)
+    while True:
+        parent = parent_group(current)
+        if parent is None:
+            raise ValueError(f"Subgroep {code} ligt niet onder {ancestor}")
+        if parent == ancestor:
+            return current
+        current = parent
 
 
 def type_key(description):
@@ -236,12 +267,11 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             # Each child must have a verified physical path on THIS parent
             # group to its tap. Never add the child's length to the parent.
             children=sorted({
-                group_code(c.group).split(key[1]+"-",1)[1].split("-",1)[0]
+                direct_child_group(c.group,key[1])
                 for c in members
-                if c.group!=key[1] and c.group.startswith(key[1]+"-")
+                if c.group!=key[1] and is_descendant_group(c.group,key[1])
             })
-            for suffix in children:
-                child=key[1]+"-"+suffix
+            for child in children:
                 link_key=(key[0],child)
                 if parent_routes is None or link_key not in parent_routes:
                     raise ValueError(
@@ -299,17 +329,29 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         if not bad_groups and not bad_stations:
             break
         possibles=[c for c in connections if c.id in active and
-                   ((c.station,group_code(c.group)) in bad_groups or c.station in bad_stations)]
+                   (c.station in bad_stations or any(
+                       station == c.station and (
+                           group_code(c.group) == group
+                           or is_descendant_group(c.group,group)
+                       )
+                       for station,group in bad_groups
+                   ))]
         if not possibles:
             raise ValueError("Ongeldige richting/station kan niet door afschalen hersteld worden.")
         chosen=max(possibles,key=lambda c:(
-            (c.station,group_code(c.group)) in bad_groups,
+            any(station == c.station and (
+                group_code(c.group) == group
+                or is_descendant_group(c.group,group)
+            ) for station,group in bad_groups),
             max(c.kabel_verbruik_a,c.kabel_opwek_a,c.trafo_verbruik_a,c.trafo_opwek_a),
             sum(edge_by_id[x].length_m for x in c.edge_ids),c.id))
         active.remove(chosen.id)
         rejected[chosen.id]=(
             "Kabelrichting of bestaande kabellengte/type onvoldoende" if
-            (chosen.station,group_code(chosen.group)) in bad_groups else
+            any(station==chosen.station and (
+                group_code(chosen.group)==group
+                or is_descendant_group(chosen.group,group)
+            ) for station,group in bad_groups) else
             "Trafocapaciteit onvoldoende"
         )
     else:
