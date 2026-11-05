@@ -1,8 +1,10 @@
 # Techbase-GEN-plugin
 
-## Laatste versie: 1.31.0
+## Laatste versie: 1.31.1
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.0/ls_netontwerp_wizard-1.31.0.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.0)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.31.1/ls_netontwerp_wizard-1.31.1.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.31.1)
+
+**Nieuw in 1.31.1:** exact kleinere optimalisatiemodellen en vooraf overslaan van rekenkundig onmogelijke benuttingsniveaus. Bij Den Dungen krimpt het eerste model met 56%; de totale versnelfactor is nog niet vastgesteld. Capaciteits- en routevoorwaarden blijven behouden. [Tests en meting](CLUSTER_SPEED_VALIDATION.md).
 
 **Nieuw in 1.31.0:** buitenroutes standaard uit, herstelknoppen bij een netwerkfout met apart opgeslagen verbindingssleuven binnen het plangebied, bronstation → doelstation op de kaart en overige clusteracties achter Geavanceerd. Herstelt numeriek losgeraakte interne stationsverbindingen en controleert of een nieuw kabelgebied door bestaande capaciteit kan worden overgenomen. Gerichte QGIS-tests slagen; de volledige Den Dungen-herberekening is nog niet afgerond. [Gebruik en testbeperkingen](NETWORK_REPAIR_VALIDATION.md).
 

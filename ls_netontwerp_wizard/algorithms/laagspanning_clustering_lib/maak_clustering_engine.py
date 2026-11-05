@@ -1440,26 +1440,12 @@ def solve_facility_selection(
             f"Optimalisatie stationskeuze: minimale benutting "
             f"{min_utilization * 100:.0f}%..."
         )
-        result = milp(
-            c=objective,
-            integrality=np.concatenate(
-                [
-                    np.ones(x_count + candidate_count, dtype=np.uint8),
-                    np.zeros(deviation_count, dtype=np.uint8),
-                ]
-            ),
-            bounds=Bounds(
-                np.zeros(variable_count),
-                np.concatenate(
-                    [
-                        assignment_upper_bounds(distances),
-                        np.ones(candidate_count + deviation_count),
-                    ]
-                ),
-            ),
-            constraints=constraints,
-            options=milp_options(120, 0.01),
-        )
+        result = compact_assignment_milp(
+            objective,
+            np.concatenate([np.ones(x_count + candidate_count, dtype=np.uint8),
+                            np.zeros(deviation_count, dtype=np.uint8)]),
+            np.concatenate([assignment_upper_bounds(distances), np.ones(candidate_count + deviation_count)]),
+            constraints.A, constraints.lb, constraints.ub, milp_options(120, 0.01))
         if result.x is not None:
             x = result.x[:x_count].reshape(unit_count, station_count)
             selected = result.x[x_count : x_count + candidate_count] > 0.5
@@ -1486,6 +1472,23 @@ def solve_facility_selection(
     raise RuntimeError(
         f"Geen geldige selectie van {N_NEW} nieuwe stations gevonden"
     )
+
+
+def compact_assignment_milp(objective, integrality, upper_bounds, matrix, lower, upper, options):
+    """Eliminate only variables whose upper bound fixes them exactly to zero.
+
+    The full objective and constraint rows are unchanged. Restore the original
+    column layout before callers inspect the solution. This is exact variable
+    elimination, not candidate pruning or a relaxed network constraint.
+    """
+    active = np.flatnonzero(upper_bounds > 0.)
+    log(f'MILP-variabelen: {len(objective):,} -> {len(active):,}; onbereikbare toewijzingen exact verwijderd.')
+    result = milp(c=objective[active], integrality=integrality[active],
+                  bounds=Bounds(np.zeros(len(active)), upper_bounds[active]),
+                  constraints=LinearConstraint(matrix[:, active], lower, upper), options=options)
+    if result.x is not None:
+        expanded = np.zeros(len(objective));expanded[active] = result.x;result.x = expanded
+    return result
 
 
 def solve_fixed_assignment(
@@ -1523,7 +1526,14 @@ def solve_fixed_assignment(
         ]
     )
 
+    allowed = assignment_upper_bounds(distances).reshape(unit_count, station_count) > 0.
+    reachable_load = np.sum(allowed * loads[:, None], axis=0)
+    full_upper_bounds = np.concatenate([allowed.ravel().astype(float), np.ones(deviation_count)])
+    integrality = np.concatenate([np.ones(x_count, dtype=np.uint8), np.zeros(deviation_count, dtype=np.uint8)])
     for min_utilization in MIN_UTILIZATION:
+        if float(loads.sum()) + 1e-7 < float(capacities.sum()) * min_utilization or np.any(reachable_load + 1e-7 < capacities * min_utilization):
+            log(f'Definitieve benutting {min_utilization * 100:.0f}% rekenkundig onhaalbaar; optimalisatie veilig overgeslagen.')
+            continue
         lower = np.concatenate(
             [
                 np.ones(unit_count),
@@ -1538,23 +1548,8 @@ def solve_fixed_assignment(
             f"Definitieve toedeling: minimale benutting "
             f"{min_utilization * 100:.0f}%..."
         )
-        result = milp(
-            c=objective,
-            integrality=np.concatenate(
-                [
-                    np.ones(x_count, dtype=np.uint8),
-                    np.zeros(deviation_count, dtype=np.uint8),
-                ]
-            ),
-            bounds=Bounds(
-                np.zeros(variable_count),
-                np.concatenate(
-                    [assignment_upper_bounds(distances), np.ones(deviation_count)]
-                ),
-            ),
-            constraints=LinearConstraint(matrix, lower, upper),
-            options=milp_options(240, 0.005),
-        )
+        result = compact_assignment_milp(objective, integrality, full_upper_bounds,
+                                         matrix, lower, upper, milp_options(240, 0.005))
         if result.x is not None:
             assignment = np.argmax(
                 result.x[:x_count].reshape(unit_count, station_count), axis=1

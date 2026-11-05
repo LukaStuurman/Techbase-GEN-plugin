@@ -1,4 +1,14 @@
-# LS Netontwerp Wizard v1.31.0
+# LS Netontwerp Wizard v1.31.1
+
+## Kleiner optimalisatiemodel zonder versoepelde controles
+
+Stationskeuze en definitieve clustertoedeling verwijderen nu exact de variabelen die door de bestaande routevoorwaarden al verplicht nul zijn. Na berekening wordt de volledige indeling hersteld. De definitieve toedeling slaat bovendien benuttingsniveaus over die rekenkundig onmogelijk zijn op basis van totale of per station bereikbare belasting. Capaciteit, maximale routes, integrale toewijzing en latere netwerk-/gebiedscontroles blijven behouden.
+
+Den Dungen-productiemeting: **61.744 → 27.155 variabelen, 56% minder** in het eerste stationskeuzemodel. Twaalf aparte tests vergelijken het oorspronkelijke en compacte model en vinden exact dezelfde optimale doelwaarden; gerichte reken-, herstel- en pluginregressies slagen in QGIS 4.2.3. **De volledige nieuwe productieherberekening is nog niet afgerond; een totale versnelfactor is nog niet aangetoond.** [Meetwijze en beperkingen](https://github.com/LukaStuurman/Techbase-GEN-plugin/blob/main/CLUSTER_SPEED_VALIDATION.md).
+
+Installeer de ZIP en herstart QGIS. De versnelling werkt automatisch bij een nieuwe clustering.
+
+## Behouden uit v1.31.0
 
 ## Routes binnen het plangebied, herstel en eenvoudiger clustercorrectie
 
