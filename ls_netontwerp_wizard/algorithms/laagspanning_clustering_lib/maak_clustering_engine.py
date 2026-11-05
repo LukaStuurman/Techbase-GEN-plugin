@@ -7541,15 +7541,18 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - Belasting per aansluiting: het gevulde DBF-veld `{design_field_name}` op
   veldindex {design_field_index} (de bron bevat meerdere gelijk afgekorte namen).
 - Stationcapaciteit: KVA / 0,23 / 3.
-- Bij een status met meerdere KVA-waarden is de laatste waarde gebruikt; dit is
-  de waarde tussen haakjes (de verzwaring). Als er geen haakjes zijn, is de enige
-  aanwezige KVA-waarde gebruikt.
+- Bestaande stations: expliciete KVA krijgt voorrang; ontbreekt die, dan
+  wordt bestaande Max_A naar kVA omgerekend. Alleen zonder deze waarden wordt
+  de laatste numerieke capaciteit uit Status gelezen. Een station zonder
+  geldige capaciteit wordt niet fictief ingerekend.
 - Aantal nieuwe stations: {N_NEW} x {NEW_KVA:g} kVA. Het aantal is
   {'automatisch gekozen op de voorkeursbenutting' if AUTO_NEW_STATIONS else 'handmatig ingesteld'};
   de harde rekenkundige ondergrens op alleen capaciteit is {theoretical_new}.
-- Toedeling: capaciteitsbegrensde optimalisatie op kortste afstand over het
-  aangeleverde kabelnet. De oude `GebiedLabel`-indeling telt als lichte
-  continuiteitsvoorkeur, maar capaciteit en kabelafstand zijn leidend.
+- Toedeling: {'directe kabelverbonden Voronoi met vaste bestaande stations,
+  zonder voorafgaande MILP-solvers' if AUTO_NEW_STATIONS else
+  'exacte optimalisatie voor het handmatig opgegeven stationsaantal'}.
+  Harde capaciteit, maximale route en exclusief kabelnet blijven leidend.
+  De kaartgeometrie van routes volgt originele sleufsegmenten.
 - Voorkeursbenutting: zo dicht mogelijk bij {TARGET_UTILIZATION * 100:.1f}% per
   station. Dit is een optimalisatiedoel en geen harde grens; de totale belasting
   kan een hogere gemiddelde benutting noodzakelijk maken.
