@@ -123,6 +123,7 @@ def _make_noded_group(records, terminals):
             measures[ix].add(distance)
     graph=nx.Graph()
     edges=[]
+    geometries={}
     for i,line in enumerate(noded):
         boundaries=[0.,*sorted(measures[i]),float(line.length)]
         for a,b in zip(boundaries[:-1],boundaries[1:]):
@@ -148,6 +149,7 @@ def _make_noded_group(records, terminals):
             segment_id=f"g{len(edges):07d}"
             graph.add_edge(u,v,id=segment_id,length=float(part.length))
             edges.append((segment_id,u,v,matching[0],float(part.length)))
+            geometries[segment_id]=part
     if not graph.nodes:
         raise ValueError("Kabelgroep zonder knopen.")
     if not nx.is_forest(graph):
@@ -155,7 +157,7 @@ def _make_noded_group(records, terminals):
             "Bestaande kabelgroep bevat een lus: meerdere routes naar dezelfde "
             "aansluiting. Geen willekeurige route kiezen."
         )
-    return graph,edges,noded
+    return graph,edges,noded,geometries
 
 
 def trace_group_cables(points,stations,cables, *,
@@ -188,9 +190,21 @@ def trace_group_cables(points,stations,cables, *,
         name=str(row[sn] or "").strip()
         if name in station_geoms:raise ValueError(f"Dubbel station {name}")
         station_geoms[name]=row.geometry
+    relevant_groups=set()
+    for station,code in point_members:
+        while code:
+            relevant_groups.add(code)
+            code=parent_group(code)
     records=defaultdict(list)
     for index,row in cables.iterrows():
-        code=group_code(row[cg])
+        try:
+            code=group_code(row[cg])
+        except ValueError:
+            # Uncoded spare cables are never used as proof of a historic
+            # feeder. The required route itself must still trace completely.
+            continue
+        if code not in relevant_groups:
+            continue
         cable_type=type_key(row[ct])
         for part in _parts(row.geometry):
             records[code].append((part,cable_type))
@@ -241,6 +255,7 @@ def trace_group_cables(points,stations,cables, *,
     for station,group in sorted(pairs):
         all_groups.setdefault(group,[])
     physical=[]
+    edge_geometries={}
     result=[]
     origins={}
     roots={}
@@ -272,10 +287,12 @@ def trace_group_cables(points,stations,cables, *,
             limit=station_anchor_tolerance_m if main_station else terminal_tolerance_m
             _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {group}")
             corrected.append(pr)
-        graph,edge_rows,_noded=_make_noded_group(records[group],corrected)
+        graph,edge_rows,_noded,geo_by_edge=_make_noded_group(records[group],corrected)
         group_graphs[group]=(graph,edge_rows)
         for local_id,u,v,kind,length in edge_rows:
-            physical.append(Cable(group+"|"+local_id,group,str(u),str(v),kind,length))
+            unique_id=group+"|"+local_id
+            physical.append(Cable(unique_id,group,str(u),str(v),kind,length))
+            edge_geometries[unique_id]=geo_by_edge[local_id]
     edge_by_group={}
     for c in physical:edge_by_group.setdefault(c.group,{})[tuple(sorted((c.from_node,c.to_node)))]=c.id
     direction_roots={}
@@ -370,6 +387,7 @@ def trace_group_cables(points,stations,cables, *,
         "branch_roots":roots,
         "parent_routes":parent_routes,
         "point_id_to_index":point_id_to_index,
+        "edge_geometries":edge_geometries,
         "group_graphs":group_graphs,
         "point_members":point_members,
     }
