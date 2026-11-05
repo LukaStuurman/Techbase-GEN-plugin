@@ -283,6 +283,19 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
                 raise ValueError("Richting zonder werkelijk fysiek pad.")
             checked=[]
             used=set()
+            edge_consumers=defaultdict(set)
+            for consumer in members:
+                # The full Kabel Subgroep column supplies exact membership.
+                # Each consumer appears once on every shared upstream edge.
+                if consumer.group == key[1]:
+                    used_path=consumer.edge_ids
+                else:
+                    child=direct_child_group(consumer.group,key[1])
+                    if parent_routes is None or (consumer.station,child) not in parent_routes:
+                        raise ValueError(f"Bovenliggende route {key[1]} -> {child} ontbreekt.")
+                    used_path=parent_routes[(consumer.station,child)]
+                for edge_id in used_path:
+                    edge_consumers[edge_id].add(consumer.id)
             for path in paths:
                 path=tuple(path)
                 if not path:raise ValueError(f"Leeg fysiek pad voor {key}")
@@ -300,10 +313,29 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             limiting=min(checked,key=lambda row:row[1]["max_ontwerp_a"])[1]
             load=_maximum(members,"kabel")
             union=[edge_by_id[id] for id in sorted(used)]
+            by_id={c.id:c for c in members}
+            part_loads={
+                eid: _maximum([by_id[cid] for cid in sorted(consumer_ids)], "kabel")
+                for eid,consumer_ids in edge_consumers.items()
+            }
+            # Per-segment load does not include parallel branches downstream
+            # of another segment, and terminal-side portions remain distinct.
+            for eid,current in part_loads.items():
+                cap=CATALOG[type_key(edge_by_id[eid].type)][2]
+                if current>cap+1e-7:
+                    limiting_failure=True
+                    break
+            else:
+                limiting_failure=False
             direction[key]={
                 **limiting,
                 "belasting_a":load,
-                "pass":bool(limiting["gg_a"]) and load<=limiting["max_ontwerp_a"]+1e-7,
+                "pass":(
+                    bool(limiting["gg_a"]) and
+                    load<=limiting["max_ontwerp_a"]+1e-7 and
+                    not limiting_failure
+                ),
+                "deel_belasting_a":part_loads,
                 "length_m":worst_length,
                 "fysiek_uniek_m":sum(x.length_m for x in union),
                 "paden":len(paths),
