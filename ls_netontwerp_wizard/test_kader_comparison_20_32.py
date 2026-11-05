@@ -111,7 +111,9 @@ def test():
         DEFAULTS={"limit_fase":3,"limit_amp":40,"bouwjaar_grens":2022},
         TYPES={0:dict(fixed=0.,use_amp=True,use_woon=False,use_straat=False),
                10:dict(fixed=0.,use_amp=True,use_woon=False,use_straat=False)},
-        AMP_GLOBAL=amp_rows, REGEX_MAP=[], GEBRUIKS_MAP=[],
+        AMP_GLOBAL=amp_rows, REGEX_MAP=[],
+        GEBRUIKS_MAP=[(["oplaadpunt", "laadpunt"], 8),
+                      (["straatmeubilair"], 9)],
         GAS_ADVIES=[], WOONHUIS={}, WOONHUIS_2022={},
     )
     old = dict(base, FRAMEWORK_VERSION="3.1", NET_LEVEL="trafo")
