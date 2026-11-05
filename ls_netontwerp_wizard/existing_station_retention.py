@@ -227,7 +227,7 @@ def check_paths(connections, cables, station_origins=None, branch_roots=None):
 
 def retain_original(stations_a, connections, cables, *, installed_fuses=None,
                     station_origins=None, branch_roots=None,
-                    parent_routes=None, profile="both"):
+                    parent_routes=None, profile="both", max_route_m=None):
     """Best-effort conservative removal, never adds a foreign connection.
 
     Returns retained/released IDs and separate per-(station, full group) cable
@@ -242,6 +242,26 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         raise ValueError("Aansluit-ID's niet uniek.")
     check_paths(connections,cables,station_origins,branch_roots)
     edge_by_id={e.id:e for e in cables}
+    if max_route_m is not None and (
+        not isfinite(float(max_route_m)) or float(max_route_m)<=0
+    ):
+        raise ValueError("Maximale bestaande kabelroute moet positief zijn.")
+
+    def whole_path(connection):
+        """Physically traverse -00 then branch, never concatenate side branches."""
+        full=list(connection.edge_ids)
+        code=group_code(connection.group)
+        while parent_group(code):
+            if parent_routes is None or (connection.station,code) not in parent_routes:
+                raise ValueError(f"Oorspronkelijke bovenliggende route ontbreekt voor {code}.")
+            full=list(parent_routes[(connection.station,code)])+full
+            code=parent_group(code)
+        return tuple(full)
+
+    route_m={
+        c.id:sum(edge_by_id[eid].length_m for eid in whole_path(c))
+        for c in connections
+    }
     active={c.id for c in connections}
     rejected={}
     stations=set(stations_a)
@@ -358,10 +378,15 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         station,groups=states()
         bad_groups={k for k,x in groups.items() if not x["pass"]}
         bad_stations={k for k,x in station.items() if not x["pass"]}
-        if not bad_groups and not bad_stations:
+        if max_route_m is not None:
+            bad_route_ids={c.id for c in connections if c.id in active and
+                           route_m[c.id]>max_route_m+1e-7}
+        else:
+            bad_route_ids=set()
+        if not bad_groups and not bad_stations and not bad_route_ids:
             break
         possibles=[c for c in connections if c.id in active and
-                   (c.station in bad_stations or any(
+                   (c.id in bad_route_ids or c.station in bad_stations or any(
                        station == c.station and (
                            group_code(c.group) == group
                            or is_descendant_group(c.group,group)
@@ -371,14 +396,16 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
         if not possibles:
             raise ValueError("Ongeldige richting/station kan niet door afschalen hersteld worden.")
         chosen=max(possibles,key=lambda c:(
+            c.id in bad_route_ids,
             any(station == c.station and (
                 group_code(c.group) == group
                 or is_descendant_group(c.group,group)
             ) for station,group in bad_groups),
             max(c.kabel_verbruik_a,c.kabel_opwek_a,c.trafo_verbruik_a,c.trafo_opwek_a),
-            sum(edge_by_id[x].length_m for x in c.edge_ids),c.id))
+            route_m[c.id],c.id))
         active.remove(chosen.id)
         rejected[chosen.id]=(
+            "Bestaande station-aansluitingroute te lang" if chosen.id in bad_route_ids else
             "Kabelrichting of bestaande kabellengte/type onvoldoende" if
             any(station==chosen.station and (
                 group_code(chosen.group)==group
@@ -393,6 +420,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             "vrijgegeven":tuple(sorted(rejected)),
             "redenen":rejected,
             "stations":station,"richtingen":directions,
+            "route_m":route_m,
             "waarschuwingen":(
                 ["gG-afzekering niet uit inventaris bevestigd; adviezen zijn berekende maxima"]
                 if installed_fuses is None else []
