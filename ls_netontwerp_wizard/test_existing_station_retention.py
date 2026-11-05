@@ -46,6 +46,9 @@ def test():
     assert result["behouden"]==("b","m"),result
     assert result["richtingen"][("044.529","K01")]["length_m"]==185.,result
     assert result["richtingen"][("044.529","K01-01")]["length_m"]==160.,result
+    assert result["richtingen"][("044.529","K01")]["belasting_a"]==100.,result
+    assert result["richtingen"][("044.529","K01-01")]["belasting_a"]==40.,result
+    assert result["richtingen"][("044.529","K01")]["fysiek_uniek_m"]==185.,result
     assert result["stations"]["044.529"]["belasting_a"]==100.
 
     # Transformer and physical direction constraints both act as ceilings;
