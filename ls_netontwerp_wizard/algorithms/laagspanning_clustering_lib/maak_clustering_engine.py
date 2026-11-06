@@ -73,6 +73,7 @@ HISTORICAL_SCHEMA_SOURCES = {}
 HISTORICAL_OV_ROUTES = False
 RELEASE_UNVERIFIED_GROUPS = False
 END_MUFF_FIRST = True
+PLANNED_150AL_FEEDERS = False
 CREATE_QGIS_PROJECT = True
 TARGET_UTILIZATION = 0.90
 TARGET_UTILIZATION_PENALTY = 10_000.0
@@ -2605,6 +2606,7 @@ def build_exclusive_routes(
     source_nodes: list[tuple[float, float]],
     target_nodes: list[tuple[float, float]],
     unit_assignment: np.ndarray,
+    asset_geometry_collector=None,
 ) -> tuple[list[object], np.ndarray, np.ndarray]:
     node_index = {node: i for i, node in enumerate(node_list)}
     route_geometries: list[object] = []
@@ -2620,11 +2622,15 @@ def build_exclusive_routes(
         }
         owned_graph = graph.subgraph(owned_nodes)
         owned_node_count = owned_graph.number_of_nodes()
+        if not np.any(unit_assignment==station_index):
+            route_geometries.append(LineString());route_lengths.append(0.)
+            if asset_geometry_collector is not None:asset_geometry_collector[station_index]={}
+            continue
         if source not in owned_graph:
             raise RuntimeError("Station ontbreekt in het eigen kabeldeel")
-        predecessors, owned_distances = nx.dijkstra_predecessor_and_distance(
-            owned_graph, source, weight="weight"
-        )
+        from ls_netontwerp_wizard.reuse_first_routing import route_tree
+        station_targets = [target_nodes[i] for i in np.flatnonzero(unit_assignment == station_index)]
+        predecessors, owned_distances = route_tree(owned_graph,source,station_targets,MAX_ROUTE_M)
         edges: set[tuple[tuple[float, float], tuple[float, float]]] = set()
         targets = {
             target_nodes[i]
@@ -2647,6 +2653,12 @@ def build_exclusive_routes(
                 if guard > owned_node_count:
                     raise RuntimeError("Lus gedetecteerd in routeboom")
         lines = [graph_edge_line(graph, u, v) for u, v in edges]
+        if asset_geometry_collector is not None:
+            assets=defaultdict(list)
+            for u,v in edges:
+                asset=graph[u][v].get('source_asset_id') or graph[u][v].get('planned_cable_id')
+                if asset:assets[asset].append(graph_edge_line(graph,u,v))
+            asset_geometry_collector[station_index]={asset:unary_union(parts) for asset,parts in assets.items()}
         geometry = merge_linework(lines)
         route_geometries.append(geometry)
         route_lengths.append(float(sum(line.length for line in lines)))
@@ -6124,6 +6136,7 @@ def main(_automatic_retry: bool = False) -> None:
             station_enclosures.geometry.notna()
             & ~station_enclosures.geometry.is_empty
         ].reset_index(drop=True)
+    all_station_enclosures=station_enclosures.copy() if station_enclosures is not None else None
     distribution_cabinets = None
     if DISTRIBUTION_CABINETS_PATH is not None:
         distribution_cabinets = gpd.read_file(
@@ -6789,6 +6802,26 @@ def main(_automatic_retry: bool = False) -> None:
 
     if PRESERVE_EXISTING_DIRECTIONS:
         from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi,RetentionSeparationError
+        planned_main_segments=None;planned_obstacles=None;planned_obstacle_interiors=None
+        if PLANNED_150AL_FEEDERS:
+            planned_main_segments,planned_obstacles=prepare_planned_150al_corridors(
+                original_ls_cables,all_station_enclosures,plan_area,bool(ALLOW_EXTERNAL_ROUTES),bool(HISTORICAL_OV_ROUTES))
+            from shapely.prepared import prep
+            planned_obstacle_interiors=planned_obstacles.buffer(-.001)
+            planned_obstacle_check=prep(planned_obstacles)
+            planned_interior_check=prep(planned_obstacle_interiors)
+        site_parts=planned_main_segments if planned_main_segments else station_placement_parts
+        site_main_tree=STRtree(site_parts) if site_parts else None
+        site_service_tree=STRtree(connection_exclusion_parts) if connection_exclusion_parts else None
+        def preserved_station_site(xy):
+            array=np.asarray([xy],dtype=float);point=Point(xy)
+            if point_tree.query(array)[0][0]<NEW_STATION_POINT_CLEARANCE_M:return False
+            if site_main_tree is None or site_parts[int(site_main_tree.nearest(point))].distance(point)>.08:return False
+            if planned_obstacles is not None and planned_obstacle_check.covers(point):return False
+            if site_service_tree is not None and connection_exclusion_parts[int(site_service_tree.nearest(point))].distance(point)<NEW_STATION_CONNECTION_CABLE_CLEARANCE_M:return False
+            if excluded_station_mask(array,globals().get('EXCLUDED_STATION_AREAS',[]))[0]:return False
+            if plan_area is not None and not buffered_plan.covers(Point(xy)):return False
+            return True
         for separation_attempt in range(len(points)+1):
             try:
                 preserved_solution = solve_locked_voronoi(
@@ -6797,6 +6830,10 @@ def main(_automatic_retry: bool = False) -> None:
                     station_node_indices, regular_node_indices, original_info,
                     new_capacity, MAX_ROUTE_M,
                     solve_greedy_voronoi_connected_assignment, log,
+                    placement_check=preserved_station_site,
+                    planned_main_segments=planned_main_segments,
+                    planned_connection_check=(lambda line: not planned_interior_check.intersects(line) or line.intersection(planned_obstacle_interiors).length<=1e-6) if planned_obstacles is not None else None,
+                    protected_equipment=unary_union(list(all_station_enclosures.geometry)) if PLANNED_150AL_FEEDERS and all_station_enclosures is not None else None,
                 )
                 break
             except RetentionSeparationError as exc:
@@ -6820,6 +6857,32 @@ def main(_automatic_retry: bool = False) -> None:
                 pd.DataFrame(original_info['records']).to_csv(OUT/'bestaande_stations_kabelgroepen_controle.csv',
                     sep=';',decimal=',',index=False,encoding='utf-8-sig')
         else:raise ValueError('Fysieke scheiding kon niet worden afgerond.')
+        # Distinct GEN conductors can share physical XY while remaining
+        # electrically separate. Keep the exact circuit graph returned by
+        # preservation through route construction and all final checks.
+        original_node_count=len(node_list)
+        graph=preserved_solution.get('model_graph',graph)
+        node_list=preserved_solution.get('model_nodes',node_list)
+        if len(node_list)>original_node_count:
+            previous_index=node_index
+            placement_tree=cKDTree(np.asarray(node_list[:original_node_count],dtype=float))
+            component_extension=[]
+            for node in node_list[original_node_count:]:
+                # This lookup classifies the placement surface only; it
+                # never adds an electrical link between the circuit nodes.
+                index=previous_index.get(tuple(node))
+                if index is None:index=int(placement_tree.query(np.asarray(node,dtype=float))[1])
+                component_extension.append(graph_component_by_node_index[index])
+            graph_component_by_node_index=np.concatenate([graph_component_by_node_index,component_extension])
+        node_index={node:i for i,node in enumerate(node_list)}
+        node_xy=np.asarray(node_list,dtype=float)
+        adjacency=nx.to_scipy_sparse_array(graph,nodelist=node_list,weight='weight',format='csr',dtype=float)
+        unit_node_indices=preserved_solution.get('unit_node_indices',unit_node_indices)
+        unit_nodes=[node_list[int(i)] for i in unit_node_indices]
+        point_node_indices=unit_node_indices[point_to_unit]
+        point_nodes=[node_list[int(i)] for i in point_node_indices]
+        circuit_audit=preserved_solution.get('circuit_audit',{})
+        (OUT/'gescheiden_bronkabels_controle.json').write_text(json.dumps(circuit_audit,ensure_ascii=False,indent=2),encoding='utf-8')
         existing_count = len(stations)
         final_assignment = preserved_solution["assignment"]
         node_cluster = preserved_solution["node_cluster"]
@@ -7467,7 +7530,52 @@ def main(_automatic_retry: bool = False) -> None:
     )
     station_snap_xy = np.asarray(source_nodes, dtype=float)
 
+    designed_station_routes={}
+    if PRESERVE_EXISTING_DIRECTIONS and PLANNED_150AL_FEEDERS:
+        from ls_netontwerp_wizard.planned_direction_design import design_station_directions,direction_design_graph
+        from shapely.geometry import mapping
+        direction_rows=[];direction_features=[];direction_open={};over_ports=[]
+        unit_cable_values=[]
+        for column in ('Orig_Kabel_Verbruik','Orig_Kabel_Opwek'):
+            if column not in points:raise ValueError('Afzonderlijke oorspronkelijke kabelstromen ontbreken: '+column)
+            values=pd.to_numeric(points[column],errors='coerce').to_numpy(dtype=float)
+            if not np.isfinite(values).all() or np.any(values<0):raise ValueError('Ongeldige kabelstromen: '+column)
+            unit_cable_values.append(np.bincount(point_to_unit,weights=values,minlength=len(groups)))
+        design_owners=dict(zip(node_list,map(int,node_cluster)))
+        for station_index in range(existing_count,len(source_nodes)):
+            own=direction_design_graph(graph,design_owners,station_index)
+            designed_station_routes[station_index]=dict(lines=[],assets=defaultdict(list),length=0.,distances={})
+            station_design=designed_station_routes[station_index]
+            targets={int(u):unit_nodes[u] for u in np.flatnonzero(final_assignment==station_index)}
+            design=design_station_directions(own,source_nodes[station_index],targets,*unit_cable_values,
+                max_route_m=MAX_ROUTE_M,geometry_check=(lambda line:not planned_interior_check.intersects(line) or line.intersection(planned_obstacle_interiors).length<=1e-6))
+            direction_open.update(design['unresolved'])
+            if not design['ports_within_ten']:over_ports.append(station_index)
+            for number,bucket in enumerate(design['directions'],1):
+                assessment=bucket['assessment']
+                row={k:v for k,v in assessment.items() if k!='edges'}
+                row.update(Station=cluster_names[station_index],Richting=number,Aansluitingen=len(bucket['units']))
+                direction_rows.append(row)
+                for _edge,(u,v,planned) in assessment['edges'].items():
+                    data=own[u][v]
+                    line=data['route_geometry'];station_design['lines'].append(line)
+                    station_design['length']+=line.length
+                    asset=f'ONTWERP-{station_index}-R{number}' if planned else data.get('source_asset_id')
+                    if asset:station_design['assets'][asset].append(line)
+                    direction_features.append(dict(type='Feature',geometry=mapping(data['route_geometry']),properties=dict(
+                        Station=cluster_names[station_index],Richting=number,Status='Nieuwe 150Al' if planned else 'Hergebruik LS',
+                        Bron_kabel_ID=None if planned else data.get('source_asset_id'),
+                        Ontwerp_kabel_ID=f'{station_index}-R{number}' if planned else None)))
+                for unit,path in bucket['unit_paths'].items():
+                    station_design['distances'][unit]=sum(float(own[u][v].get('physical_length',own[u][v].get('weight',0.)))*float(own[u][v].get('calculation_factor',1.)) for u,v in path)
+        pd.DataFrame(direction_rows).to_csv(OUT/'nieuwe_richtingen_controle.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+        (OUT/'nieuwe_richtingen_ontwerp.geojson').write_text(json.dumps(dict(type='FeatureCollection',
+            crs=dict(type='name',properties=dict(name='EPSG:28992')),features=direction_features),ensure_ascii=False),encoding='utf-8')
+        (OUT/'nieuwe_richtingen_open.json').write_text(json.dumps(dict(aansluitingen=direction_open,stations_meer_dan_tien_richtingen=over_ports),ensure_ascii=False,indent=2),encoding='utf-8')
+        if direction_open or over_ports:
+            raise ValueError(f'Nieuw richtingontwerp niet passend: {len(direction_open)} aansluitingen zonder getoetste richting; {len(over_ports)} stations vragen meer dan tien voedende richtingen. Zie richtingcontrole; geen gevalideerd clusterresultaat.')
     log("Exclusieve kabelroutes binnen elk eigen kabeldeel afleiden...")
+    route_asset_geometries={}
     route_geometries, route_lengths, unit_route_m = build_exclusive_routes(
         graph,
         node_list,
@@ -7475,8 +7583,30 @@ def main(_automatic_retry: bool = False) -> None:
         source_nodes,
         unit_nodes,
         final_assignment,
+        asset_geometry_collector=route_asset_geometries if PRESERVE_EXISTING_DIRECTIONS else None,
     )
+    for station_index,design in designed_station_routes.items():
+        route_geometries[station_index]=merge_linework(design['lines'])
+        route_lengths[station_index]=design['length']
+        route_asset_geometries[station_index]={asset:unary_union(parts) for asset,parts in design['assets'].items()}
+        for unit,distance in design['distances'].items():unit_route_m[unit]=distance
     if PRESERVE_EXISTING_DIRECTIONS:
+        # Service evidence remains visible even though its graph transit was
+        # removed and its electrical calculation length is zero.
+        planned_audit=preserved_solution.get('planned_feeders',{})
+        for transfer in planned_audit.get('transfers',[]):
+            owners={int(final_assignment[u]) for u in transfer['units']}
+            if len(owners)!=1 or min(owners)<existing_count:
+                raise RuntimeError('Een ondeelbare aansluitkabel is over meerdere voedingen verdeeld.')
+            owner=next(iter(owners))
+            service_parts=list(transfer.get('service_geometries',{}).values())
+            route_geometries[owner]=merge_linework([route_geometries[owner],*service_parts])
+            # Physical inventory includes services; the 850 m route measure
+            # and the electrical path length remain unchanged.
+            route_lengths[owner]+=sum(part.length for part in service_parts)
+            for asset,part in transfer.get('service_geometries',{}).items():
+                current=route_asset_geometries[owner].get(asset)
+                route_asset_geometries[owner][asset]=part if current is None else unary_union([current,part])
         # Show the real original cable segment geometries and lengths
         # determined from Kabel Subgroep, never a rounded or inferred route.
         original_route_distance_by_point = {
@@ -7490,6 +7620,10 @@ def main(_automatic_retry: bool = False) -> None:
             )
             exact_linework = merge_linework(physical)
             route_geometries[old_index] = exact_linework
+            assets=defaultdict(list)
+            for eid,line in original_info['physical_by_station'].get(station_name,{}).items():
+                for asset in original_info.get('edge_source_assets',{}).get(eid,()):assets[asset].append(line)
+            route_asset_geometries[old_index]={asset:unary_union(parts) for asset,parts in assets.items()}
             route_lengths[old_index] = float(sum(line.length for line in physical))
             for unit_index in np.flatnonzero(final_assignment==old_index):
                 retained_points = [
@@ -7524,23 +7658,46 @@ def main(_automatic_retry: bool = False) -> None:
         f"Routecontrole: langste station-aansluitingroute {longest_route:.1f} m "
         f"(maximum {MAX_ROUTE_M:.1f} m)."
     )
+    shared_traces=[]
+    if PRESERVE_EXISTING_DIRECTIONS:
+        from ls_netontwerp_wizard.existing_residual_circuits import distinct_conductor_overlap
+        for first in range(len(route_geometries)):
+            for second in range(first+1,len(route_geometries)):
+                shared=route_geometries[first].intersection(route_geometries[second])
+                if shared.length<=1e-6:continue
+                if not distinct_conductor_overlap(shared,route_asset_geometries.get(first,{}),route_asset_geometries.get(second,{})):
+                    raise RuntimeError(f'Kabelroutes {first} en {second}: gedeeld tracé zonder bewijs van afzonderlijke bronkabels ({shared.length:.2f} m).')
+                shared_traces.append(dict(Cluster_1=cluster_names[first],Cluster_2=cluster_names[second],Gedeeld_trace_m=shared.length,
+                    Controle='Afzonderlijke bron- of expliciete ontwerpkabel-ID\'s; geen gedeelde geleider'))
+        pd.DataFrame(shared_traces,columns=['Cluster_1','Cluster_2','Gedeeld_trace_m','Controle']).to_csv(
+            OUT/'gedeelde_traces_afzonderlijke_kabels.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+    def indicative_cable_areas():
+        areas=[]
+        for i,route in enumerate(route_geometries):
+            parts=[route.buffer(2.)] if not route.is_empty else []
+            parts.extend(Point(xy).buffer(2.) for xy in point_xy[point_assignment==i])
+            area=unary_union(parts) if parts else Point(station_display_xy[i]).buffer(.25)
+            if plan_area is not None:area=area.intersection(plan_area)
+            areas.append(area)
+        return areas
+    indicative_areas=bool(shared_traces)
     log("Clustergebieden vanuit de dichtstbijzijnde exclusieve kabels maken...")
-    cluster_polygons, _ = make_cable_based_cluster_polygons(
-        route_geometries,
-        point_xy,
-        node_xy[point_node_indices],
-        point_assignment,
-        station_display_xy,
-        station_snap_xy,
-        len(capacities),
-        plan_area,
-        allow_external_routes=bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
-    )
+    if indicative_areas:
+        cluster_polygons=indicative_cable_areas()
+        log('Aparte bronkabels delen een tracé: gebieden zijn indicatieve kabelcorridors. Elektrische exclusiviteit blijft op kabel-ID gecontroleerd.')
+    else:
+        cluster_polygons, _ = make_cable_based_cluster_polygons(
+            route_geometries,point_xy,node_xy[point_node_indices],point_assignment,
+            station_display_xy,station_snap_xy,len(capacities),plan_area,
+            allow_external_routes=bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     disconnected = [
         index
         for index, polygon in enumerate(cluster_polygons)
-        if invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
+        if not indicative_areas and invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     ]
+    if disconnected and PRESERVE_EXISTING_DIRECTIONS:
+        cluster_polygons=indicative_cable_areas();indicative_areas=True;disconnected=[]
+        log('Oorspronkelijke aansluitingen blijven vast: geografische weergave als indicatieve kabelgebieden; elektrische verbindingen blijven afzonderlijk bewezen.')
     if disconnected:
         # Keep the exact failure geometry. Inputs alone are insufficient to
         # reproduce a solver-dependent boundary fault without another long run.
@@ -7581,7 +7738,7 @@ def main(_automatic_retry: bool = False) -> None:
             shared_length = route_geometries[first].intersection(
                 route_geometries[second]
             ).length
-            if shared_length > 1e-6:
+            if shared_length > 1e-6 and not PRESERVE_EXISTING_DIRECTIONS:
                 raise RuntimeError(
                     f"Kabelroutes {first} en {second} delen {shared_length:.2f} m"
                 )
@@ -7750,6 +7907,7 @@ def main(_automatic_retry: bool = False) -> None:
         "Buitenplan_toegestaan": bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
     }
     areas = gpd.GeoDataFrame(common_summary, geometry=cluster_polygons, crs=CRS_RD)
+    areas['Gebiedstype']='Indicatief kabelgebied' if indicative_areas else 'Kabelgebaseerd stationsgebied'
     routes = gpd.GeoDataFrame(
         common_summary, geometry=route_geometries, crs=CRS_RD
     )
@@ -8110,7 +8268,7 @@ brongegevens aanwezig en moeten vóór uitvoering technisch worden getoetst.
 def export_end_muffs(info,out,crs):
     """Reviewable proposals on verified source vertices, never installed assets."""
     proposals=info['retention'].get('eindmof_voorstellen',[])
-    columns=['Station','Kabel_Subgroep','Kabeldeel','Voorstel_knoop','Reden',
+    columns=['Station','Kabel_Subgroep','Kabeldeel','Voorstel_knoop','Reden','Voorstel_type','OV_continuiteit_controleren',
              'Vrijgegeven_aansluitingen','Status','Behoudbaar_voortraject','Actueel_voorstel','X','Y']
     pd.DataFrame(proposals,columns=columns).to_csv(
         out/'eindmof_voorstellen.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
@@ -8123,6 +8281,50 @@ def export_end_muffs(info,out,crs):
     result=dict(type='FeatureCollection',features=features)
     if crs is not None:result['crs']=dict(type='name',properties=dict(name=str(crs)))
     (out/'eindmof_voorstellen.geojson').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+
+
+def prepare_planned_150al_corridors(source_main,station_areas,plan_area,allow_external,allow_ov):
+    """New design follows source main corridors and avoids known buildings."""
+    from ls_netontwerp_wizard.existing_group_trace import source_cable_in_service
+    from shapely.prepared import prep
+    frame=source_main.to_crs(CRS_RD).copy()
+    frame=frame.loc[[source_cable_in_service(row) for _,row in frame.iterrows()]]
+    function=next((c for c in ('Function','function','omschrijving') if c in frame),None)
+    if function:
+        values=frame[function].fillna('').astype(str).str.upper()
+        frame=frame.loc[values.str.contains('LS') | (values.str.contains('OV') if allow_ov else False)]
+    if frame.empty:raise ValueError('Geen hoofdkabeltracés voor nieuwe 150Al-aanlopen beschikbaar.')
+    if BAG_BUILDINGS_PATH is None:
+        raise ValueError('Nieuwe 150Al-aanlopen vragen BAG-pandgeometrie; de lokale pandenbron ontbreekt.')
+    buildings=_load_local_bag_buildings(tuple(frame.total_bounds))
+    if buildings.empty:raise ValueError('Lokale pandengeometrie is leeg; nieuwe kabels kunnen niet op pandcontact worden gecontroleerd.')
+    masks=list(buildings.geometry)
+    if station_areas is not None:masks.extend(station_areas.geometry)
+    tree=STRtree(masks);obstacles=unary_union(masks)
+    def clipped(geometries):
+        parts=[]
+        for geometry in geometries:
+            if geometry is None or geometry.is_empty:continue
+            if plan_area is not None and not allow_external:geometry=geometry.intersection(plan_area)
+            hits=tree.query(geometry,predicate='intersects')
+            if len(hits):geometry=geometry.difference(unary_union([masks[int(i)] for i in hits]))
+            parts.extend(line_parts(geometry))
+        return parts
+    source_parts=clipped(frame.geometry)
+    main=gpd.GeoDataFrame({'Rekenfactor':[1.]*len(source_parts)},geometry=source_parts,crs=CRS_RD)
+    empty=gpd.GeoDataFrame(geometry=[],crs=CRS_RD)
+    noded=node_cable_network(main,empty,empty,NODE_TOLERANCE_M)
+    # Newly proposed T-junction repairs must also stay out of the masks.
+    parts=clipped(noded.geometry)
+    inside=obstacles.buffer(-.001);inside_check=prep(inside)
+    bad=sum(part.intersection(inside).length for part in parts if inside_check.intersects(part))
+    if bad>.01:raise ValueError(f'Nieuwe 150Al-corridor loopt {bad:.3f} m door pand/stationinterieur.')
+    (OUT/'nieuwe150_broncontrole.json').write_text(json.dumps(dict(
+        source_main_features=len(frame),building_features=len(buildings),corridor_parts=len(parts),
+        new_cable_type='150AL',interior_overlap_m=bad,source='Bestaande hoofdkabeltracés; nieuw aan te leggen kabel',
+        physical_layout_status='Concept; BGT, eigendom, bomen en uitvoeringsruimte afzonderlijk controleren'),ensure_ascii=False,indent=2),encoding='utf-8')
+    log(f'Nieuwe 150Al: {len(parts)} kandidaat-tracédelen, {len(buildings)} panden en bestaande stationomtrekken beschermd. Dit zijn nieuwe ontwerpkabels, geen GEN-bronkabels.')
+    return parts,obstacles
 
 
 if __name__ == "__main__":

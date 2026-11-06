@@ -29,6 +29,17 @@ def test():
     partial=prepare_review_retention(sibling,s,c,850.)
     assert partial['retained_by_index']=={0:'S'},partial
     assert set(partial['verification_failures'])=={1},partial
+    # The missing branch attachment error mentions its healthy -00 parent.
+    # Only the failing -01 direction may be released from original supply.
+    import pandas as pd
+    branch_points=sibling.copy();branch_points.loc[1,'geometry']=Point(160,20)
+    bad_branch=c.copy();bad_branch['Kabel Subgroep']='K01-01'
+    bad_branch.geometry=[LineString([(140,20),(160,20)])]
+    wires=gpd.GeoDataFrame(pd.concat([c,bad_branch],ignore_index=True),crs=c.crs)
+    partial=prepare_review_retention(branch_points,s,wires,850.)
+    assert partial['retained_by_index']=={0:'S'},partial
+    assert set(partial['verification_failures'])=={1},partial
+    assert 'Aftakking' in partial['verification_failures'][1],partial
     all_bad=p.copy();all_bad['Kabel Subgroep']='B01-00'
     empty=prepare_review_retention(all_bad,s,c,850.)
     assert not empty['retained_by_index'] and not empty['physical_by_station']

@@ -1131,6 +1131,7 @@ class WorkflowRunner:
                 "AANTAL_NIEUWE": self.v["manual_station_count"],
                 "HISTORISCH_SCHEMA_XML": self.v.get("retention_schema_xml", ""),
                 "HISTORISCHE_OV_ROUTES": self.v.get("historical_ov_routes", False),
+                "NIEUWE_150AL_AANLOOPKABELS": self.v.get("planned_150al_feeders", False),
                 "EINDMOF_EERST": self.v.get("end_muff_first", True),
                 "CONCEPT_ONZEKERE_RICHTINGEN": self.v.get("release_unverified_groups", False),
                 "HISTORISCH_SCHEMA_EXCEL": self.v.get("retention_schema_excel", ""),

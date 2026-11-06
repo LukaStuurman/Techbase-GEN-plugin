@@ -37,6 +37,11 @@ jobs:
         run: |
           python -m pip install "shapely>=2.0" "networkx>=3" "geopandas>=1.0" "scipy>=1.14"
           python ls_netontwerp_wizard/test_end_muff_first.py
+          python ls_netontwerp_wizard/test_residual_circuit_identity.py
+          python ls_netontwerp_wizard/test_planned_feeder_network.py
+          python ls_netontwerp_wizard/test_reuse_first_routing.py
+          python ls_netontwerp_wizard/test_planned_direction_design.py
+          python ls_netontwerp_wizard/test_new_feeder_validation.py
           python ls_netontwerp_wizard/test_existing_group_trace.py
           python ls_netontwerp_wizard/test_locked_original_autocluster.py
           python ls_netontwerp_wizard/test_existing_cabinet_feeders.py

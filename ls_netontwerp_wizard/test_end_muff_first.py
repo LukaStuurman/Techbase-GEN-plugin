@@ -105,6 +105,18 @@ def run():
     owners={nodes[0]:'S',nodes[1]:'T'};by=defaultdict(set,{'S':{nodes[0]},'T':{nodes[1]}});reserved={}
     reserve_station_zero_links(stationgraph,nodes,[0],['S'],owners,reserved,by)
     assert not reserved and owners[nodes[1]]=='T'
+    # Route-only OV and excluded service cables never receive a proposed LS
+    # end cap, even when transformer capacity forces a service transfer.
+    ov=Cable('ov','K01-00','s','light','6CU',100,electrical_check=False,ov_route=True)
+    result=retain([c('light',['ov'],40)],[ov],capacity=10)
+    assert not result['behouden'] and not result['eindmof_voorstellen'],result
+    assert 'OV-route' in result['redenen']['light']
+    lead=Cable('lead','K01-00','s','house','6CU',20,calculation_factor=0.,rating_available=False)
+    result=retain([c('house',['lead'],40)],[lead],capacity=10)
+    assert not result['eindmof_voorstellen'] and 'buiten rekenbibliotheek' not in result['redenen']['house'],result
+    combined=Cable('combined','K01-00','s','end','150AL',100,protect_ov=True)
+    result=retain([c('house',['combined'],40)],[combined],capacity=10)
+    assert result['eindmof_voorstellen'][0]['OV_continuiteit_controleren'],result
     print('END_MUFF_FIRST_TEST_OK (route, transformer, subtree, cabinet, unknown LS, no viable prefix)')
 
 if __name__=='__main__':run()

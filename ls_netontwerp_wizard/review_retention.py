@@ -40,6 +40,13 @@ def prepare_review_retention(points,stations,cables,max_route_m,logger=None,forc
             # Do not mask invalid station capacities, missing schema sources,
             # duplicate identities or coding/runtime errors as a cable issue.
             codes=re.findall(r'\b[A-Z][A-Z0-9._]*-\d{2}\b',message.upper())
+            # A diagnostic names both the failing branch and its healthy
+            # parent. Mentioning the parent is not evidence that it failed.
+            branch=re.search(r'Aftakking\s+[^/\s]+/([A-Z][A-Z0-9._]*-\d{2})',message,re.I)
+            station_group=re.search(r'Station\s+[^/\s]+/([A-Z][A-Z0-9._]*-\d{2}):',message,re.I)
+            if branch:codes=[branch.group(1).upper()]
+            elif station_group:codes=[station_group.group(1).upper()]
+
             names={str(points.loc[i,sf]).strip() for i in original&remaining}
             affected_names={n for n in names if n+'/' in message or 'station '+n.casefold() in message.casefold()}
             if not codes:
@@ -54,7 +61,7 @@ def prepare_review_retention(points,stations,cables,max_route_m,logger=None,forc
                 row=points.loc[i];name=str(row[sf]).strip()
                 if affected_names and name not in affected_names:continue
                 groups=group_codes(row[gf])
-                belongs=any(g in bad or upstream_bad.intersection(schema.get(name+'|'+base(g),[])[:-1]) for g in groups)
+                belongs=any(g in bad or base(g) in upstream_bad or upstream_bad.intersection(schema.get(name+'|'+base(g),[])[:-1]) for g in groups)
                 if belongs:dropped.append(i)
             if not dropped:raise
             for i in dropped:failures[int(i)]=message
@@ -84,4 +91,7 @@ def prepare_review_retention(points,stations,cables,max_route_m,logger=None,forc
             Kabel_opwek_A=current('Kabel opwek ontwerpstroom','Orig_Kabel_Opwek'),Bestaande_route_m=None,OV_controle_open=False))
     result['verification_failures']=failures
     if failures:result['retention']['waarschuwingen'].append(f'CONCEPT: {len(failures)} oorspronkelijke aansluitingen niet aantoonbaar te behouden; uitsluitend nieuwe stations toegestaan. Bron-/herontwerpcontrole blijft open.')
+    from .existing_residual_circuits import prepare_new_design_evidence
+    result['new_design_evidence']=prepare_new_design_evidence(points,cables,result,kwargs.get('flat_cabinets'),kwargs.get('schema_paths'))
+    if logger:logger(f"CONCEPT nieuw ontwerp: {len(result['new_design_evidence']['connections'])} lokale aansluiting-kabelrelaties bewezen; de historische stationsroute blijft onbewezen.")
     return result

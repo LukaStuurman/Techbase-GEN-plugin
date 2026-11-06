@@ -56,6 +56,19 @@ def _value(row, candidates):
     return ""
 
 
+def source_cable_ov_only(row):
+    marker=str(row.get('_Historisch_OV',False)).strip().casefold() in ('true','1')
+    function=_value(row,('Function','function','omschrijving')).upper()
+    return marker or ('OV' in function and 'LS' not in function)
+
+
+def source_cable_in_service(row):
+    """Never use explicitly retired/reserve source wires as active supply."""
+    status=_value(row,('cable_status','operational_status')).casefold()
+    compact=''.join(c for c in status if c.isalnum())
+    return not (compact.startswith(('buitenbedrijf','outofservice')) or 'schroot' in compact or compact in ('reserve','removed','verwijderd'))
+
+
 def required_column(frame, candidates, purpose):
     names={"".join(c for c in str(x).casefold() if c.isalnum()):x
            for x in frame.columns}
@@ -122,7 +135,7 @@ def _closest_unique(lines,point,limit,what):
     return index,lines[index].interpolate(lines[index].project(point))
 
 
-def _make_noded_group(records, terminals):
+def _make_noded_group(records, terminals, prefer_ls=False):
     """Build source-preserving undirected physical graph (no fabricated wire)."""
     source=[row[0] for row in records]
     typed_buffers=[(line.buffer(.012),_record_type(kind)) for line,kind in records]
@@ -152,6 +165,11 @@ def _make_noded_group(records, terminals):
             # Source match must contain the WHOLE segment and may not yield
             # conflicting cable types. A midpoint-only match is not enough.
             matching=[typed_buffers[int(j)][1] for j in buffer_tree.query(part,predicate='covered_by')]
+            if prefer_ls and len(set(matching))>1:
+                # An explicitly registered LS service is not on the separate
+                # OV conductor merely because both share drawing coordinates.
+                ls=[kind for kind in matching if not kind.startswith((OV_PREFIX,SERVICE_PREFIX+OV_PREFIX))]
+                if ls and all(kind in ls or kind.startswith((OV_PREFIX,SERVICE_PREFIX+OV_PREFIX)) for kind in matching):matching=ls
             if not matching or len(set(matching))!=1:
                 raise ValueError(
                     "Kabelgroep heeft een ongedefinieerd of conflicterend "
@@ -257,13 +275,14 @@ def trace_group_cables(points,stations,cables, *,
     # spare lines do not become evidence of a station's historical feeders.
     raw_records=defaultdict(list)
     for _index,row in cables.iterrows():
+        if not source_cable_in_service(row):continue
         try:
             code=group_code(row[cg])
         except ValueError:
             continue
         for part in _parts(row.geometry):
             kind=row[ct]
-            if str(row.get('_Historisch_OV',False)).strip().casefold() in ('true','1'):
+            if source_cable_ov_only(row):
                 kind=OV_PREFIX+str(kind)
             if str(row.get('_Aansluitkabel',False)).strip().casefold() in ('true','1'):
                 kind=SERVICE_PREFIX+str(kind)
@@ -631,6 +650,44 @@ def trace_group_cables(points,stations,cables, *,
     origins={}
     roots={}
     group_graphs={}
+    service_by_id=defaultdict(list)
+    service_by_flat=defaultdict(list)
+    for _,wire in cables.iterrows():
+        if not source_cable_in_service(wire):continue
+        if str(wire.get('_Aansluitkabel',False)).strip().casefold() not in ('true','1'):continue
+        ident=_value(wire,('id',))
+        if ident:service_by_id[ident].append(wire)
+        flat=_value(wire,('multistory_connection_id',))
+        if flat:service_by_flat[flat].append(wire)
+    point_channels={}
+    for pair,members in point_members.items():
+        for index,row in members:
+            reference=_value(row,('connection_cable_id',))
+            candidates=service_by_id.get(reference,[]) if reference else []
+            object_id=_value(row,('id',))
+            if len(candidates)==1:
+                reverse={v.strip() for v in re.split('[,;]',_value(candidates[0],('service_connections_id',))) if v.strip()}
+                if not object_id or object_id not in reverse:candidates=[]
+            if not candidates:
+                flat=_value(row,('Multistory','multistory_connection_id'))
+                candidates=[wire for wire in service_by_flat.get(flat,[]) if pair[1] in group_codes(_value(wire,GROUP_FIELDS))]
+            channel=None
+            if len(candidates)==1:
+                function=_value(candidates[0],('Function','function','omschrijving')).upper()
+                if 'LS' in function and 'OV' not in function:channel='LS'
+                elif 'OV' in function and 'LS' not in function:channel='OV'
+            point_channels[(index,pair[0],pair[1])]=channel
+    preferred_ls={}
+    for pair in all_groups:
+        channels=[]
+        for (station,group),members in point_members.items():
+            if station!=pair[0]:continue
+            current=group;seen=set()
+            while current is not None and current not in seen:
+                if current==pair[1]:
+                    channels.extend(point_channels[(index,station,group)] for index,_ in members);break
+                seen.add(current);current=feeder_parents.get((station,current),parent_group(current))
+        preferred_ls[pair]=bool(channels) and all(channel=='LS' for channel in channels)
     for (station,group),members in sorted(all_groups.items()):
         terminals=[row.geometry for _,row in members]
         child_junctions=[
@@ -657,7 +714,7 @@ def trace_group_cables(points,stations,cables, *,
             limit=station_anchor_tolerance_m if is_station_root else terminal_tolerance_m
             _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {station}/{group}")
             corrected.append(pr)
-        try:graph,edge_rows,_noded,geo_by_edge=_make_noded_group(rows,corrected)
+        try:graph,edge_rows,_noded,geo_by_edge=_make_noded_group(rows,corrected,prefer_ls=preferred_ls[(station,group)])
         except ValueError as exc:raise ValueError(f'Station {station}/{group}: {exc}') from exc
         group_graphs[(station,group)]=(graph,edge_rows)
         for local_id,u,v,kind,length in edge_rows:

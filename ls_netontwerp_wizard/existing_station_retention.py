@@ -133,6 +133,7 @@ class Cable:
     electrical_check: bool = True
     ov_route: bool = False
     rating_available: bool = True
+    protect_ov: bool = False
     def __post_init__(self):
         group_code(self.group)
         if self.calculation_factor not in (0.,1.):raise ValueError('Ongeldige kabelrekenfactor.')
@@ -350,9 +351,11 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             else:node=None;break
         end_muffs.append(dict(Station=connection.station,Kabel_Subgroep=edge.group,
             Kabeldeel=edge_id,Voorstel_knoop=node,Reden=reason,
+            Voorstel_type='LS-scheiding; OV-continuiteit behouden' if edge.protect_ov else 'Nieuwe eindmof LS',
+            OV_continuiteit_controleren=edge.protect_ov,
             Vrijgegeven_aansluitingen=tuple(sorted({c.source_id or c.id for c in removed}))))
     unknown_tokens={release_token(c) for c in connections
-                    if any(not edge_by_id[eid].rating_available for eid in whole_path(c))}
+                    if any(edge_by_id[eid].calculation_factor and edge_by_id[eid].electrical_check and not edge_by_id[eid].rating_available for eid in whole_path(c))}
     for c in connections:
         if release_token(c) in unknown_tokens:
             active.discard(c.id)
@@ -360,7 +363,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
     if end_muff_first:
         recorded=set()
         for c in connections:
-            first=next((eid for eid in whole_path(c) if not edge_by_id[eid].rating_available),None)
+            first=next((eid for eid in whole_path(c) if edge_by_id[eid].calculation_factor and edge_by_id[eid].electrical_check and not edge_by_id[eid].rating_available),None)
             if first and first not in recorded:
                 affected=[m for m in connections if first in whole_path(m)]
                 cut_proposal(c,first,'Eindmof vóór niet toetsbaar LS-kabeldeel; houdbaar voortraject eerst behouden',affected)
@@ -531,7 +534,9 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             # its own group. Cutting the overloaded parent first would discard
             # an otherwise viable upstream direction and sibling branches.
             physical=[eid for eid in whole_path(chosen) if edge_by_id[eid].calculation_factor]
-            candidates=physical or list(whole_path(chosen))
+            # OV is route evidence only. A displaced LS service is transferred
+            # without proposing a cut through the live lighting conductor.
+            candidates=physical if physical and not edge_by_id[physical[-1]].ov_route else []
             cut_edge=candidates[-1] if candidates else None
             tokens={release_token(c) for c in connections if c.id in active and cut_edge is not None and cut_edge in whole_path(c)}
             tokens.add(release_token(chosen))
@@ -549,6 +554,8 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             ) for station,group in bad_groups) else
             "Trafocapaciteit onvoldoende"
         )
+        if not cut_edge and end_muff_first:
+            reason+='; aansluiting overzetten, geen eindmof in aansluitkabel of OV-route'
         if cut_edge:
             cut_proposal(chosen,cut_edge,'Richting eerst afkappen bij eindmof: '+reason,
                          [c for c in connections if c.id in chosen_ids])

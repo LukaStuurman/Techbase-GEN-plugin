@@ -504,6 +504,8 @@ verzoek zichtbaar worden.
                 "HISTORISCH_SCHEMA_"+kind,self.tr(label),defaultValue="",optional=True))
         self.addParameter(QgsProcessingParameterBoolean("HISTORISCHE_OV_ROUTES",
             self.tr("Oorspronkelijke OV-routes voor gekoppelde aansluitingen toestaan en markeren"),defaultValue=False))
+        self.addParameter(QgsProcessingParameterBoolean("NIEUWE_150AL_AANLOOPKABELS",
+            self.tr("Waar nodig nieuwe 150Al-aanloopkabels langs hoofdkabeltracés voorstellen"),defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean("EINDMOF_EERST",
             self.tr("Eerst houdbaar voortraject met eindmof behouden bij overschrijding"),defaultValue=True))
         self.addParameter(QgsProcessingParameterBoolean("CONCEPT_ONZEKERE_RICHTINGEN",
@@ -1663,6 +1665,7 @@ verzoek zichtbaar worden.
             engine.AUTO_NEW_STATIONS = automatic_count
             engine.PRESERVE_EXISTING_DIRECTIONS = preserve_existing
             engine.HISTORICAL_OV_ROUTES=self.parameterAsBool(parameters,"HISTORISCHE_OV_ROUTES",context)
+            engine.PLANNED_150AL_FEEDERS=self.parameterAsBool(parameters,"NIEUWE_150AL_AANLOOPKABELS",context)
             engine.END_MUFF_FIRST=self.parameterAsBool(parameters,"EINDMOF_EERST",context)
             engine.RELEASE_UNVERIFIED_GROUPS=self.parameterAsBool(parameters,"CONCEPT_ONZEKERE_RICHTINGEN",context)
             engine.HISTORICAL_SCHEMA_SOURCES = {

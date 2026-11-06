@@ -28,6 +28,29 @@ def test():
     unrated=prepare_retention(p,s,unknown,110.)
     assert not unrated['retained_by_index']
     assert 'buiten rekenbibliotheek' in unrated['retention']['redenen']['a']
+    # An out-of-service parallel source feature must neither become supply
+    # nor create a false active cable-type ambiguity on the same corridor.
+    retired=cables.iloc[:1].copy();retired['Type']='95AL';retired['cable_status']='Buiten bedrijf schroot'
+    active=cables.copy();active['cable_status']='In bedrijf'
+    import pandas as pd
+    mixed=gpd.GeoDataFrame(pd.concat([active,retired],ignore_index=True),crs=cables.crs)
+    assert prepare_retention(p,s,mixed,110.)['retained_by_index']=={0:'S'}
+    # Explicit reciprocal LS service identity distinguishes the LS conductor
+    # from a separate coincident OV conductor. Never invent 6Cu LS ratings.
+    channel=p.copy();channel['id']='customer';channel['connection_cable_id']='service'
+    lines=cables.copy();lines['id']=['ls-main','service'];lines['master_asset_id']=['LS-asset','service-asset']
+    lines['Function']='LS';lines['cable_status']='In bedrijf';lines['service_connections_id']=['','customer']
+    ov_main=lines.iloc[:1].copy();ov_main['id']='ov-main';ov_main['master_asset_id']='OV-asset'
+    ov_main['Function']='OV';ov_main['Type']='6CU';ov_main['_Historisch_OV']=True
+    parallel=gpd.GeoDataFrame(pd.concat([lines,ov_main],ignore_index=True),crs=lines.crs)
+    resolved_channel=prepare_retention(channel,s,parallel,110.)
+    assert resolved_channel['retained_by_index']=={0:'S'}
+    main_edge=next(e for e,v in resolved_channel['edge_calculation_factors'].items() if v)
+    assert resolved_channel['edge_source_assets'][main_edge]==('LS-asset',),resolved_channel
+    broken=channel.copy();broken['connection_cable_id']='missing'
+    try:prepare_retention(broken,s,parallel,110.)
+    except ValueError as e:assert 'conflicterend' in str(e)
+    else:raise AssertionError('An unknown source channel was silently chosen as LS')
     # A finite zero current is a valid explicit input, not missing data.
     zero=p.copy()
     for field in ['Ontwerpstroom','Opwek ontwerpstroom','Ontwerpstroom kabel','Kabel opwek ontwerpstroom']:zero[field]=0.

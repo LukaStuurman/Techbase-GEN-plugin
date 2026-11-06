@@ -2,7 +2,7 @@
 from .existing_group_trace import _value
 from .existing_station_retention import group_codes
 
-def original_terminals(points,cabinets,cables=None,schema_paths=None):
+def original_terminals(points,cabinets,cables=None,schema_paths=None,*,require_station=True):
     result=points.copy();anchors={}
     cables=cables.copy() if cables is not None else None
     result['Orig_kabelgroepen_bron']=result['Kabel Subgroep']
@@ -17,7 +17,7 @@ def original_terminals(points,cabinets,cables=None,schema_paths=None):
         cabinet=index.get(ident)
         if cabinet is None:continue # original trace will reject unsupported geometry
         station=_value(row,('Station',))
-        if not station:continue
+        if require_station and not station:continue
         declared=set(group_codes(_value(row,('Kabel Subgroep',))))
         cabinet_codes=set(group_codes(_value(cabinet,('cable_subgroup','Kabel Subgroep'))))
         if not declared or not cabinet_codes or not declared.issubset(cabinet_codes):
