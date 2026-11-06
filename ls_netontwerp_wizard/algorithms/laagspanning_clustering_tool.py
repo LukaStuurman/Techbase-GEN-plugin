@@ -193,7 +193,7 @@ afzonderlijk beschreven inpandige appartementverbindingen hebben 0 m rekenlengte
 
 Kies bij 'Laagspanningskabels' de hoofdnetlaag en optioneel een aparte laag
 'Aansluitkabels'. Per laag kan de Function-kolom worden gekozen. In het
-woordenveld staan Ã©Ã©n of meer woorden die in Function moeten voorkomen;
+woordenveld staan één of meer woorden die in Function moeten voorkomen;
 standaard is dit `LS`. Scheid meerdere woorden met een komma of puntkomma. Als
 geen Function-kolom bestaat, wordt de volledige laag gebruikt. De gefilterde
 lijnen van beide lagen worden samengevoegd voordat het kabelnet wordt gemaakt.
@@ -305,7 +305,7 @@ verzoek zichtbaar worden.
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.BAG_PANDEN,
-                self.tr("BAG-pandgeometrieÃ«n (optioneel; hergebruik woningtypenlaag)"),
+                self.tr("BAG-pandgeometrieën (optioneel; hergebruik woningtypenlaag)"),
                 [QgsProcessing.TypeVectorPolygon],
                 optional=True,
             )
@@ -857,7 +857,7 @@ verzoek zichtbaar worden.
         """Keep a validated design usable if the optional layout worker fails."""
         from qgis.core import QgsProject, QgsReferencedRectangle, QgsRectangle
         project = QgsProject()
-        project.setTitle("LS-netontwerp â€” basisproject (layout ontbreekt)")
+        project.setTitle("LS-netontwerp — basisproject (layout ontbreekt)")
         tables = (("sleuven_genood", "Sleuven geknipt/genood"),
                   ("clustergebieden", "Clustergebieden"),
                   ("cluster_kabelroutes", "Kabelroutes per cluster"),

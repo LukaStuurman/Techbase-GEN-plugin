@@ -78,6 +78,33 @@ def run():
     try:_select_reserved_edges(graph,list(graph.nodes),overlap)
     except RetentionSeparationError:pass
     else:raise AssertionError('Shared physical old feeder was accepted')
+    # A flat's explicit terminal may use an already present indoor zero-metre
+    # graph link. Missing relation, counted cable or foreign ownership cannot
+    # be used as a shortcut to a reserved old feeder.
+    from collections import defaultdict
+    from ls_netontwerp_wizard.existing_locked_clustering import reserve_original_terminal_links
+    nodes=[(0.,0.),(7.,0.),(8.,0.)]
+    flatgraph=nx.Graph();flatgraph.add_edge(nodes[0],nodes[1],weight=1e-6,calculation_factor=0.)
+    flatgraph.add_edge(nodes[1],nodes[2],weight=1.,calculation_factor=1.)
+    info={'retained_by_index':{0:'S'},'equipment_terminals':{0:{'flatkast':'F','netanker_xy':nodes[0]}}}
+    owners={nodes[0]:'S'};reserved={};by=defaultdict(set)
+    reserve_original_terminal_links(flatgraph,nodes,[1],[0],info,owners,reserved,by)
+    assert owners[nodes[1]]=='S' and len(reserved)==1
+    for modified,target,initial in (
+        ({'retained_by_index':{0:'S'},'equipment_terminals':{}},1,{nodes[0]:'S'}),
+        (info,2,{nodes[0]:'S'}),
+        (info,1,{nodes[0]:'S',nodes[1]:'T'})):
+        owners=dict(initial);reserved={}
+        reserve_original_terminal_links(flatgraph,nodes,[target],[0],modified,owners,reserved,defaultdict(set))
+        assert not reserved,(modified,target,initial,reserved)
+    from ls_netontwerp_wizard.existing_locked_clustering import reserve_station_zero_links
+    stationgraph=nx.Graph();stationgraph.add_edge(nodes[0],nodes[1],weight=1e-6,calculation_factor=0.)
+    owners={nodes[0]:'S',nodes[1]:'S'};by=defaultdict(set,{'S':set(owners)});reserved={}
+    reserve_station_zero_links(stationgraph,nodes,[0],['S'],owners,reserved,by)
+    assert len(reserved)==1
+    owners={nodes[0]:'S',nodes[1]:'T'};by=defaultdict(set,{'S':{nodes[0]},'T':{nodes[1]}});reserved={}
+    reserve_station_zero_links(stationgraph,nodes,[0],['S'],owners,reserved,by)
+    assert not reserved and owners[nodes[1]]=='T'
     print('END_MUFF_FIRST_TEST_OK (route, transformer, subtree, cabinet, unknown LS, no viable prefix)')
 
 if __name__=='__main__':run()

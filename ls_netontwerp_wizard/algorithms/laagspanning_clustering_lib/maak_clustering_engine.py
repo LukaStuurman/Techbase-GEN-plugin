@@ -445,7 +445,7 @@ def _load_local_bag_buildings(
             f"gebruikt: {exc}. Controleer de laag 'Woningtypen BAG/3DBAG'."
         ) from exc
     log(
-        f"BAG woningtypenlaag: {len(buildings):,} lokale pandgeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n "
+        f"BAG woningtypenlaag: {len(buildings):,} lokale pandgeometrieën "
         "hergebruikt; geen nieuwe PDOK-aanvraag nodig."
     )
     return buildings
@@ -552,7 +552,7 @@ def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDat
     if buildings.empty:
         raise RuntimeError("De BAG OGC API gaf geen panden in het invoergebied terug")
     buildings = buildings.drop_duplicates(subset=["BAG_ID"]).reset_index(drop=True)
-    log(f"BAG OGC API: {len(buildings):,} actuele pandgeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n opgehaald.")
+    log(f"BAG OGC API: {len(buildings):,} actuele pandgeometrieën opgehaald.")
     return buildings
 
 BAG_POINT_TOLERANCE_M = 0.35
@@ -3368,7 +3368,7 @@ def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05)
     if (sum(p.area for p in repaired) - coverage.area > .001 or
             coverage.symmetric_difference(union).area > .001):
         raise RuntimeError("Clustergebiedsreparatie kon overlap of ontbrekende dekking niet veilig oplossen.")
-    log(f"Clustergrenzen topologisch hersteld: {overlap:.4f} mÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â² overlap over {disputed} grensvlak(ken) verdeeld; {transferred} leeg grensfragment(en) bij een buurgebied gevoegd.")
+    log(f"Clustergrenzen topologisch hersteld: {overlap:.4f} m² overlap over {disputed} grensvlak(ken) verdeeld; {transferred} leeg grensfragment(en) bij een buurgebied gevoegd.")
     return repaired
 
 
@@ -3975,7 +3975,7 @@ def recalculate_manual_assignment(
 
         if outside_area > 0.01:
             raise RuntimeError(
-                f"Clustergebieden vallen {outside_area:.2f} mÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â² buiten het plangebied"
+                f"Clustergebieden vallen {outside_area:.2f} m² buiten het plangebied"
             )
 
     point_counts = np.bincount(point_assignment, minlength=station_count)
@@ -5759,7 +5759,7 @@ def make_qgis_project(gpkg: Path) -> Path | None:
 
         north_arrow = QgsLayoutItemLabel(layout)
         north_arrow.setId("noordpijl")
-        north_arrow.setText("N\nÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“")
+        north_arrow.setText("N\n↑")
         north_font = QFont("Arial", 16)
         north_font.setBold(True)
         north_arrow.setFont(north_font)
@@ -5819,8 +5819,8 @@ def make_qgis_project(gpkg: Path) -> Path | None:
 
         source_label = QgsLayoutItemLabel(layout)
         source_label.setText(
-            "Achtergrond: ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© OpenStreetMap-bijdragers\n"
-            "CoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶rdinaten: RD New (EPSG:28992)"
+            "Achtergrond: © OpenStreetMap-bijdragers\n"
+            "Coördinaten: RD New (EPSG:28992)"
         )
         source_font = QFont("Arial", 6)
         source_label.setFont(source_font)
@@ -6834,7 +6834,7 @@ def main(_automatic_retry: bool = False) -> None:
         log(
             f"Autocluster behoudmodus: {N_NEW} nieuwe stations; "
             "bestaande stations zijn uitsluitend met hun oude aansluitingen "
-            "en echte Kabel Subgroep-tracÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s verbonden."
+            "en echte Kabel Subgroep-tracés verbonden."
         )
     else:
         legacy_new_labels = sorted(
@@ -7553,7 +7553,7 @@ def main(_automatic_retry: bool = False) -> None:
             _AUTO_GEOMETRY_RECOVERY_USED=True
             _AUTO_COUNTS_TRIED.clear()
             _AUTO_TOPOLOGY_MINIMUM_NEW=0
-            log('Losliggende clustergebieden gevonden. Exacte controlegeometrie bewaard; ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n automatische herstelpoging met alle kabelkandidaten. Alle route-, capaciteit- en gebiedscontroles blijven actief.')
+            log('Losliggende clustergebieden gevonden. Exacte controlegeometrie bewaard; één automatische herstelpoging met alle kabelkandidaten. Alle route-, capaciteit- en gebiedscontroles blijven actief.')
             return main(_automatic_retry=True)
         raise RuntimeError(
             "Exclaves aangetroffen in clusters: "
@@ -7904,7 +7904,7 @@ def main(_automatic_retry: bool = False) -> None:
         # or PDF export failure must not throw the valid design away.
         for filename in ("clustering_overzicht.png", "clustering_overzicht.pdf"):
             (OUT / filename).unlink(missing_ok=True)
-        warning = f"De clustering is berekend, maar de overzichtskaart kon niet worden geÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«xporteerd: {exc}"
+        warning = f"De clustering is berekend, maar de overzichtskaart kon niet worden geëxporteerd: {exc}"
         (OUT / "clustering_waarschuwingen.json").write_text(json.dumps([warning], ensure_ascii=False, indent=2), encoding="utf-8")
         log("WAARSCHUWING: " + warning)
 
@@ -7942,7 +7942,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - Kabelfilter aansluitkabels: {'Function bevat ' + ', '.join(CONNECTION_FUNCTION_TERMS) if original_connection_cables is not None and CONNECTION_FUNCTION_FILTER_ENABLED and CONNECTION_FUNCTION_TERMS else ('geen Function-filter' if original_connection_cables is not None else 'geen aparte aansluitkabellaag')}.
 - Plangebiedselectie: {'aansluitingen en bestaande stations buiten de grens zijn genegeerd' if plan_area is not None and ONLY_WITHIN_PLAN_AREA else ('aansluitingen buiten de grens zijn niet toegestaan' if plan_area is not None else 'geen plangebied opgegeven')}.
 - Kabelroutes buiten plangebied: {'toegestaan; de volledige omweg telt mee voor de routelengte' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else ('niet toegestaan; het netwerk is op de grens geknipt' if plan_area is not None else 'geen plangebiedbeperking')}.
-- De gefilterde kabellagen zijn vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r de routeberekening samengevoegd en als ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n
+- De gefilterde kabellagen zijn vóór de routeberekening samengevoegd en als één
   netwerk geknipt/genood. Daardoor zijn ook onderlinge kruisingen en
   T-aansluitingen echte netwerkknooppunten.
 - Kabeltopologie: ieder cluster heeft een exclusief, stationsgeworteld
@@ -7950,7 +7950,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   station verbonden; gedeelde kabellengte tussen clusters is 0 meter.
 - Nieuwe stationlocatie: het belastingsgewogen midden van het cluster, exact
   gesnapt op een kabelknoop.
-- Gebiedstopologie: {'gebieden blijven binnen het plangebied; meerdere vlakken zijn alleen toegestaan als de aangesloten kabelroute buiten het plangebied doorloopt en ieder vlak de route raakt' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else 'elk cluster is ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n aaneengesloten polygoon zonder exclaves'}.
+- Gebiedstopologie: {'gebieden blijven binnen het plangebied; meerdere vlakken zijn alleen toegestaan als de aangesloten kabelroute buiten het plangebied doorloopt en ieder vlak de route raakt' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else 'elk cluster is één aaneengesloten polygoon zonder exclaves'}.
   De grenzen zijn afgeleid van de dichtstbijzijnde exclusieve kabelroutes; bij
   een knooppunt wordt zo nodig een smalle corridor om de eigen kabel gereserveerd.
   Alle eigen aansluitingen, routes en het station liggen binnen het eigen gebied.
@@ -7976,7 +7976,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - `stationomtrekken`, `verdeelkasten` en `interne_netkoppelingen` zijn aanwezig
   wanneer deze optionele installatielagen zijn gebruikt. De stationsnaam van
   een omtrek is aan het gelijknamige bestaande station gekoppeld; alle kabels
-  tegen dezelfde omtrek of verdeelkast vormen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n genood netwerk.
+  tegen dezelfde omtrek of verdeelkast vormen één genood netwerk.
 - `aangevulde_aansluitkabels` bevat gewone LS-aansluitingen die de bronkabels
   niet werkelijk raakten. Deze lijnen hebben `Reken_m` gelijk aan hun fysieke
   lengte en zijn onderdeel van de exclusieve clusterroute.
@@ -7999,7 +7999,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   OpenStreetMap XYZ-achtergrond. Een gekozen plangebied is als aparte omlijnde
   laag opgenomen. De lagen verwijzen relatief naar het blijvende GeoPackage in
   dezelfde resultaatmap en zijn geen tijdelijke lagen. De LS-aansluitingen zijn
-  grote gekleurde cirkels met de ontwerpstroom, op ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n decimaal, vet en
+  grote gekleurde cirkels met de ontwerpstroom, op één decimaal, vet en
   gecentreerd in iedere cirkel. Alle vector-symbolen gebruiken vaste
   millimetermaten en alle labels vaste puntmaten; zij veranderen dus niet van
   grootte bij zoomen. Stationslabels hebben in de layout verplichte plaatsing,
@@ -8031,7 +8031,7 @@ geselecteerde aansluitingen naar een geselecteerd doelstation te verplaatsen.
 De tool werkt daarna de kabelroutes, aaneengesloten gebieden en alle
 statistiekvelden gezamenlijk bij en maakt eerst een GeoPackage-back-up.
 Bij het samenvoegen/verwijderen van een hele broncluster worden ook de
-stationsvolgnummers, stationstabel, legenda-categorieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n en layoutweergave
+stationsvolgnummers, stationstabel, legenda-categorieën en layoutweergave
 direct opnieuw opgebouwd. Het project wordt als gewijzigd gemarkeerd; de
 GeoPackage-gegevens zelf zijn meteen opgeslagen.
 De controles op ontwerpstroom, kabellengte, routes door/over andere clusters en
@@ -8053,14 +8053,14 @@ onbeheerde sleuf kan daarbij automatisch een langere bestaande route
 vervangen. Voor iedere wijziging wordt een GeoPackage-back-up geschreven.
 Met `Geselecteerde routes verversen` worden uitsluitend de in
 `Kabelroutes per cluster` of `Stations ontwerp` geselecteerde clusters opnieuw
-berekend; de overige routegeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n blijven ongewijzigd.
+berekend; de overige routegeometrieën blijven ongewijzigd.
 
 ## Aandachtspunt
 
 Dit is een ruimtelijk ontwerpvoorstel op basis van de aangeleverde civiele
 sleuflijnen. Beveiligingsselectiviteit, spanningsval, kabeldoorsnede, fasebalans,
 grondpositie en fysieke plaatsbaarheid van nieuwe stations zijn niet in de
-brongegevens aanwezig en moeten vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r uitvoering technisch worden getoetst.
+brongegevens aanwezig en moeten vóór uitvoering technisch worden getoetst.
 """
     (OUT / "LEESMIJ.md").write_text(readme, encoding="utf-8")
     # QGIS/Qt cleanup can return exit code 1 when it is initialized in the same

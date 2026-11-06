@@ -27,6 +27,10 @@ De regressies worden rechtstreeks met de geïnstalleerde QGIS 4.2.3-Python uitge
 
 Echte GEN/XML/Excel/GeoPackage-gegevens voor Den Dungen zijn beschikbaar. De stations-CSV geeft 1.998 exacte matches op 2.763 bronpunten. Binnen het plangebied liggen 1.928 aansluitingen en zijn 15 bestaande stations met bruikbare capaciteit beschikbaar. De capaciteit van 044.532 en 044.052 ontbreekt; deze wordt niet verzonnen. Geïnstalleerde richtingzekeringen en actuele schakelingen zijn nog niet bevestigd. Zonder bevestigde gG zijn zekeringwaarden uitsluitend berekende adviesmaxima.
 
+De voorlopige behoudcontrole beoordeelt 1.844 oorspronkelijke aansluitingen: 890 behouden, 718 rekenkundig vrijgegeven en 236 met open bron-/scheidingscontrole. Er zijn 660 knippogingen vastgelegd; daarvan staan 48 actuele, geometrisch bewezen voorstellen op de controlekaart. Deze aantallen zijn tussenresultaten, geen definitieve clusterindeling. De overige 84 punten binnen het plangebied hebben in deze behoudcontrole geen geldige oorspronkelijke station/groep-combinatie.
+
+Een vervolgreplay op het daadwerkelijk opgebouwde Den Dungen-kabelnet gebruikt na herstel de expliciete flatkastterminals en alle aanwezige nul-rekenmeter verbindingen naar de originele stationsuitgangen. Die vervolgcontrole stopt bij aansluitingseenheid 39: het resterende vrijgegeven kabeldeel bevat geen veilige nieuwe stationslocatie in het huidige plaatsingsnet. Daar is nog een aantoonbaar uitvoerbare nieuwe locatie/voedingsroute nodig. De fysieke realisatie van knip/eindmof en nieuwe voeding blijft open; het softwarevoorstel alleen bewijst die uitvoering niet.
+
 **De volledige Den Dungen-clustering is nog niet als geslaagd gevalideerd.** De voorlopige behoudcontrole en eindmofvoorstellen zijn nog geen goedgekeurde nieuwe clusterindeling. Ook als de conceptberekening kan worden afgerond, blijven broncontroles, fysieke knipuitvoering en elektrische OV-beoordeling afzonderlijk open. Deze testrelease mag lokaal worden beproefd, maar niet als vrijgegeven netontwerp worden gebruikt. QGIS 3 is niet lokaal getest.
 
 ## Lokale proef

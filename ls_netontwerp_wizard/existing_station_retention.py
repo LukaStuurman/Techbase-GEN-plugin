@@ -103,8 +103,8 @@ def direct_child_group(code, ancestor, station=None, feeder_parents=None):
 
 
 def type_key(description):
-    value = str(description or "").upper().replace("Ã‚Â²","2")
-    conductors=re.findall(r'(?<!\d)\d+\s*[*XÃƒâ€”]\s*(\d+(?:[.,]\d+)?)\s*MM(?:\^?2)?\s*(AL|CU)',value)
+    value = str(description or "").upper().replace("²","2")
+    conductors=re.findall(r'(?<!\d)\d+\s*[*X×]\s*(\d+(?:[.,]\d+)?)\s*MM(?:\^?2)?\s*(AL|CU)',value)
     if conductors:
         # GEN mixed descriptions name the phase cores first, followed by a
         # small copper screen. The screen must not change 150Al into Cu.
@@ -363,7 +363,7 @@ def retain_original(stations_a, connections, cables, *, installed_fuses=None,
             first=next((eid for eid in whole_path(c) if not edge_by_id[eid].rating_available),None)
             if first and first not in recorded:
                 affected=[m for m in connections if first in whole_path(m)]
-                cut_proposal(c,first,'Eindmof vÃƒÂ³ÃƒÂ³r niet toetsbaar LS-kabeldeel; houdbaar voortraject eerst behouden',affected)
+                cut_proposal(c,first,'Eindmof vóór niet toetsbaar LS-kabeldeel; houdbaar voortraject eerst behouden',affected)
                 recorded.add(first)
     stations=set(stations_a)
     if any(c.station not in stations for c in connections):

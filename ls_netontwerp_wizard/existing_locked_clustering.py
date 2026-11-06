@@ -72,7 +72,7 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         raise ValueError(
             "Geen LS-aansluitingen met zowel een bestaand Station als een "
             "geldige volledige Kabel Subgroep gevonden. Controleer de "
-            "Lovion/CSV-koppeling vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r deze behoudmodus."
+            "Lovion/CSV-koppeling vóór deze behoudmodus."
         )
     traced=trace_group_cables(
         points.loc[original],stations,original_cables,
@@ -108,6 +108,19 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         except (ValueError,TypeError,SyntaxError,KeyError,IndexError):
             proposal['X']=None;proposal['Y']=None
             proposal['Status']='OPEN - geen verifieerbare eindmoflocatie'
+    # The clustering graph uses the outdoor GEN terminal, while the
+    # original source point may be inside a building. Preserve the explicit
+    # equipment relationship and its traced terminal for the graph proof.
+    for c in traced['connections']:
+        i=int(traced['point_id_to_index'][c.id])
+        if i not in equipment_terminals or not c.edge_ids:continue
+        from shapely.geometry import Point as TerminalPoint
+        geometry=traced['edge_geometries'][c.edge_ids[-1]]
+        ends=[TerminalPoint(geometry.coords[0]),TerminalPoint(geometry.coords[-1])]
+        distances=[p.distance(points.loc[i].geometry) for p in ends]
+        if abs(distances[0]-distances[1])<1e-7:continue
+        endpoint=ends[int(distances[1]<distances[0])]
+        equipment_terminals[i]['netanker_xy']=(endpoint.x,endpoint.y)
     retained_ids=set(retained["behouden"])
     active={connection.id:connection for connection in traced["connections"]
             if connection.id in retained_ids}
@@ -257,6 +270,52 @@ def _select_reserved_edges(graph,node_list,physical_by_station):
     return owner_by_edge
 
 
+def reserve_station_zero_links(graph,node_list,root_indices,station_names,owner_by_node,reserved,by_station):
+    """Join every original outlet through existing internal station links."""
+    zero=nx.Graph()
+    for u,v,data in graph.edges(data=True):
+        if float(data.get('calculation_factor',1.))<=1e-9 or float(data.get('weight',1.))<=1e-5:
+            zero.add_edge(u,v)
+    for station,root_index in zip(station_names,root_indices):
+        own=set(by_station.get(station,()))
+        if not own:continue
+        root=node_list[int(root_index)]
+        allowed={node for node in zero if owner_by_node.get(node) in (None,station)}
+        local=zero.subgraph(allowed)
+        if root not in local:continue
+        paths=nx.single_source_shortest_path(local,root)
+        for target in own.intersection(paths):
+            for u,v in zip(paths[target][:-1],paths[target][1:]):
+                reserved[frozenset((u,v))]=station
+                owner_by_node[u]=station;owner_by_node[v]=station
+                by_station[station].update((u,v))
+
+
+def reserve_original_terminal_links(graph,node_list,unit_node_indices,point_to_unit,
+                                    info,owner_by_node,reserved,by_station):
+    """Reserve existing zero-calculation links to explicitly proven terminals."""
+    zero=nx.Graph()
+    for u,v,data in graph.edges(data=True):
+        if float(data.get('calculation_factor',1.))<=1e-9 or float(data.get('weight',1.))<=1e-5:
+            zero.add_edge(u,v)
+    for i,station in info['retained_by_index'].items():
+        target=node_list[int(unit_node_indices[int(point_to_unit[i])])]
+        if owner_by_node.get(target)==station:continue
+        metadata=info.get('equipment_terminals',{}).get(i,{})
+        xy=metadata.get('netanker_xy')
+        if xy is None:continue
+        anchor=tuple(np.round(xy,1))
+        if owner_by_node.get(anchor)!=station:continue
+        allowed={node for node in zero if owner_by_node.get(node) in (None,station)}
+        local=zero.subgraph(allowed)
+        if target not in local or anchor not in local or not nx.has_path(local,target,anchor):continue
+        path=nx.shortest_path(local,target,anchor)
+        for u,v in zip(path[:-1],path[1:]):
+            reserved[frozenset((u,v))]=station
+            owner_by_node[u]=station;owner_by_node[v]=station
+            by_station[station].update((u,v))
+
+
 def solve_locked_voronoi(
     graph, node_list, unit_node_indices, unit_load, point_to_unit, old_station_names,
     existing_station_node_indices, regular_node_indices, original_info,
@@ -330,6 +389,8 @@ def solve_locked_voronoi(
             owner_by_node[source]=station
             by_station[station].add(source)
 
+    reserve_station_zero_links(graph,node_list,existing_station_node_indices,old_station_names,
+                               owner_by_node,reserved,by_station)
     # A distribution-box polygon can have different in- and outgoing
     # cable terminals. Confirm its existing equipment conductors IN THE
     # QGIS routing graph before electrically joining the two original
@@ -413,7 +474,7 @@ def solve_locked_voronoi(
                     old=owner_by_node.setdefault(node,station)
                     if old!=station:
                         raise ValueError(
-                            "Verschillende oude stations delen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n "
+                            "Verschillende oude stations delen één "
                             "verdeelkastknooppunt; controleer het schakelschema."
                         )
                     by_station[station].add(node)
@@ -429,10 +490,12 @@ def solve_locked_voronoi(
         wanted=names[station]
         if locked[unit] not in (-1,wanted):
             raise ValueError(
-                "EÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n kabelknooppunt bevat oorspronkelijke aansluitingen "
+                "Eén kabelknooppunt bevat oorspronkelijke aansluitingen "
                 "van verschillende stations; splits/controleer brongeometrie."
             )
         locked[unit]=wanted
+    reserve_original_terminal_links(graph,node_list,unit_node_indices,point_to_unit,
+                                    original_info,owner_by_node,reserved,by_station)
     # A unit is indivisible: if its node contains both an old retained
     # connection and a released/new connection, sharing one cable node would
     # violate the exclusive new-station territory.
@@ -448,7 +511,9 @@ def solve_locked_voronoi(
         if owner_by_node.get(target)!=old_station_names[int(locked[unit])]:
             raise ValueError(
                 "Historisch toegewezen aansluiting ligt niet op het "
-                "aan zijn oude station voorbehouden kabelpad."
+                "aan zijn oude station voorbehouden kabelpad. "
+                f"Aansluitingseenheid {unit}; bronindices {members.tolist()}; "
+                f"station {old_station_names[int(locked[unit])]}; netwerkknoop {target}."
             )
     # Require an EXCLUSIVE, original-station-rooted path even if no
     # new station is necessary. The previous no-free-units shortcut could
