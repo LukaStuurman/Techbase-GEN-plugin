@@ -1,40 +1,36 @@
-# Testrelease 1.33.3-rc.1 — behoud bestaande stations en kabelgroepen
+# Testrelease 1.33.3-rc.2 - eerst eindmof, dan pas richting vrijgeven
 
-Datum: 5 november 2026. Concept-PR #29; geen merge naar main. Dit is een prerelease voor lokaal testen, geen goedgekeurd Den Dungen-netontwerp.
+6 november 2026. Concept-PR #29, geen merge en geen productiegoedkeuring.
 
-## Hersteld
+## Gewijzigd gedrag
 
-- QGIS 4.2.3 gebruikt hier Shapely 2.1.2 en GEOS 3.14.1. Bij het samenvoegen van opeenvolgende rechte kabelstukken kon de grens tussen twee kabeltypen verdwijnen. De trace herstelt nu alle oorspronkelijke kabeleindpunten vóór het bepalen van type en lengte per deel. De verdeelkastproef met opeenvolgend 150Al en 120Al slaagt; conflicterende typen blijven afgewezen.
-- De productiesolver-regressie neemt uitgestelde type-annotaties over bij het afzonderlijk laden van de solver.
-- De pluginlaadtest selecteert de huidige Kader 3.2-keuze. De rekenregels zijn hierdoor niet aangepast.
+Bij een overschrijding van stroom, trafovermogen of routeafstand wordt eerst vanaf het verre einde ingekort. De plugin stelt een knip/eindmof voor bij een bestaande, verifieerbare kabelknoop. Alleen de consumenten achter dat kabeldeel worden samen vrijgegeven; het berekenbaar passende voortraject blijft bij het oorspronkelijke station. Na iedere stap worden kabeldelen, gG-advies, routeafstand en trafo opnieuw getoetst. Een hele richting valt pas af wanneer geen passend voortraject met aansluitingen overblijft.
 
-## Uitgevoerde controles
+Afzonderlijk gecodeerde voedingen achter een verdeelkast houden hun eigen groepscontrole. Bij een overbelaste bovenliggende kabel wordt eerst het achterste deel geprobeerd, zodat de bovenliggende richting en andere aftakkingen niet onnodig vervallen. Meervoudige groepslidmaatschappen en flat-eenheden worden samen vrijgegeven. Bestaande stations krijgen nooit aansluitingen van een ander oud station; vrijgegeven/nieuwe aansluitingen gaan alleen naar nieuwe stations.
 
-Alle Python-bronnen zijn syntactisch gecontroleerd. Elf gerichte regressies slagen in de geïnstalleerde QGIS 4.2.3-Pythonomgeving: Kader 2.0, vergelijking 2.0/3.2, bestaande stationsretentie, originele groepsgeometrie, vergrendelde oude/uitsluitend nieuwe stations, afzonderlijke verdeelkastvoedingen, stationomtrekken, onbekende stationscapaciteit, buitenroutes, netwerkherstel en pluginladen.
+`eindmof_voorstellen.csv` bevat de pogingen en hun huidige status. `Actueel_voorstel` onderscheidt voorstellen die na verder inkorten nog actueel zijn; `Behoudbaar_voortraject` toont of er nog een voortraject met behouden aansluitingen ligt. Alleen actuele, geometrisch bewezen voorstellen komen in `eindmof_voorstellen.geojson` en bij een geslaagd ontwerp in de gelijknamige GeoPackage-laag. Het zijn conceptvoorstellen voor fysieke netwijzigingen, geen bestaande assets. Een niet bewezen bronroute krijgt geen verzonnen moflocatie.
 
-De synthetische controle geeft 75 A voor teststation 044.529: 50 A via S07-00 naar B99-00/B99-01 en 25 A via S03-00. De aparte B99-01-beveiligingsproef geeft de overbelaste aansluiting vrij bij een ingestelde 63 A gG. De controle betreft synthetische geometrie en testwaarden, geen werkelijke meting aan station 044.529.
+## Overige vastgelegde bron- en rekenregels
 
-## Echte Den Dungen-proef
+- De aansluitingenlaag uit XML/Excel bepaalt de oorspronkelijke kabelgroepen; de stations-CSV vult alleen Station via exact Master Asset ID.
+- Aansluitkabels blijven voor de verbinding bestaan, maar tellen niet mee voor elektrische kabelberekeningen of rekenlengte. Hun aansluitstromen blijven wel belasting voor hoofdnet en trafo.
+- OV is optioneel uitsluitend route. OV-hoofdkabellengte telt wel voor de routegrens; elektrische OV-beoordeling blijft expliciet open. Er worden geen LS-rekenwaarden voor OV verzonnen.
+- Onbekende LS-hoofdkabeltypen krijgen geen fictieve cataloguswaarden. Waar mogelijk wordt vóór dat deel een eindmof voorgesteld en blijft een toetsbaar voortraject behouden.
+- Onzekere historische richtingen worden alleen in de expliciete CONCEPT-optie aan nieuwe stations aangeboden, met broncontrole als open punt. Een fout in een aftakking verwijdert niet automatisch iedere zustergroep. De strikte modus blijft blokkeren bij onbewezen routes.
+- Getypeerde sourceindpunten en fysieke kabeleindcontacten blijven bij de historische trace bestaan. Een geometrische kruising bewijst geen elektrische koppeling. Interne kastverbindingen moeten in het kabelnet zijn bewezen.
 
-Rechtstreeks via PyQGIS/WorkflowRunner, zonder computerbediening, op aparte kopieën van de voorbereide netwerkbestanden van 5 november 2026, 11:45:06. De bronprojecten zijn niet overschreven.
+## Validatie en beperkingen
 
-- 2.763 aansluitingen in de bronlaag; 1.928 binnen het gebruikte plangebied, totaal 13.874,4 A voor het gekozen ontwerpstroomveld.
-- 1.158 LS-hoofdkabels en 3.070 LS-aansluitkabels geselecteerd vóór de verdere gebiedsverwerking.
-- 15 geldige bestaande stations na gebieds-/capaciteitsfilter. Stations 044.532 en 044.052 hebben geen bruikbare trafocapaciteit en zijn niet als capaciteit ingevuld.
-- 31 verdeelkastobjecten verwerkt; het kabelnet is werkelijk genood.
-- De eerste run stopte vanwege ontbrekende oorspronkelijke Station-koppelingen. Daarna is de door de gebruiker aangeleverde CSV gecontroleerd en op een projectkopie gekoppeld via `Master Asset ID` → `SourceFile`: **1.998 unieke regels, 1.998 exacte matches, nul dubbele of overgeslagen CSV-regels**. 765 bronpunten hebben geen match en blijven zonder verzonnen historische stationsnaam.
-- De herhaalde echte PyQGIS-berekening verwerkt de gekoppelde invoer en stopt bij een meervoudige GEN-kabelgroep. Een inventarisatie vindt **drie CSV-gekoppelde aansluitingen met ieder twee GEN-kabelgroepen**. In de CSV staat wel één `Kabel Subgroep Nummer`, maar `Kabel Subgroepen` vermeldt bij alle drie `2 objecten`. Alleen die eerste groepscode kiezen bewijst daarom niet welke voeding actief is. De originele groepen zijn niet overschreven.
-- Het bestaande foutafhandelingspad heeft een blijvend QGIS-controleproject, invoerkopieën en diagnose gemaakt. Dat is een controle-uitvoer bij een geblokkeerde berekening, geen geslaagd clusterontwerp.
+De gerichte eindmofproef met aansluitingen op 40, 70 en 100 meter en een grens van 80 meter behoudt de eerste twee aansluitingen, 70 meter oorspronkelijk kabelpad en 40 A oorspronkelijke trafobelasting. Het eindmofvoorstel ligt op de echte knoop op 70 meter; de aansluiting op 100 meter is uitsluitend beschikbaar voor een nieuw station. Extra gevallen controleren trafobegrenzing, gezamenlijke vrijgave achter de knip, een verdeelkast met eigen code, onbekend LS-type en een richting zonder houdbaar voortraject.
 
-**Echte GEN/XML/Excel/GeoPackage- en stations-CSV-data zijn aanwezig.** Nog te verifiëren zijn de drie meervoudige kabelgroepen, de historische stationskoppelingen voor de 765 niet-gematchte bronpunten, de geïnstalleerde richting-/verdeelkastzekeringen en de actuele schakelingen. Zekeringvelden op een huisaansluiting bewijzen de beveiliging van een stationrichting niet. Deze release claimt geen geslaagde volledige praktijkvalidatie, geen actuele Lovion-validatie en geen test op QGIS 3.
+De regressies worden rechtstreeks met de geïnstalleerde QGIS 4.2.3-Python uitgevoerd, zonder computerbediening. Ze controleren Kader 2.0/3.2, stationsretentie, eindmofvolgorde, kabeltrace, oude/uitsluitend nieuwe stations, verdeelkasten, meervoudige groepen, aansluitkabeluitsluiting, conceptvrijgave, stationomtrekken, ontbrekende capaciteit, buitenroutes, netwerkherstel, LS-/OV-schema en pluginladen. De exacte laatste testuitslagen staan in het lokale controlepakket.
 
-## Installeren en testen
+Echte GEN/XML/Excel/GeoPackage-gegevens voor Den Dungen zijn beschikbaar. De stations-CSV geeft 1.998 exacte matches op 2.763 bronpunten. Binnen het plangebied liggen 1.928 aansluitingen en zijn 15 bestaande stations met bruikbare capaciteit beschikbaar. De capaciteit van 044.532 en 044.052 ontbreekt; deze wordt niet verzonnen. Geïnstalleerde richtingzekeringen en actuele schakelingen zijn nog niet bevestigd. Zonder bevestigde gG zijn zekeringwaarden uitsluitend berekende adviesmaxima.
 
-1. Installeer `ls_netontwerp_wizard-1.33.3-rc.1.zip` via QGIS → Plugins → Plugins beheren en installeren → Installeren vanuit ZIP. Herstart QGIS volledig; de reeds geopende sessie blijft anders oude code gebruiken.
-2. Open een kopie van het voorbereide Den Dungen-werkproject op de Techbase-netwerkschijf. Gebruik de bijbehorende bronlagen, niet de reeds toegewezen nieuwe ontwerpclusters als historische waarheid.
-3. De lokale testkopie bevat al de 1.998 CSV-koppelingen. Bij een eigen project: kies de stations-CSV en stationskolom `SourceFile`; koppel op `Master Asset ID`. Controleer de drie meervoudige kabelgroepen uit het lokale controlebestand vóór een nieuwe behoudberekening. Verifieer de overige oorspronkelijke `Station`-waarden via Lovion/CSV of gecontroleerde schemaherleiding. Controleer volledige `Kabel Subgroep`, unieke aansluitings-ID's, kabeltypen/-geometrieën, trafovermogen en verdeelkasten. Leid de oorspronkelijke stationsnaam niet af uit nabijheid.
-4. Kies **3a. Automatische clustering** en vink **Bestaande stations en kabelgroepen exact behouden** aan. De optie staat standaard uit. Gebruik een nieuwe uitvoermap.
-5. Controleer de tabel `bestaande_stations_kabelgroepen_controle.csv`, de bestaande-richtingencontrolelaag en de behouden/vrijgegeven aansluitingen. Oude stations mogen uitsluitend hun eigen oorspronkelijke aansluitingen behouden; vrijgegeven/nieuwe aansluitingen mogen alleen naar nieuwe stations. Een ontbrekende fysieke scheiding of onduidelijke voeding mag geen geslaagd resultaat geven.
-6. Zonder bevestigde geïnstalleerde gG is de berekende gG een adviesgrens. Vergelijk dit afzonderlijk met de werkelijke zekeringen en actuele schakelingen voordat het ontwerp wordt goedgekeurd.
+**De volledige Den Dungen-clustering is nog niet als geslaagd gevalideerd.** De voorlopige behoudcontrole en eindmofvoorstellen zijn nog geen goedgekeurde nieuwe clusterindeling. Ook als de conceptberekening kan worden afgerond, blijven broncontroles, fysieke knipuitvoering en elektrische OV-beoordeling afzonderlijk open. Deze testrelease mag lokaal worden beproefd, maar niet als vrijgegeven netontwerp worden gebruikt. QGIS 3 is niet lokaal getest.
 
-De openbare release bevat uitsluitend software en deze samenvatting; geen Den Dungen-bronlagen of persoons-/adresgegevens. Lokale technische rapporten en het controleproject blijven bij het testpakket op de computer/netwerkschijf.
+## Lokale proef
+
+Installeer de ZIP via QGIS > Plugins beheren en installeren > Installeren vanuit ZIP en herstart QGIS volledig. Werk op een projectkopie met een nieuwe uitvoermap. Kies automatische clustering en de behoudmodus. De optie **Eerst houdbaar voortraject met eindmof behouden** staat standaard aan. Vul voor schemabewijs de bijbehorende LS-schema XML, veld/rail/smelt-Excel en LS-schema-DXF in. Zet OV uitsluitend als route aan volgens de afgesproken werkwijze. De optie voor onzekere richtingen is een expliciete conceptkeuze en staat standaard uit.
+
+Controleer per aansluiting het oorspronkelijke station, de oorspronkelijke volledige groepscodes en het behoud-/vrijgavebesluit. Controleer vervolgens de eindmofvoorstellen, actuele voortrajecten, aparte verdeelkastgroepen, routegrenzen, kabeltypen en de werkelijke beveiligingen/schakelingen. De openbare release bevat alleen software en deze notitie; lokale bronlagen, aansluitingslijsten en kaartresultaten blijven op de computer/netwerkschijf.

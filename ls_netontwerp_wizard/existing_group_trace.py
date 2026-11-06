@@ -11,15 +11,17 @@ clustering and does not infer historical group membership from distance.
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import lru_cache
 import math
 import re
 
 import networkx as nx
 from shapely.geometry import Point
 from shapely.ops import substring, unary_union
+from shapely.strtree import STRtree
 
 from .existing_station_retention import (
-    Cable, OriginalConnection, group_code, parent_group, type_key,
+    Cable, OriginalConnection, group_code, group_codes, parent_group, type_key,
 )
 
 GROUP_FIELDS = ("Kabel Subgroep", "Kabel_Subgroep", "KabelSubgroep",
@@ -27,6 +29,17 @@ GROUP_FIELDS = ("Kabel Subgroep", "Kabel_Subgroep", "KabelSubgroep",
                 "cable_subgroup_code")
 TYPE_FIELDS = ("Type", "Kabeltype", "CableType")
 STATION_FIELDS = ("Station", "Stationsnaa", "Stationsnaam")
+SERVICE_PREFIX='AANSLUITKABEL:'
+OV_PREFIX='OV_ROUTE:'
+UNRATED_PREFIX='ONGETOETSTE_LS:'
+
+def _record_type(value):
+    value=str(value)
+    if value.startswith((SERVICE_PREFIX,OV_PREFIX,UNRATED_PREFIX)):return value
+    try:return type_key(value)
+    except ValueError as exc:
+        if 'niet ondersteund door Enexis-checker' not in str(exc):raise
+        return UNRATED_PREFIX+value
 
 
 def _value(row, candidates):
@@ -112,7 +125,9 @@ def _closest_unique(lines,point,limit,what):
 def _make_noded_group(records, terminals):
     """Build source-preserving undirected physical graph (no fabricated wire)."""
     source=[row[0] for row in records]
-    noded=list(_parts(unary_union(source)))
+    typed_buffers=[(line.buffer(.012),_record_type(kind)) for line,kind in records]
+    buffer_tree=STRtree([shape for shape,_kind in typed_buffers])
+    noded=_physical_parts(records)
     if not noded:
         raise ValueError("Kabelgroep heeft geen fysieke lijnstukken.")
     measures=defaultdict(set)
@@ -136,11 +151,7 @@ def _make_noded_group(records, terminals):
             part=substring(line,a,b)
             # Source match must contain the WHOLE segment and may not yield
             # conflicting cable types. A midpoint-only match is not enough.
-            matching=[
-                type_key(cable_type)
-                for original,cable_type in records
-                if original.buffer(0.012).covers(part)
-            ]
+            matching=[typed_buffers[int(j)][1] for j in buffer_tree.query(part,predicate='covered_by')]
             if not matching or len(set(matching))!=1:
                 raise ValueError(
                     "Kabelgroep heeft een ongedefinieerd of conflicterend "
@@ -150,6 +161,13 @@ def _make_noded_group(records, terminals):
             v=_node(Point(part.coords[-1]))
             if u==v:continue
             if graph.has_edge(u,v):
+                previous=graph[u][v]['id']
+                old=next(e for e in edges if e[0]==previous)
+                if old[3]==matching[0] and geometries[previous].hausdorff_distance(part)<=.00015:
+                    # Repeated curved export vertices can quantize to the
+                    # same 0.1-mm edge. Do not mistake that numerical copy
+                    # for a second physically distinct cable.
+                    continue
                 raise ValueError("Dubbel fysiek kabeldeel; onbekend welke kabel actief is.")
             segment_id=f"g{len(edges):07d}"
             graph.add_edge(u,v,id=segment_id,length=float(part.length))
@@ -165,10 +183,36 @@ def _make_noded_group(records, terminals):
     return graph,edges,noded,geometries
 
 
+def _physical_parts(records):
+    """Shared source endpoints are joints; interior crossings are not.
+
+    A planar unary_union would electrically join crossing house leads and
+    introduce fictitious loops. Split each original conductor only at real
+    source endpoints lying on it. Keep all original type boundaries intact.
+    """
+    lines=[line for line,_kind in records]
+    endpoints=[Point(xy) for xy in {tuple(xy) for line in lines for xy in (line.coords[0],line.coords[-1])}]
+    endpoint_tree=STRtree(endpoints)
+    result=[]
+    for line in lines:
+        boundaries={0.,float(line.length)}
+        for j in endpoint_tree.query(line.buffer(1e-7)):
+            endpoint=endpoints[int(j)]
+            if line.distance(endpoint)<=1e-7:
+                distance=float(line.project(endpoint))
+                if 1e-6<distance<line.length-1e-6:boundaries.add(distance)
+        ordered=sorted(boundaries)
+        for a,b in zip(ordered[:-1],ordered[1:]):
+            if b-a>1e-6:result.append(substring(line,a,b))
+    return result
+
+
 def trace_group_cables(points,stations,cables, *,
                        cable_group_field=None,cable_type_field=None,
                        point_group_field=None,point_station_field=None,
                        distribution_cabinets=None,
+                       schema_paths=None,
+                       equipment_tolerance_m=.20,
                        terminal_tolerance_m=.20,station_anchor_tolerance_m=15.):
     """Return verified original-edge paths, per segment *real* material.
 
@@ -189,12 +233,19 @@ def trace_group_cables(points,stations,cables, *,
     ct=cable_type_field or required_column(cables,TYPE_FIELDS,"fysiek kabeltype")
     sn=required_column(stations,STATION_FIELDS,"stationsnaam")
     point_members=defaultdict(list)
+    source_rows={}
     for index,row in points.iterrows():
-        group=group_code(row[pg])
+        asset=_value(row,('master_asset_id','Master Asset ID','ID'))
+        if asset and asset in source_rows:
+            raise ValueError(f'Dubbel Master Asset ID {asset}; historische aansluiting niet uniek.')
+        if asset:source_rows[asset]=index
+        groups=group_codes(row[pg])
+        if not groups:raise ValueError(f"Aansluiting {index}: kabelgroep ontbreekt.")
         station=str(row[ps] or "").strip()
         if not station or station.lower() in ("nan","none","null"):
             raise ValueError(f"Aansluiting {index}: geen oorspronkelijke stationstoewijzing.")
-        point_members[(station,group)].append((index,row))
+        for group in groups:
+            point_members[(station,group)].append((index,row))
     station_geoms={}
     for _,row in stations.iterrows():
         name=str(row[sn] or "").strip()
@@ -211,12 +262,27 @@ def trace_group_cables(points,stations,cables, *,
         except ValueError:
             continue
         for part in _parts(row.geometry):
-            raw_records[code].append((part,row[ct]))
+            kind=row[ct]
+            if str(row.get('_Historisch_OV',False)).strip().casefold() in ('true','1'):
+                kind=OV_PREFIX+str(kind)
+            if str(row.get('_Aansluitkabel',False)).strip().casefold() in ('true','1'):
+                kind=SERVICE_PREFIX+str(kind)
+            raw_records[code].append((part,kind))
+    feeder_parents={}
     pairs=set(point_members)
     for station,group in tuple(pairs):
+        current=group
         parent=parent_group(group)
         while parent:
+            if parent not in raw_records:
+                # A suffix is an administrative identifier, not proof of a
+                # missing -00 conductor. Treat the actual subgroup as an
+                # independent direction; its physical station/cabinet root
+                # must still pass all normal topology checks below.
+                feeder_parents[(station,current)]=None
+                break
             pairs.add((station,parent))
+            current=parent
             parent=parent_group(parent)
     for station,group in pairs:
         if station not in station_geoms:
@@ -228,7 +294,6 @@ def trace_group_cables(points,stations,cables, *,
     # group code from the station's supply cable. Their physical feeding
     # relationship must be proven by the actual distribution cabinet layer.
     # Merely being geographically nearby is never enough.
-    feeder_parents={}
     cabinet_links={}
     cabinet_geometries=(
         [
@@ -243,6 +308,18 @@ def trace_group_cables(points,stations,cables, *,
         if distribution_cabinets is not None else []
     )
     cabinet_ids=[id for id,_geometry in cabinet_geometries]
+    if len(set(cabinet_ids))!=len(cabinet_ids) and distribution_cabinets is not None:
+        # GEN number is a display label: two different boxes may both be
+        # called '1'. Resolve those labels by their real unique object IDs.
+        labels=cabinet_ids
+        objects=[_value(row,('id','master_asset_id')) for _,row in distribution_cabinets.iterrows()
+                 if row.geometry is not None and not row.geometry.is_empty]
+        if all(objects) and len(set(objects))==len(objects):
+            cabinet_geometries=[
+                (label if labels.count(label)==1 else f'{label} [{ident}]',geom)
+                for (label,geom),ident in zip(cabinet_geometries,objects)
+            ]
+            cabinet_ids=[ident for ident,_ in cabinet_geometries]
     if len(set(cabinet_ids))!=len(cabinet_ids):
         raise ValueError(
             "Verdeelkasten hebben dubbele of niet-eenduidige kastnummers; "
@@ -252,20 +329,23 @@ def trace_group_cables(points,stations,cables, *,
         code:unary_union([geom for geom,_type in rows])
         for code,rows in raw_records.items()
     }
+    @lru_cache(maxsize=None)
     def terminal_points(code):
-        # Prefer true dead ends; avoid declaring an arbitrary midpoint of a
-        # long crossing cable to be a cabinet outgoing feeder.
-        segments=list(_parts(unary_union([g for g,_type in raw_records[code]])))
-        degree=defaultdict(int)
-        for segment in segments:
-            u=_node(Point(segment.coords[0]))
-            v=_node(Point(segment.coords[-1]))
-            degree[u]+=1
-            degree[v]+=1
-        return [Point(xy) for xy,n in degree.items() if n==1]
+        # A cabinet is an endpoint of original cable FEATURES, even when
+        # another same-coded segment leaves the same field. Requiring degree
+        # one for the whole group hides real through-cabinet connections.
+        # Noded interior crossings are never added as candidate terminals.
+        conductors=[(g,kind) for g,kind in raw_records[code]
+                    if not str(kind).startswith(SERVICE_PREFIX)]
+        ends={_node(Point(xy)) for line,_kind in (conductors or raw_records[code])
+              for xy in (line.coords[0],line.coords[-1])}
+        return [Point(xy) for xy in sorted(ends)]
 
-    for station,group in sorted(tuple(pairs)):
-        if parent_group(group) is not None:
+    examined=set()
+    while pairs-examined:
+        station,group=min(pairs-examined)
+        examined.add((station,group))
+        if feeder_parents.get((station,group),parent_group(group)) is not None:
             continue
         source=group_union[group]
         # Select the ENTIRE connected conductor component containing the
@@ -274,7 +354,7 @@ def trace_group_cables(points,stations,cables, *,
         # a distant cabinet.
         direct=[row.geometry for _id,row in point_members.get((station,group),[])]
         if direct:
-            segments=list(_parts(source))
+            segments=_physical_parts(raw_records[group])
             physical_graph=nx.Graph()
             for index,part in enumerate(segments):
                 first=_node(Point(part.coords[0]))
@@ -298,8 +378,15 @@ def trace_group_cables(points,stations,cables, *,
                 )
             source=matching[0]
         station_distance=float(source.distance(station_geoms[station]))
+        def base(code):return re.sub(r'^(SMG\d+)-\d+$',r'\1',code)
+        chain=(schema_paths or {}).get(station+'|'+base(group),[])
         if station_distance<=terminal_tolerance_m:
             # Genuine station outlet, not a nearby cabinet cable.
+            continue
+        if chain==[base(group)] and station_distance<=station_anchor_tolerance_m:
+            # The schema explicitly shows a station outlet. A second cable
+            # entering the remote end cabinet does not make this outlet a
+            # child of that other cable (or create a fictional supply loop).
             continue
         if not cabinet_geometries:
             if station_distance<=station_anchor_tolerance_m:
@@ -313,16 +400,21 @@ def trace_group_cables(points,stations,cables, *,
                 "werkelijke voedingsroute te bewijzen."
             )
         candidates=[]
+        confirmed_upstream=chain[-2] if len(chain)>1 else None
         outgoing_endpoints=terminal_points(group)
         for cabinet_id,cabinet_geom in cabinet_geometries:
             exits=[p for p in outgoing_endpoints
-                   if cabinet_geom.distance(p)<=terminal_tolerance_m and
+                   if cabinet_geom.distance(p)<=equipment_tolerance_m and
                    source.distance(p)<=terminal_tolerance_m]
+            exact=[p for p in exits if cabinet_geom.distance(p)<=1e-7]
+            if exact:exits=exact
             if len(exits)!=1:
                 continue
             child_start=exits[0]
             for upstream,up_geom in group_union.items():
                 if upstream==group:
+                    continue
+                if confirmed_upstream is not None and base(upstream)!=confirmed_upstream:
                     continue
                 up_parent=parent_group(upstream)
                 if up_parent is None:
@@ -346,15 +438,22 @@ def trace_group_cables(points,stations,cables, *,
                         and intersection.length<=.01
                         and len(junctions_here)==1
                     )
+                if confirmed_upstream is not None:
+                    # The complete exported, active LS-schema chain proves
+                    # which group supplies this cabinet, even across several
+                    # cabinets. Physical terminals are still mandatory here.
+                    proved_source=base(upstream)==confirmed_upstream
                 if not proved_source:
                     continue
                 # The upstream cable must physically enter the SAME cabinet
                 # and be uniquely rooted at the original station.
                 source_ends=[
                     p for p in terminal_points(upstream)
-                    if cabinet_geom.distance(p)<=terminal_tolerance_m
+                    if cabinet_geom.distance(p)<=equipment_tolerance_m
                     and up_geom.distance(p)<=terminal_tolerance_m
                 ]
+                exact=[p for p in source_ends if cabinet_geom.distance(p)<=1e-7]
+                if exact:source_ends=exact
                 if len(source_ends)!=1:
                     continue
                 candidates.append((upstream,cabinet_id,child_start,source_ends[0]))
@@ -369,7 +468,8 @@ def trace_group_cables(points,stations,cables, *,
                 f"Kabelgroep {station}/{group} heeft "
                 f"{len(unique)} eenduidig met het station verbonden "
                 "verdeelkast-voedingsrichting(en); een originele "
-                "kabelroute mag niet op nabijheid worden gegokt."
+                "kabelroute mag niet op nabijheid worden gegokt. "
+                f"Kandidaten: {sorted(unique)}. Stationsafstand {station_distance:.3f} m; schemapad {chain}."
             )
         upstream,cabinet_id,child_start,parent_tap=candidates[0]
         feeder_parents[(station,group)]=upstream
@@ -378,10 +478,13 @@ def trace_group_cables(points,stations,cables, *,
         # Preserve all physical -00/-01 parent edges of a cabinet's feeder.
         upstream_parent=parent_group(upstream)
         while upstream_parent:
+            if upstream_parent not in raw_records:
+                feeder_parents[(station,upstream)]=None
+                break
             pairs.add((station,upstream_parent))
             upstream_parent=parent_group(upstream_parent)
     records={
-        code:[(geom,type_key(kind)) for geom,kind in raw_records[code]]
+        code:[(geom,_record_type(kind)) for geom,kind in raw_records[code]]
         for code in {group for _station,group in pairs}
     }
     # Kabel Subgroep numbering may repeat at DIFFERENT stations. Split the
@@ -390,7 +493,7 @@ def trace_group_cables(points,stations,cables, *,
     # station origins instead of globally joining equal subgroup codes.
     components_by_group={}
     for code,rows in records.items():
-        parts=list(_parts(unary_union([geom for geom,_type in rows])))
+        parts=_physical_parts(rows)
         topology=nx.Graph()
         for i,part in enumerate(parts):
             start_node=_node(Point(part.coords[0]))
@@ -505,7 +608,9 @@ def trace_group_cables(points,stations,cables, *,
                 f"Aftakking {station}/{group} overlapt de hoofdkabel; "
                 "de gescheiden kabelrichting is niet eenduidig."
             )
-        candidates={_node(p) for p in _points(intersection)}
+        branch_ends=terminal_points(group)
+        candidates={_node(p) for p in _points(intersection)
+                    if any(p.distance(end)<=1e-7 for end in branch_ends)}
         if len(candidates)!=1:
             raise ValueError(
                 f"Aftakking {station}/{group} moet precies één fysiek "
@@ -552,11 +657,19 @@ def trace_group_cables(points,stations,cables, *,
             limit=station_anchor_tolerance_m if is_station_root else terminal_tolerance_m
             _idx,pr=_closest_unique(noded,point,limit,f"Kabelgroep {station}/{group}")
             corrected.append(pr)
-        graph,edge_rows,_noded,geo_by_edge=_make_noded_group(rows,corrected)
+        try:graph,edge_rows,_noded,geo_by_edge=_make_noded_group(rows,corrected)
+        except ValueError as exc:raise ValueError(f'Station {station}/{group}: {exc}') from exc
         group_graphs[(station,group)]=(graph,edge_rows)
         for local_id,u,v,kind,length in edge_rows:
             unique_id=station+"|"+group+"|"+local_id
-            physical.append(Cable(unique_id,group,str(u),str(v),kind,length))
+            service=kind.startswith(SERVICE_PREFIX)
+            if service:kind=kind[len(SERVICE_PREFIX):]
+            ov=kind.startswith(OV_PREFIX)
+            if ov:kind=kind[len(OV_PREFIX):]
+            unrated=kind.startswith(UNRATED_PREFIX)
+            if unrated:kind=kind[len(UNRATED_PREFIX):]
+            physical.append(Cable(unique_id,group,str(u),str(v),
+                kind,length,0. if service else 1.,not ov,ov,not unrated))
             edge_geometries[unique_id]=geo_by_edge[local_id]
     edge_by_group={}
     for c in physical:
@@ -620,6 +733,7 @@ def trace_group_cables(points,stations,cables, *,
             "incoming":feeder_taps[(station,group)],
             "outgoing":junctions[(station,group)],
             "geometry":cabinet_geom_by_id[cabinet_id],
+            "tolerance_m":equipment_tolerance_m,
         }
         for (station,group),cabinet_id in cabinet_metadata.items()
     }
@@ -675,19 +789,20 @@ def trace_group_cables(points,stations,cables, *,
                 production=number("Opwek ontwerpstroom")
                 cable_consumption=number("Ontwerpstroom kabel")
                 cable_production=number("Kabel opwek ontwerpstroom")
-            if not (consumption or production or cable_consumption or cable_production):
-                raise ValueError(
-                    f"Aansluiting {row_index} mist geldige trafo-/kabelontwerpstromen."
-                )
+            # Four explicit finite zero values are valid zero demand. Missing,
+            # non-numeric and negative currents were rejected by number().
             raw_id=_value(row,("master_asset_id","Master Asset ID","ID"))
-            id=str(raw_id or f"IDX-{row_index}")
+            source_id=str(raw_id or f"IDX-{row_index}")
+            source_groups=group_codes(row[pg])
+            id=source_id if len(source_groups)==1 else source_id+'::'+group
             if id in point_id_to_index:
                 raise ValueError(
                     f"Dubbel Master Asset ID {id}; historische aansluiting niet uniek."
                 )
             point_id_to_index[id]=row_index
             result.append(OriginalConnection(id,station,group,route,
-                             consumption,production,cable_consumption,cable_production))
+                             consumption,production,cable_consumption,cable_production,
+                             source_id,source_groups))
     return {
         "connections":result,
         "cables":physical,

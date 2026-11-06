@@ -193,7 +193,7 @@ afzonderlijk beschreven inpandige appartementverbindingen hebben 0 m rekenlengte
 
 Kies bij 'Laagspanningskabels' de hoofdnetlaag en optioneel een aparte laag
 'Aansluitkabels'. Per laag kan de Function-kolom worden gekozen. In het
-woordenveld staan één of meer woorden die in Function moeten voorkomen;
+woordenveld staan Ã©Ã©n of meer woorden die in Function moeten voorkomen;
 standaard is dit `LS`. Scheid meerdere woorden met een komma of puntkomma. Als
 geen Function-kolom bestaat, wordt de volledige laag gebruikt. De gefilterde
 lijnen van beide lagen worden samengevoegd voordat het kabelnet wordt gemaakt.
@@ -305,7 +305,7 @@ verzoek zichtbaar worden.
         self.addParameter(
             QgsProcessingParameterFeatureSource(
                 self.BAG_PANDEN,
-                self.tr("BAG-pandgeometrieën (optioneel; hergebruik woningtypenlaag)"),
+                self.tr("BAG-pandgeometrieÃ«n (optioneel; hergebruik woningtypenlaag)"),
                 [QgsProcessing.TypeVectorPolygon],
                 optional=True,
             )
@@ -497,6 +497,17 @@ verzoek zichtbaar worden.
                 defaultValue=False,
             )
         )
+        for kind,label in (("XML","Bevestigde LS-schema XML (optioneel)"),
+                           ("EXCEL","Bijbehorende veld/rail/smelt-Excel (optioneel)"),
+                           ("DXF","LS-schema DXF voor fysieke veldcontrole (optioneel)")):
+            self.addParameter(QgsProcessingParameterString(
+                "HISTORISCH_SCHEMA_"+kind,self.tr(label),defaultValue="",optional=True))
+        self.addParameter(QgsProcessingParameterBoolean("HISTORISCHE_OV_ROUTES",
+            self.tr("Oorspronkelijke OV-routes voor gekoppelde aansluitingen toestaan en markeren"),defaultValue=False))
+        self.addParameter(QgsProcessingParameterBoolean("EINDMOF_EERST",
+            self.tr("Eerst houdbaar voortraject met eindmof behouden bij overschrijding"),defaultValue=True))
+        self.addParameter(QgsProcessingParameterBoolean("CONCEPT_ONZEKERE_RICHTINGEN",
+            self.tr("Concept: niet aantoonbaar behoudbare richtingen uitsluitend naar nieuwe stations"),defaultValue=False))
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.AANTAL_NIEUWE,
@@ -846,7 +857,7 @@ verzoek zichtbaar worden.
         """Keep a validated design usable if the optional layout worker fails."""
         from qgis.core import QgsProject, QgsReferencedRectangle, QgsRectangle
         project = QgsProject()
-        project.setTitle("LS-netontwerp — basisproject (layout ontbreekt)")
+        project.setTitle("LS-netontwerp â€” basisproject (layout ontbreekt)")
         tables = (("sleuven_genood", "Sleuven geknipt/genood"),
                   ("clustergebieden", "Clustergebieden"),
                   ("cluster_kabelroutes", "Kabelroutes per cluster"),
@@ -1651,6 +1662,13 @@ verzoek zichtbaar worden.
             engine.NEW_KVA = new_kva
             engine.AUTO_NEW_STATIONS = automatic_count
             engine.PRESERVE_EXISTING_DIRECTIONS = preserve_existing
+            engine.HISTORICAL_OV_ROUTES=self.parameterAsBool(parameters,"HISTORISCHE_OV_ROUTES",context)
+            engine.END_MUFF_FIRST=self.parameterAsBool(parameters,"EINDMOF_EERST",context)
+            engine.RELEASE_UNVERIFIED_GROUPS=self.parameterAsBool(parameters,"CONCEPT_ONZEKERE_RICHTINGEN",context)
+            engine.HISTORICAL_SCHEMA_SOURCES = {
+                kind.lower():self.parameterAsString(parameters,"HISTORISCH_SCHEMA_"+kind,context).strip()
+                for kind in ("XML","EXCEL","DXF")
+            }
             engine.TARGET_UTILIZATION = target_utilization
             engine.MAX_ROUTE_M = max_route_m
             engine.WRITE_SHAPEFILES = bool(write_shapefiles)
@@ -1729,6 +1747,9 @@ verzoek zichtbaar worden.
             if feedback.isCanceled() or "geannuleerd" in str(exc).casefold():
                 raise QgsProcessingException("Berekening geannuleerd; voorbereide invoer is behouden.") from exc
             try:
+                for name in ('gebruikte_ov_bronkabels.csv','bevestigde_historische_schemapaden.json','eindmof_voorstellen.csv','eindmof_voorstellen.geojson','bestaande_stations_kabelgroepen_controle.csv'):
+                    evidence_path=run_output/name
+                    if evidence_path.exists():shutil.copy2(evidence_path,output_dir/name)
                 from ls_netontwerp_wizard.clustering_diagnostics import save_failure
                 message = save_failure(exc, output_dir, work_dir, calculation_log)
             except Exception as report_error:

@@ -69,6 +69,10 @@ N_NEW = 0  # Filled automatically unless AUTO_NEW_STATIONS is disabled.
 NEW_KVA = 630.0
 AUTO_NEW_STATIONS = True
 PRESERVE_EXISTING_DIRECTIONS = False
+HISTORICAL_SCHEMA_SOURCES = {}
+HISTORICAL_OV_ROUTES = False
+RELEASE_UNVERIFIED_GROUPS = False
+END_MUFF_FIRST = True
 CREATE_QGIS_PROJECT = True
 TARGET_UTILIZATION = 0.90
 TARGET_UTILIZATION_PENALTY = 10_000.0
@@ -441,7 +445,7 @@ def _load_local_bag_buildings(
             f"gebruikt: {exc}. Controleer de laag 'Woningtypen BAG/3DBAG'."
         ) from exc
     log(
-        f"BAG woningtypenlaag: {len(buildings):,} lokale pandgeometrieën "
+        f"BAG woningtypenlaag: {len(buildings):,} lokale pandgeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n "
         "hergebruikt; geen nieuwe PDOK-aanvraag nodig."
     )
     return buildings
@@ -548,7 +552,7 @@ def fetch_bag_buildings(bounds: tuple[float, float, float, float]) -> gpd.GeoDat
     if buildings.empty:
         raise RuntimeError("De BAG OGC API gaf geen panden in het invoergebied terug")
     buildings = buildings.drop_duplicates(subset=["BAG_ID"]).reset_index(drop=True)
-    log(f"BAG OGC API: {len(buildings):,} actuele pandgeometrieën opgehaald.")
+    log(f"BAG OGC API: {len(buildings):,} actuele pandgeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n opgehaald.")
     return buildings
 
 BAG_POINT_TOLERANCE_M = 0.35
@@ -3364,7 +3368,7 @@ def partition_cluster_overlaps(polygons, supports, study_area, sample_step=0.05)
     if (sum(p.area for p in repaired) - coverage.area > .001 or
             coverage.symmetric_difference(union).area > .001):
         raise RuntimeError("Clustergebiedsreparatie kon overlap of ontbrekende dekking niet veilig oplossen.")
-    log(f"Clustergrenzen topologisch hersteld: {overlap:.4f} m² overlap over {disputed} grensvlak(ken) verdeeld; {transferred} leeg grensfragment(en) bij een buurgebied gevoegd.")
+    log(f"Clustergrenzen topologisch hersteld: {overlap:.4f} mÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â² overlap over {disputed} grensvlak(ken) verdeeld; {transferred} leeg grensfragment(en) bij een buurgebied gevoegd.")
     return repaired
 
 
@@ -3971,7 +3975,7 @@ def recalculate_manual_assignment(
 
         if outside_area > 0.01:
             raise RuntimeError(
-                f"Clustergebieden vallen {outside_area:.2f} m² buiten het plangebied"
+                f"Clustergebieden vallen {outside_area:.2f} mÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â² buiten het plangebied"
             )
 
     point_counts = np.bincount(point_assignment, minlength=station_count)
@@ -5755,7 +5759,7 @@ def make_qgis_project(gpkg: Path) -> Path | None:
 
         north_arrow = QgsLayoutItemLabel(layout)
         north_arrow.setId("noordpijl")
-        north_arrow.setText("N\n↑")
+        north_arrow.setText("N\nÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“")
         north_font = QFont("Arial", 16)
         north_font.setBold(True)
         north_arrow.setFont(north_font)
@@ -5815,8 +5819,8 @@ def make_qgis_project(gpkg: Path) -> Path | None:
 
         source_label = QgsLayoutItemLabel(layout)
         source_label.setText(
-            "Achtergrond: © OpenStreetMap-bijdragers\n"
-            "Coördinaten: RD New (EPSG:28992)"
+            "Achtergrond: ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© OpenStreetMap-bijdragers\n"
+            "CoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶rdinaten: RD New (EPSG:28992)"
         )
         source_font = QFont("Arial", 6)
         source_label.setFont(source_font)
@@ -5986,8 +5990,43 @@ def main(_automatic_retry: bool = False) -> None:
     # surface for new stations; the optional connection-cable layer is used for
     # routing, but never as a normal station site.
     main_cables_for_station_placement = ls_cables.copy()
+    historical_schema_evidence=None
+    ov_route_records=[]
+    if PRESERVE_EXISTING_DIRECTIONS and HISTORICAL_OV_ROUTES:
+        from ls_netontwerp_wizard.existing_station_retention import group_codes
+        station_field=next((c for c in ('Station','Stationsnaa','Stationsnaam') if c in points),None)
+        group_field=next((c for c in ('Kabel Subgroep','Kabel_Subgroep') if c in points),None)
+        referenced=set()
+        if station_field and group_field:
+            for _,row in points.iterrows():
+                if str(row[station_field]).strip().casefold() in ('','none','nan','null'):continue
+                referenced.update(re.sub(r'^(SMG\d+)-\d+$',r'\1',c) for c in group_codes(row[group_field]))
+        if all(HISTORICAL_SCHEMA_SOURCES.get(k) for k in ('xml','excel','dxf')):
+            from ls_netontwerp_wizard.retention_schema import build_retention_schema
+            schema_stations=gpd.read_file(STATIONS_PATH)
+            sf=next((c for c in ('Stationsnaa','Stationsnaam','Station') if c in schema_stations),None)
+            if sf:
+                schema_stations['Station']=schema_stations[sf]
+                historical_schema_evidence=build_retention_schema(
+                    HISTORICAL_SCHEMA_SOURCES['xml'],HISTORICAL_SCHEMA_SOURCES['excel'],
+                    HISTORICAL_SCHEMA_SOURCES['dxf'],schema_stations.to_dict('records'))
+                for key,chain in historical_schema_evidence['paths'].items():
+                    if key.split('|',1)[1] in referenced:referenced.update(chain)
+        source=original_ls_cables.to_crs(CRS_RD)
+        function=source['Function'].fillna('').astype(str).str.upper()
+        groups=source['Kabel Subgroep'].fillna('').astype(str).str.upper().str.replace(r'^(SMG\d+)-\d+$',r'\1',regex=True)
+        extra=source.loc[function.str.contains('OV') & ~function.str.contains('LS') & groups.isin(referenced)].copy()
+        if not extra.empty:
+            extra['_Historisch_OV']=True
+            ls_cables=ls_cables.copy();ls_cables['_Historisch_OV']=False
+            ls_cables=gpd.GeoDataFrame(pd.concat([ls_cables,extra],ignore_index=True),crs=CRS_RD)
+            columns=[c for c in ('id','master_asset_id','Kabel Subgroep','Type','Function') if c in extra]
+            ov_route_records=[{**r,'Bronrol':'Hoofdkabel','Elektrisch_beoordeeld':False} for r in extra[columns].to_dict('records')]
+            (OUT/'gebruikte_ov_bronkabels.csv').write_text(extra[columns].to_csv(index=False,sep=';'),encoding='utf-8-sig')
+            log(f'OV-uitzondering: {len(extra)} als OV geregistreerde hoofdkabeldelen uit oorspronkelijke groepen meegenomen. Apart beoordelen; OV wordt niet als LS hernoemd.')
     original_connection_cables = None
     connection_cables_for_station_exclusion = None
+    ls_cables['_Aansluitkabel']=False
     cable_frames = [ls_cables]
     if CONNECTION_CABLES_PATH is not None:
         original_connection_cables = ensure_canonical_function_column(
@@ -5999,8 +6038,23 @@ def main(_automatic_retry: bool = False) -> None:
             bool(CONNECTION_FUNCTION_FILTER_ENABLED),
             "Aansluitkabels",
         )
+        if PRESERVE_EXISTING_DIRECTIONS and HISTORICAL_OV_ROUTES:
+            source=original_connection_cables.to_crs(CRS_RD)
+            function=source['Function'].fillna('').astype(str).str.upper()
+            groups=source['Kabel Subgroep'].fillna('').astype(str).str.upper().str.replace(r'^(SMG\d+)-\d+$',r'\1',regex=True)
+            extra=source.loc[function.str.contains('OV') & ~function.str.contains('LS') & groups.isin(referenced)].copy()
+            if not extra.empty:
+                extra['_Historisch_OV']=True
+                selected_connection_cables=selected_connection_cables.copy();selected_connection_cables['_Historisch_OV']=False
+                selected_connection_cables=gpd.GeoDataFrame(pd.concat([selected_connection_cables,extra],ignore_index=True),crs=CRS_RD)
+                columns=[c for c in ('id','master_asset_id','Kabel Subgroep','Type','Function') if c in extra]
+                ov_route_records.extend([{**r,'Bronrol':'Aansluitkabel','Elektrisch_beoordeeld':False} for r in extra[columns].to_dict('records')])
+                log(f'OV-uitzondering: {len(extra)} OV-aansluitkabeldelen uit gekoppelde oorspronkelijke groepen als route meegenomen, met 0 m rekenlengte.')
         connection_cables_for_station_exclusion = selected_connection_cables.copy()
+        selected_connection_cables['_Aansluitkabel']=True
         cable_frames.append(selected_connection_cables)
+    if ov_route_records:
+        pd.DataFrame(ov_route_records).to_csv(OUT/'gebruikte_ov_bronkabels.csv',index=False,sep=';',encoding='utf-8-sig')
     cables = gpd.GeoDataFrame(
         pd.concat(cable_frames, ignore_index=True, sort=False),
         geometry="geometry",
@@ -6304,7 +6358,7 @@ def main(_automatic_retry: bool = False) -> None:
     # after they had already been read and logged.  Connections were then
     # replaced by artificial nearest-main-cable links.
     normal_cables = cables.copy()
-    normal_cables["Rekenfactor"] = 1.0
+    normal_cables["Rekenfactor"] = np.where(normal_cables['_Aansluitkabel'].fillna(False),0.,1.)
     network_frames = [normal_cables]
     if missing_connection_links is not None and not missing_connection_links.empty:
         inferred_cables = missing_connection_links[["geometry"]].copy()
@@ -6362,11 +6416,34 @@ def main(_automatic_retry: bool = False) -> None:
                 "Behoud originele kabelgroepen vereist automatische nieuwe stations."
             )
         from ls_netontwerp_wizard.existing_locked_clustering import prepare_retention
+        if RELEASE_UNVERIFIED_GROUPS:
+            from ls_netontwerp_wizard.review_retention import prepare_review_retention
+            from functools import partial
+            prepare_retention=partial(prepare_review_retention,logger=log)
+            log('CONCEPT: onzekere bestaande richtingen worden niet behouden en uitsluitend nieuwe stations aangeboden; broncontrole blijft open.')
+        schema_paths={}
+        if any(HISTORICAL_SCHEMA_SOURCES.values()):
+            if not all(HISTORICAL_SCHEMA_SOURCES.get(k) for k in ('xml','excel','dxf')):
+                raise ValueError('Kies samen de LS-schema XML, bijbehorende Excel en DXF voor bevestigde voedingspaden.')
+            from ls_netontwerp_wizard.retention_schema import build_retention_schema
+            schema_stations=stations.copy()
+            schema_stations['Station']=schema_stations['Stationsnaa']
+            evidence=historical_schema_evidence or build_retention_schema(
+                HISTORICAL_SCHEMA_SOURCES['xml'],HISTORICAL_SCHEMA_SOURCES['excel'],
+                HISTORICAL_SCHEMA_SOURCES['dxf'],schema_stations.to_dict('records'))
+            schema_paths=evidence['paths']
+            (OUT/'bevestigde_historische_schemapaden.json').write_text(
+                json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
+            log(f'Bevestigde LS-schema-voedingsketens: {len(schema_paths)}; fysieke kabelcontrole blijft verplicht.')
         log("Oorspronkelijke stations, -00 en aftakkingen per kabeltype controleren...")
         original_info = prepare_retention(
             points, stations, normal_cables, MAX_ROUTE_M,
             profile="both", distribution_cabinets=distribution_cabinets,
+            schema_paths=schema_paths,
+            flat_cabinets=flat_cabinets,
+            equipment_tolerance_m=NODE_TOLERANCE_M,end_muff_first=END_MUFF_FIRST,
         )
+        export_end_muffs(original_info,OUT,points.crs)
         original_records = pd.DataFrame(original_info["records"])
         original_records.to_csv(
             OUT / "bestaande_stations_kabelgroepen_controle.csv",
@@ -6711,14 +6788,38 @@ def main(_automatic_retry: bool = False) -> None:
         OUT / "netwerkcontrole.gpkg", layer="kabelcomponenten", driver="GPKG")
 
     if PRESERVE_EXISTING_DIRECTIONS:
-        from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi
-        preserved_solution = solve_locked_voronoi(
-            graph, node_list, unit_node_indices, unit_load,
-            point_to_unit, stations["Stationsnaa"].astype(str).tolist(),
-            station_node_indices, regular_node_indices, original_info,
-            new_capacity, MAX_ROUTE_M,
-            solve_greedy_voronoi_connected_assignment, log,
-        )
+        from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi,RetentionSeparationError
+        for separation_attempt in range(len(points)+1):
+            try:
+                preserved_solution = solve_locked_voronoi(
+                    graph, node_list, unit_node_indices, unit_load,
+                    point_to_unit, stations["Stationsnaa"].astype(str).tolist(),
+                    station_node_indices, regular_node_indices, original_info,
+                    new_capacity, MAX_ROUTE_M,
+                    solve_greedy_voronoi_connected_assignment, log,
+                )
+                break
+            except RetentionSeparationError as exc:
+                if not RELEASE_UNVERIFIED_GROUPS:raise
+                dropped=set(exc.point_indices)&set(original_info['retained_by_index'])
+                for i in original_info['retained_by_index']:
+                    if exc.edge_ids:
+                        members=original_info.get('connections_by_index',{}).get(i,[])
+                        if any(exc.edge_ids.intersection(original_info['retention']['whole_path_edge_ids'][c.id]) for c in members):dropped.add(i)
+                    elif original_info['retained_by_index'][i] in exc.stations:dropped.add(i)
+                if not dropped:raise
+                forced=dict(original_info.get('verification_failures',{}))
+                forced.update({int(i):'Concept - fysieke scheiding niet bewezen: '+str(exc) for i in dropped})
+                log(f'CONCEPT: {len(dropped)} extra oorspronkelijke aansluiting(en) niet behouden wegens gedeelde/ongescheiden route. Geen stationwisseling naar een ander bestaand station.')
+                from ls_netontwerp_wizard.review_retention import prepare_review_retention
+                original_info=prepare_review_retention(points,stations,normal_cables,MAX_ROUTE_M,
+                    profile='both',distribution_cabinets=distribution_cabinets,schema_paths=schema_paths,
+                    flat_cabinets=flat_cabinets,equipment_tolerance_m=NODE_TOLERANCE_M,end_muff_first=END_MUFF_FIRST,
+                    forced_release=forced,logger=log)
+                export_end_muffs(original_info,OUT,points.crs)
+                pd.DataFrame(original_info['records']).to_csv(OUT/'bestaande_stations_kabelgroepen_controle.csv',
+                    sep=';',decimal=',',index=False,encoding='utf-8-sig')
+        else:raise ValueError('Fysieke scheiding kon niet worden afgerond.')
         existing_count = len(stations)
         final_assignment = preserved_solution["assignment"]
         node_cluster = preserved_solution["node_cluster"]
@@ -6733,7 +6834,7 @@ def main(_automatic_retry: bool = False) -> None:
         log(
             f"Autocluster behoudmodus: {N_NEW} nieuwe stations; "
             "bestaande stations zijn uitsluitend met hun oude aansluitingen "
-            "en echte Kabel Subgroep-tracés verbonden."
+            "en echte Kabel Subgroep-tracÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©s verbonden."
         )
     else:
         legacy_new_labels = sorted(
@@ -7452,7 +7553,7 @@ def main(_automatic_retry: bool = False) -> None:
             _AUTO_GEOMETRY_RECOVERY_USED=True
             _AUTO_COUNTS_TRIED.clear()
             _AUTO_TOPOLOGY_MINIMUM_NEW=0
-            log('Losliggende clustergebieden gevonden. Exacte controlegeometrie bewaard; één automatische herstelpoging met alle kabelkandidaten. Alle route-, capaciteit- en gebiedscontroles blijven actief.')
+            log('Losliggende clustergebieden gevonden. Exacte controlegeometrie bewaard; ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n automatische herstelpoging met alle kabelkandidaten. Alle route-, capaciteit- en gebiedscontroles blijven actief.')
             return main(_automatic_retry=True)
         raise RuntimeError(
             "Exclaves aangetroffen in clusters: "
@@ -7549,12 +7650,14 @@ def main(_automatic_retry: bool = False) -> None:
         ]
         connections["Oud_kabelgroep"] = [
             (
-                str(original_info["all_original_by_index"][index].group)
+                ", ".join(original_info["all_original_by_index"][index].source_groups
+                          or (original_info["all_original_by_index"][index].group,))
                 if index in original_info["all_original_by_index"] else ""
             )
             for index in range(len(points))
         ]
         retained_groups=set(original_info["retained_by_index"])
+        connections['OV_controle_open']=[i in original_info.get('ov_points',set()) for i in range(len(points))]
         for index in retained_groups:
             if connections.iloc[index]["Cluster"] != original_info["retained_by_index"][index]:
                 raise RuntimeError(
@@ -7717,6 +7820,16 @@ def main(_automatic_retry: bool = False) -> None:
         missing_connection_links,
     )
     if PRESERVE_EXISTING_DIRECTIONS:
+        cut_features=[]
+        for item in original_info['retention'].get('eindmof_voorstellen',[]):
+            if not item.get('Actueel_voorstel',True) or item.get('X') is None:continue
+            row=dict(item)
+            row['Vrijgegeven_aansluitingen']='; '.join(row['Vrijgegeven_aansluitingen'])
+            row['geometry']=Point(item['X'],item['Y'])
+            cut_features.append(row)
+        if cut_features:
+            gpd.GeoDataFrame(cut_features,geometry='geometry',crs=points.crs).to_file(
+                gpkg,layer='eindmof_voorstellen',driver='GPKG')
         # A dedicated source-level electrical review layer, one feature for
         # the EXACT -00/-01/-02 subgroup, not one combined tree or one length.
         direction_features=[]
@@ -7743,7 +7856,12 @@ def main(_automatic_retry: bool = False) -> None:
                 "Max_ontwerp_A":float(assessment["max_ontwerp_a"]),
                 "gG_A":int(assessment["gg_a"] or 0),
                 "Impedantie_Ohm":float(assessment["impedantie_ohm"]),
-                "Voldoet":bool(assessment["pass"]),
+                "Voldoet":bool(assessment["pass"] and not assessment.get('ov_elektrisch_onbeoordeeld',False)),
+                "LS_rekenmodel_voldoet":bool(assessment['pass']),
+                "OV_controle_open":bool(assessment.get('ov_elektrisch_onbeoordeeld',False)),
+                "Status":'OV elektrisch niet beoordeeld' if assessment.get('ov_elektrisch_onbeoordeeld') else 'LS-rekencontrole',
+                "Reken_m":float(assessment['rekenlengte_m']),
+                "Aansluitkabel_m":float(assessment['aansluitkabels_m']),
                 "Kab_delen":"; ".join(
                     f"{kind}: {length:.2f} m"
                     for _edge_id,kind,length in segments
@@ -7786,7 +7904,7 @@ def main(_automatic_retry: bool = False) -> None:
         # or PDF export failure must not throw the valid design away.
         for filename in ("clustering_overzicht.png", "clustering_overzicht.pdf"):
             (OUT / filename).unlink(missing_ok=True)
-        warning = f"De clustering is berekend, maar de overzichtskaart kon niet worden geëxporteerd: {exc}"
+        warning = f"De clustering is berekend, maar de overzichtskaart kon niet worden geÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«xporteerd: {exc}"
         (OUT / "clustering_waarschuwingen.json").write_text(json.dumps([warning], ensure_ascii=False, indent=2), encoding="utf-8")
         log("WAARSCHUWING: " + warning)
 
@@ -7824,7 +7942,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - Kabelfilter aansluitkabels: {'Function bevat ' + ', '.join(CONNECTION_FUNCTION_TERMS) if original_connection_cables is not None and CONNECTION_FUNCTION_FILTER_ENABLED and CONNECTION_FUNCTION_TERMS else ('geen Function-filter' if original_connection_cables is not None else 'geen aparte aansluitkabellaag')}.
 - Plangebiedselectie: {'aansluitingen en bestaande stations buiten de grens zijn genegeerd' if plan_area is not None and ONLY_WITHIN_PLAN_AREA else ('aansluitingen buiten de grens zijn niet toegestaan' if plan_area is not None else 'geen plangebied opgegeven')}.
 - Kabelroutes buiten plangebied: {'toegestaan; de volledige omweg telt mee voor de routelengte' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else ('niet toegestaan; het netwerk is op de grens geknipt' if plan_area is not None else 'geen plangebiedbeperking')}.
-- De gefilterde kabellagen zijn vóór de routeberekening samengevoegd en als één
+- De gefilterde kabellagen zijn vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r de routeberekening samengevoegd en als ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n
   netwerk geknipt/genood. Daardoor zijn ook onderlinge kruisingen en
   T-aansluitingen echte netwerkknooppunten.
 - Kabeltopologie: ieder cluster heeft een exclusief, stationsgeworteld
@@ -7832,7 +7950,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   station verbonden; gedeelde kabellengte tussen clusters is 0 meter.
 - Nieuwe stationlocatie: het belastingsgewogen midden van het cluster, exact
   gesnapt op een kabelknoop.
-- Gebiedstopologie: {'gebieden blijven binnen het plangebied; meerdere vlakken zijn alleen toegestaan als de aangesloten kabelroute buiten het plangebied doorloopt en ieder vlak de route raakt' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else 'elk cluster is één aaneengesloten polygoon zonder exclaves'}.
+- Gebiedstopologie: {'gebieden blijven binnen het plangebied; meerdere vlakken zijn alleen toegestaan als de aangesloten kabelroute buiten het plangebied doorloopt en ieder vlak de route raakt' if plan_area is not None and ALLOW_EXTERNAL_ROUTES else 'elk cluster is ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n aaneengesloten polygoon zonder exclaves'}.
   De grenzen zijn afgeleid van de dichtstbijzijnde exclusieve kabelroutes; bij
   een knooppunt wordt zo nodig een smalle corridor om de eigen kabel gereserveerd.
   Alle eigen aansluitingen, routes en het station liggen binnen het eigen gebied.
@@ -7858,7 +7976,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
 - `stationomtrekken`, `verdeelkasten` en `interne_netkoppelingen` zijn aanwezig
   wanneer deze optionele installatielagen zijn gebruikt. De stationsnaam van
   een omtrek is aan het gelijknamige bestaande station gekoppeld; alle kabels
-  tegen dezelfde omtrek of verdeelkast vormen één genood netwerk.
+  tegen dezelfde omtrek of verdeelkast vormen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n genood netwerk.
 - `aangevulde_aansluitkabels` bevat gewone LS-aansluitingen die de bronkabels
   niet werkelijk raakten. Deze lijnen hebben `Reken_m` gelijk aan hun fysieke
   lengte en zijn onderdeel van de exclusieve clusterroute.
@@ -7881,7 +7999,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   OpenStreetMap XYZ-achtergrond. Een gekozen plangebied is als aparte omlijnde
   laag opgenomen. De lagen verwijzen relatief naar het blijvende GeoPackage in
   dezelfde resultaatmap en zijn geen tijdelijke lagen. De LS-aansluitingen zijn
-  grote gekleurde cirkels met de ontwerpstroom, op één decimaal, vet en
+  grote gekleurde cirkels met de ontwerpstroom, op ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n decimaal, vet en
   gecentreerd in iedere cirkel. Alle vector-symbolen gebruiken vaste
   millimetermaten en alle labels vaste puntmaten; zij veranderen dus niet van
   grootte bij zoomen. Stationslabels hebben in de layout verplichte plaatsing,
@@ -7913,7 +8031,7 @@ geselecteerde aansluitingen naar een geselecteerd doelstation te verplaatsen.
 De tool werkt daarna de kabelroutes, aaneengesloten gebieden en alle
 statistiekvelden gezamenlijk bij en maakt eerst een GeoPackage-back-up.
 Bij het samenvoegen/verwijderen van een hele broncluster worden ook de
-stationsvolgnummers, stationstabel, legenda-categorieën en layoutweergave
+stationsvolgnummers, stationstabel, legenda-categorieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n en layoutweergave
 direct opnieuw opgebouwd. Het project wordt als gewijzigd gemarkeerd; de
 GeoPackage-gegevens zelf zijn meteen opgeslagen.
 De controles op ontwerpstroom, kabellengte, routes door/over andere clusters en
@@ -7935,14 +8053,14 @@ onbeheerde sleuf kan daarbij automatisch een langere bestaande route
 vervangen. Voor iedere wijziging wordt een GeoPackage-back-up geschreven.
 Met `Geselecteerde routes verversen` worden uitsluitend de in
 `Kabelroutes per cluster` of `Stations ontwerp` geselecteerde clusters opnieuw
-berekend; de overige routegeometrieën blijven ongewijzigd.
+berekend; de overige routegeometrieÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â«n blijven ongewijzigd.
 
 ## Aandachtspunt
 
 Dit is een ruimtelijk ontwerpvoorstel op basis van de aangeleverde civiele
 sleuflijnen. Beveiligingsselectiviteit, spanningsval, kabeldoorsnede, fasebalans,
 grondpositie en fysieke plaatsbaarheid van nieuwe stations zijn niet in de
-brongegevens aanwezig en moeten vóór uitvoering technisch worden getoetst.
+brongegevens aanwezig en moeten vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r uitvoering technisch worden getoetst.
 """
     (OUT / "LEESMIJ.md").write_text(readme, encoding="utf-8")
     # QGIS/Qt cleanup can return exit code 1 when it is initialized in the same
@@ -7985,6 +8103,26 @@ brongegevens aanwezig en moeten vóór uitvoering technisch worden getoetst.
         flush=True,
     )
     log(f"\nGereed: {OUT}")
+
+
+
+
+def export_end_muffs(info,out,crs):
+    """Reviewable proposals on verified source vertices, never installed assets."""
+    proposals=info['retention'].get('eindmof_voorstellen',[])
+    columns=['Station','Kabel_Subgroep','Kabeldeel','Voorstel_knoop','Reden',
+             'Vrijgegeven_aansluitingen','Status','Behoudbaar_voortraject','Actueel_voorstel','X','Y']
+    pd.DataFrame(proposals,columns=columns).to_csv(
+        out/'eindmof_voorstellen.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+    features=[]
+    for item in proposals:
+        if not item.get('Actueel_voorstel',True) or item.get('X') is None or item.get('Y') is None:continue
+        props=dict(item);props['Vrijgegeven_aansluitingen']='; '.join(props['Vrijgegeven_aansluitingen'])
+        features.append(dict(type='Feature',properties=props,
+            geometry=dict(type='Point',coordinates=[item['X'],item['Y']])))
+    result=dict(type='FeatureCollection',features=features)
+    if crs is not None:result['crs']=dict(type='name',properties=dict(name=str(crs)))
+    (out/'eindmof_voorstellen.geojson').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
 if __name__ == "__main__":

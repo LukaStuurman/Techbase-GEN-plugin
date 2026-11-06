@@ -1,0 +1,83 @@
+"""Regression: retain a calculable prefix before releasing a full feeder."""
+from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
+from ls_netontwerp_wizard.existing_station_retention import Cable,OriginalConnection,retain_original
+
+def c(id,edges,load=20,group='K01-00'):
+    return OriginalConnection(id,'S',group,tuple(edges),load,0,load,0)
+
+def run():
+    cables=[Cable('a','K01-00','s','n1','150AL',40),
+            Cable('b','K01-00','n1','n2','150AL',30),
+            Cable('c','K01-00','n2','n3','150AL',30)]
+    points=[c('near',['a']),c('middle',['a','b']),c('far',['a','b','c'])]
+    def retain(points=points,cables=cables,capacity=1000,**kw):
+        return retain_original({'S':capacity},points,cables,station_origins={'S':'s'},end_muff_first=True,**kw)
+    result=retain(max_route_m=80)
+    assert set(result['behouden'])=={'near','middle'},result
+    cut=result['eindmof_voorstellen'][0]
+    assert cut['Kabeldeel']=='c' and cut['Voorstel_knoop']=='n2',cut
+    assert cut['Vrijgegeven_aansluitingen']==('far',),cut
+    # Transformer overload must first remove a distal subtree, even when a
+    # nearer consumer has higher demand. Retained consumers remain original.
+    result=retain([c('near',['a'],40),c('middle',['a','b'],10),c('far',['a','b','c'],20)],capacity=55)
+    assert set(result['behouden'])=={'near','middle'},result
+    assert result['stations']['S']['pass']
+    # All consumers sharing the cut conductor are released together.
+    result=retain(points+[c('far2',['a','b','c'])],max_route_m=80)
+    assert set(result['vrijgegeven'])=={'far','far2'},result
+    # Parent overload: try the remote cabinet feeder, not the upstream trunk.
+    branch=Cable('branch','K01-01','n1','bx','150AL',100)
+    result=retain([c('near',['a'],40),c('downstream',['branch'],40,'K01-01')],
+                  [cables[0],branch],capacity=55,
+                  branch_roots={('S','K01-01'):'n1'},parent_routes={('S','K01-01'):('a',)})
+    assert result['behouden']==('near',),result
+    assert result['eindmof_voorstellen'][0]['Kabeldeel']=='branch',result
+    # Unknown LS electrical data: cap before that conductor; known prefix kept.
+    unknown=Cable('b','K01-00','n1','n2','6CU',30,rating_available=False)
+    result=retain(points[:2],[cables[0],unknown])
+    assert result['behouden']==('near',),result
+    assert result['eindmof_voorstellen'][0]['Voorstel_knoop']=='n1',result
+    # If even the first connection cannot fit, record the attempted cap and
+    # release all; no fictitious upstream customer or capacity is invented.
+    result=retain([c('near',['a'],40)],[cables[0]],capacity=10)
+    assert not result['behouden'] and result['eindmof_voorstellen'],result
+    # Real geometry bridge: verified end-cap coordinates, unchanged source,
+    # original-only ownership and identical prefix length in the audit.
+    import geopandas as gpd
+    from shapely.geometry import Point,LineString
+    from ls_netontwerp_wizard.existing_locked_clustering import prepare_retention
+    p=gpd.GeoDataFrame({'Station':['S']*3,'Kabel Subgroep':['K01-00']*3,
+        'Master Asset ID':['near','middle','far'],'Ontwerpstroom':[20.]*3,
+        'Opwek ontwerpstroom':[0.]*3,'Ontwerpstroom kabel':[20.]*3,
+        'Kabel opwek ontwerpstroom':[0.]*3},geometry=[Point(40,0),Point(70,0),Point(100,0)],crs=28992)
+    stations=gpd.GeoDataFrame({'Stationsnaa':['S'],'Max_A':[1000.]},geometry=[Point(0,0)],crs=28992)
+    wires=gpd.GeoDataFrame({'Kabel Subgroep':['K01-00'],'Type':['150AL']},geometry=[LineString([(0,0),(100,0)])],crs=28992)
+    original=wires.copy(deep=True)
+    prepared=prepare_retention(p,stations,wires,80)
+    assert prepared['retained_by_index']=={0:'S',1:'S'},prepared
+    proposal=prepared['retention']['eindmof_voorstellen'][0]
+    assert (proposal['X'],proposal['Y'])==(70.,0.),proposal
+    assert wires.equals(original)
+    assert sum(line.length for line in prepared['physical_by_station']['S'].values())==70.
+    # Collinear source type boundaries may merge in the routing graph.
+    # The complete edge must still be within ONE retained station union.
+    import networkx as nx
+    from ls_netontwerp_wizard.existing_locked_clustering import _select_reserved_edges,RetentionSeparationError
+    graph=nx.Graph();graph.add_edge((0,0),(70,0),route_geometry=LineString([(0,0),(70,0)]))
+    sections={'S':{'first':LineString([(0,0),(40,0)]),'second':LineString([(40,0),(70,0)])}}
+    reserved=_select_reserved_edges(graph,list(graph.nodes),sections)
+    assert set(reserved.values())=={'S'},reserved
+    for bad in ({'S':{'first':LineString([(0,0),(40,0)])}},
+                {'S':{'first':LineString([(0,0),(30,0)]),'second':LineString([(40,0),(70,0)])}}):
+        try:_select_reserved_edges(graph,list(graph.nodes),bad)
+        except ValueError:pass
+        else:raise AssertionError('Reserved an unretained tail or a source gap')
+    overlap=dict(sections,T={'same':LineString([(0,0),(70,0)])})
+    try:_select_reserved_edges(graph,list(graph.nodes),overlap)
+    except RetentionSeparationError:pass
+    else:raise AssertionError('Shared physical old feeder was accepted')
+    print('END_MUFF_FIRST_TEST_OK (route, transformer, subtree, cabinet, unknown LS, no viable prefix)')
+
+if __name__=='__main__':run()

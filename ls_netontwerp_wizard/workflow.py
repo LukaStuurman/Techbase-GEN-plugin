@@ -1129,6 +1129,12 @@ class WorkflowRunner:
                     self.v.get("preserve_existing_directions", False)
                 ),
                 "AANTAL_NIEUWE": self.v["manual_station_count"],
+                "HISTORISCH_SCHEMA_XML": self.v.get("retention_schema_xml", ""),
+                "HISTORISCHE_OV_ROUTES": self.v.get("historical_ov_routes", False),
+                "EINDMOF_EERST": self.v.get("end_muff_first", True),
+                "CONCEPT_ONZEKERE_RICHTINGEN": self.v.get("release_unverified_groups", False),
+                "HISTORISCH_SCHEMA_EXCEL": self.v.get("retention_schema_excel", ""),
+                "HISTORISCH_SCHEMA_DXF": self.v.get("retention_schema_dxf", ""),
                 "NIEUW_KVA": self.v["new_station_kva"],
                 "VOORKEUR_BENUTTING": self.v["target_utilization"],
                 "MAX_ROUTE_M": self.v["max_route"],

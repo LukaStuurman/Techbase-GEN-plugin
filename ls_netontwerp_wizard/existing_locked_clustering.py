@@ -25,19 +25,27 @@ from .existing_group_trace import (
     GROUP_FIELDS, STATION_FIELDS, required_column, trace_group_cables,
 )
 from .existing_station_retention import (
-    parent_group, group_code, retain_original,
+    parent_group, group_code, group_codes, retain_original,
 )
+
+class RetentionSeparationError(ValueError):
+    def __init__(self,message,*,stations=(),edge_ids=(),point_indices=()):
+        super().__init__(message)
+        self.stations=set(stations);self.edge_ids=set(edge_ids);self.point_indices=set(point_indices)
 
 
 def prepare_retention(points, stations, original_cables, max_route_m, *,
                       profile="both", installed_fuses=None,
-                      distribution_cabinets=None):
+                      distribution_cabinets=None,schema_paths=None,flat_cabinets=None,
+                      equipment_tolerance_m=.20,end_muff_first=True):
     """Read original Station+Kabel Subgroep per connection; no guessed groups.
 
     Unassigned/new connections are *not* put on an existing station.
     An original station with missing Kabel Subgroep is also released to a new
     station rather than given a synthetic existing cable direction.
     """
+    from .historical_terminals import original_terminals
+    points,equipment_terminals,original_cables=original_terminals(points,flat_cabinets,original_cables,schema_paths)
     point_station=required_column(points, STATION_FIELDS, "oorspronkelijk station van aansluiting")
     point_group=required_column(points, GROUP_FIELDS, "Kabel Subgroep van aansluiting")
     station_field=required_column(stations, ("Stationsnaa","Stationsnaam","Station"), "bestaande station")
@@ -58,19 +66,26 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         if value is None or str(value).strip().casefold() in ("","none","nan","null"):
             missing_group.append(str(index))
             continue
-        group_code(value)  # reject ambiguously joined subgroup values
+        group_codes(value)  # preserve every explicit original membership
         original.append(index)
     if not original:
         raise ValueError(
             "Geen LS-aansluitingen met zowel een bestaand Station als een "
             "geldige volledige Kabel Subgroep gevonden. Controleer de "
-            "Lovion/CSV-koppeling vóór deze behoudmodus."
+            "Lovion/CSV-koppeling vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³r deze behoudmodus."
         )
     traced=trace_group_cables(
         points.loc[original],stations,original_cables,
         point_station_field=point_station,point_group_field=point_group,
         distribution_cabinets=distribution_cabinets,
+        schema_paths=schema_paths,
+        equipment_tolerance_m=equipment_tolerance_m,
     )
+    indivisible={}
+    for c in traced['connections']:
+        i=int(traced['point_id_to_index'][c.id])
+        flat=equipment_terminals.get(i,{}).get('flatkast')
+        if flat:indivisible[c.source_id or c.id]=c.station+'|flat|'+flat
     retained=retain_original(
         names,traced["connections"],traced["cables"],
         installed_fuses=installed_fuses,
@@ -79,7 +94,20 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
         parent_routes=traced["parent_routes"],
         feeder_parents=traced["feeder_parents"],
         profile=profile,max_route_m=max_route_m,
+        indivisible_connections=indivisible,end_muff_first=end_muff_first,
     )
+    import ast
+    for proposal in retained['eindmof_voorstellen']:
+        proposal['Status']='CONCEPT - knip/eindmof; fysieke uitvoering te controleren'
+        try:
+            xy=ast.literal_eval(proposal['Voorstel_knoop'])
+            geometry=traced['edge_geometries'][proposal['Kabeldeel']]
+            point=Point(float(xy[0]),float(xy[1]))
+            if point.distance(geometry)>.001:raise ValueError('node outside conductor')
+            proposal['X']=point.x;proposal['Y']=point.y
+        except (ValueError,TypeError,SyntaxError,KeyError,IndexError):
+            proposal['X']=None;proposal['Y']=None
+            proposal['Status']='OPEN - geen verifieerbare eindmoflocatie'
     retained_ids=set(retained["behouden"])
     active={connection.id:connection for connection in traced["connections"]
             if connection.id in retained_ids}
@@ -104,11 +132,21 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
     # Original current components are independently tracked; no exported
     # 'Hoogste Trafo' surrogate is silently substituted for actual verbruik.
     records=[]
-    for connection in traced["connections"]:
+    by_index=defaultdict(list)
+    for c in traced['connections']:by_index[int(traced['point_id_to_index'][c.id])].append(c)
+    originals={index:max(items,key=lambda c:retained['route_m'][c.id]) for index,items in by_index.items()}
+    edge_by_id={e.id:e for e in traced['cables']}
+    ov_points=set()
+    for original_index,connection in originals.items():
+        ov_open=any(edge_by_id[eid].ov_route for member in by_index[original_index]
+                    for eid in retained['whole_path_edge_ids'][member.id])
+        if ov_open:ov_points.add(original_index)
         records.append({
-            "Aansluiting":connection.id,
+            "Aansluiting":connection.source_id or connection.id,
             "Orig_station":connection.station,
-            "Kabel_Subgroep":connection.group,
+            "Kabel_Subgroep":", ".join(connection.source_groups or (connection.group,)),
+            "Bron_kabelgroepen":str(points.loc[traced['point_id_to_index'][connection.id],'Orig_kabelgroepen_bron']),
+            "Route_anker":str(equipment_terminals.get(int(traced['point_id_to_index'][connection.id]),{})),
             "Via_verdeelkast":next(
                 (
                     str(cabinet_id) for (name,group),cabinet_id
@@ -127,16 +165,18 @@ def prepare_retention(points, stations, original_cables, max_route_m, *,
             "Kabel_verbruik_A":connection.kabel_verbruik_a,
             "Kabel_opwek_A":connection.kabel_opwek_a,
             "Bestaande_route_m":retained["route_m"].get(connection.id,0.),
+            "OV_controle_open":ov_open,
         })
     return {
         "retained_by_index":{
             int(traced["point_id_to_index"][id]): active[id].station
             for id in retained_ids
         },
-        "all_original_by_index":{
-            int(traced["point_id_to_index"][c.id]):c
-            for c in traced["connections"]
-        },
+        "all_original_by_index":originals,
+        "connections_by_index":dict(by_index),
+        "equipment_terminal_indices":set(equipment_terminals),
+        "equipment_terminals":equipment_terminals,
+        "ov_points":ov_points,
         "physical_by_station":physical_by_station,
         "edge_geometries":traced["edge_geometries"],
         "retention":retained,
@@ -156,16 +196,20 @@ def _select_reserved_edges(graph,node_list,physical_by_station):
     from shapely.geometry import LineString
     originals=[]
     owners=[]
+    original_ids=[]
     for station,segments in physical_by_station.items():
-        for line in segments.values():
+        for ident,line in segments.items():
             originals.append(line)
             owners.append(station)
+            original_ids.append(ident)
     if not originals:
         # A transformer/direction may be so overloaded that retaining zero
         # old connections is the only safe choice. In that case every
         # original consumer is released; do not invent a retained cable.
         return {}
     tree=STRtree(originals)
+    station_coverage={station:unary_union(list(segments.values())).buffer(.035)
+                      for station,segments in physical_by_station.items()}
     owner_by_edge={}
     actual=[]
     for u,v,data in graph.edges(data=True):
@@ -174,15 +218,25 @@ def _select_reserved_edges(graph,node_list,physical_by_station):
             line=LineString([u,v])
         if line.is_empty or line.length<1e-7:continue
         matched=set()
-        for idx in tree.query(line.buffer(.035)):
-            i=int(idx)
+        matched_ids=set()
+        candidates=[int(idx) for idx in tree.query(line.buffer(.035))]
+        for i in candidates:
             # Entire graph conductor must lie on original cable geometry.
             if originals[i].buffer(.035).covers(line):
                 matched.add(owners[i])
+                matched_ids.add(original_ids[i])
+        # Noding may merge collinear source sections across a cable-type
+        # boundary. Reserve a graph edge only if its WHOLE geometry is on
+        # this one station's verified original union; never bridge a gap or
+        # include an unretained downstream tail.
+        for station in {owners[i] for i in candidates} - matched:
+            if station_coverage[station].covers(line):
+                matched.add(station)
+                matched_ids.update(original_ids[i] for i in candidates if owners[i]==station)
         if len(matched)>1:
-            raise ValueError(
+            raise RetentionSeparationError(
                 "Bestaande stations hebben hetzelfde fysieke kabeldeel "
-                "in hun originele feeder; route-eigenaarschap niet eenduidig."
+                "in hun originele feeder; route-eigenaarschap niet eenduidig.",stations=matched,edge_ids=matched_ids,
             )
         if matched:
             owner=matched.pop()
@@ -191,13 +245,15 @@ def _select_reserved_edges(graph,node_list,physical_by_station):
     if not owner_by_edge:
         raise ValueError("Bestaande kabelgroepen niet teruggevonden in het sleuvennet.")
     covered=unary_union(actual).buffer(.055)
-    for original in originals:
-        if original.difference(covered).length>0.15:
-            raise ValueError(
-                "Niet alle oorspronkelijke kabeldelen zijn met het genode "
-                "kabelnet te identificeren; controleer ontbrekende of "
-                "anders gesplitste kabelgroepen."
-            )
+    missing=[(owners[i],original_ids[i],float(original.difference(covered).length))
+             for i,original in enumerate(originals) if original.difference(covered).length>0.15]
+    if missing:
+        detail='; '.join(f'{station}/{ident}: {length:.3f} m' for station,ident,length in missing[:8])
+        raise ValueError(
+            "Niet alle oorspronkelijke kabeldelen zijn met het genode "
+            "kabelnet te identificeren; controleer ontbrekende of "
+            "anders gesplitste kabelgroepen. Ontbrekend: "+detail
+        )
     return owner_by_edge
 
 
@@ -223,9 +279,9 @@ def solve_locked_voronoi(
         for node in edge:
             previous=owner_by_node.setdefault(node,station)
             if previous!=station:
-                raise ValueError(
+                raise RetentionSeparationError(
                     "Twee oude stations delen een elektrisch knooppunt; "
-                    "kan niet veilig bij beide worden behouden."
+                    "kan niet veilig bij beide worden behouden.",stations=(previous,station),
                 )
             by_station[station].add(node)
     # Ensure the solver's station root is actually connected to its ORIGINAL
@@ -236,6 +292,7 @@ def solve_locked_voronoi(
         if source in owner_by_node and owner_by_node[source]!=station:
             raise ValueError(f"Stationroot {station} op kabel van ander station.")
         own=by_station.get(station,set())
+        if not own:continue  # no retained consumer: do not reserve an empty old root
         if own and source not in own:
             topology=nx.Graph()
             topology.add_nodes_from(graph.nodes)
@@ -284,15 +341,16 @@ def solve_locked_voronoi(
         record=original_info["all_original_by_index"].get(point_index)
         if record is None:
             raise ValueError("Behouden oorspronkelijke aansluitingsrecord ontbreekt.")
-        code=group_code(record.group)
-        visited=set()
-        while code is not None:
-            if code in visited:
-                raise ValueError(f"Voedingslus bij {station}/{code}.")
-            visited.add(code)
-            if (station,code) in original_info.get("cabinet_bridges",{}):
-                retained_cabinet_links.add((station,code))
-            code=feeder_parents.get((station,code),parent_group(code))
+        for member in original_info.get('connections_by_index',{}).get(point_index,[record]):
+            code=group_code(member.group)
+            visited=set()
+            while code is not None:
+                if code in visited:
+                    raise ValueError(f"Voedingslus bij {station}/{code}.")
+                visited.add(code)
+                if (station,code) in original_info.get("cabinet_bridges",{}):
+                    retained_cabinet_links.add((station,code))
+                code=feeder_parents.get((station,code),parent_group(code))
 
     if retained_cabinet_links:
         snap_tree=cKDTree(np.asarray(node_list,dtype=float))
@@ -320,7 +378,7 @@ def solve_locked_voronoi(
             if parent_node==child_node:
                 continue
             equipment_graph=nx.Graph()
-            cabinet_boundary=link["geometry"].buffer(.25)
+            cabinet_boundary=link["geometry"].buffer(max(.25,float(link.get('tolerance_m',.20))+.05))
             for u,v,data in graph.edges(data=True):
                 weight=float(data.get("weight",1.))
                 if not (
@@ -355,7 +413,7 @@ def solve_locked_voronoi(
                     old=owner_by_node.setdefault(node,station)
                     if old!=station:
                         raise ValueError(
-                            "Verschillende oude stations delen één "
+                            "Verschillende oude stations delen ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n "
                             "verdeelkastknooppunt; controleer het schakelschema."
                         )
                     by_station[station].add(node)
@@ -371,7 +429,7 @@ def solve_locked_voronoi(
         wanted=names[station]
         if locked[unit] not in (-1,wanted):
             raise ValueError(
-                "Eén kabelknooppunt bevat oorspronkelijke aansluitingen "
+                "EÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©n kabelknooppunt bevat oorspronkelijke aansluitingen "
                 "van verschillende stations; splits/controleer brongeometrie."
             )
         locked[unit]=wanted
@@ -524,6 +582,7 @@ def solve_locked_voronoi(
     # Reserved stations still need a connected source-to-original-consumer
     # territory. New graph edges never pass through this territory.
     for name,index in names.items():
+        if not np.any(locked==index):continue
         source=node_list[int(existing_station_node_indices[index])]
         own={node_list[i] for i in np.flatnonzero(node_owner==index)}
         if source not in own:
