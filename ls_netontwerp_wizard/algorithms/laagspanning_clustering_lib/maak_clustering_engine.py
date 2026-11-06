@@ -68,6 +68,12 @@ CRS_RD = "EPSG:28992"
 N_NEW = 0  # Filled automatically unless AUTO_NEW_STATIONS is disabled.
 NEW_KVA = 630.0
 AUTO_NEW_STATIONS = True
+PRESERVE_EXISTING_DIRECTIONS = False
+HISTORICAL_SCHEMA_SOURCES = {}
+HISTORICAL_OV_ROUTES = False
+RELEASE_UNVERIFIED_GROUPS = False
+END_MUFF_FIRST = True
+PLANNED_150AL_FEEDERS = False
 CREATE_QGIS_PROJECT = True
 TARGET_UTILIZATION = 0.90
 TARGET_UTILIZATION_PENALTY = 10_000.0
@@ -2218,6 +2224,11 @@ def solve_greedy_voronoi_connected_assignment(
                 ),
             ]
         )
+        # New-only clustering has no existing source. During candidate
+        # pruning its final candidate may be tested for removal; an empty
+        # source list is invalid, not a zero-row Dijkstra calculation.
+        if not len(source_indices):
+            return None
         if len(np.unique(source_indices)) != len(source_indices):
             return None
         source_distances = cached_source_distances(source_indices)
@@ -2595,6 +2606,7 @@ def build_exclusive_routes(
     source_nodes: list[tuple[float, float]],
     target_nodes: list[tuple[float, float]],
     unit_assignment: np.ndarray,
+    asset_geometry_collector=None,
 ) -> tuple[list[object], np.ndarray, np.ndarray]:
     node_index = {node: i for i, node in enumerate(node_list)}
     route_geometries: list[object] = []
@@ -2610,11 +2622,15 @@ def build_exclusive_routes(
         }
         owned_graph = graph.subgraph(owned_nodes)
         owned_node_count = owned_graph.number_of_nodes()
+        if not np.any(unit_assignment==station_index):
+            route_geometries.append(LineString());route_lengths.append(0.)
+            if asset_geometry_collector is not None:asset_geometry_collector[station_index]={}
+            continue
         if source not in owned_graph:
             raise RuntimeError("Station ontbreekt in het eigen kabeldeel")
-        predecessors, owned_distances = nx.dijkstra_predecessor_and_distance(
-            owned_graph, source, weight="weight"
-        )
+        from ls_netontwerp_wizard.reuse_first_routing import route_tree
+        station_targets = [target_nodes[i] for i in np.flatnonzero(unit_assignment == station_index)]
+        predecessors, owned_distances = route_tree(owned_graph,source,station_targets,MAX_ROUTE_M)
         edges: set[tuple[tuple[float, float], tuple[float, float]]] = set()
         targets = {
             target_nodes[i]
@@ -2637,6 +2653,12 @@ def build_exclusive_routes(
                 if guard > owned_node_count:
                     raise RuntimeError("Lus gedetecteerd in routeboom")
         lines = [graph_edge_line(graph, u, v) for u, v in edges]
+        if asset_geometry_collector is not None:
+            assets=defaultdict(list)
+            for u,v in edges:
+                asset=graph[u][v].get('source_asset_id') or graph[u][v].get('planned_cable_id')
+                if asset:assets[asset].append(graph_edge_line(graph,u,v))
+            asset_geometry_collector[station_index]={asset:unary_union(parts) for asset,parts in assets.items()}
         geometry = merge_linework(lines)
         route_geometries.append(geometry)
         route_lengths.append(float(sum(line.length for line in lines)))
@@ -5135,6 +5157,11 @@ def make_qgis_project(gpkg: Path) -> Path | None:
             layer_specs.append(
                 ("aangevulde_aansluitkabels", "Aangevulde aansluitkabels")
             )
+        if "bestaande_richtingen_controle" in gpkg_layer_names:
+            layer_specs.append(
+                ("bestaande_richtingen_controle",
+                 "Controle bestaande richtingen per Kabel Subgroep")
+            )
         loaded = {}
         palette = list(plt.cm.tab20.colors) + list(plt.cm.Set3.colors)
         overview = pd.read_csv(OUT / "cluster_overzicht.csv", sep=";", decimal=",")
@@ -5551,7 +5578,8 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         ]
         hidden_reference_layers = [
             loaded[name]
-            for name in ("bag_panden_appartementen",)
+            for name in ("bag_panden_appartementen",
+                         "bestaande_richtingen_controle")
             if name in loaded
         ]
         order = [
@@ -5974,8 +6002,43 @@ def main(_automatic_retry: bool = False) -> None:
     # surface for new stations; the optional connection-cable layer is used for
     # routing, but never as a normal station site.
     main_cables_for_station_placement = ls_cables.copy()
+    historical_schema_evidence=None
+    ov_route_records=[]
+    if PRESERVE_EXISTING_DIRECTIONS and HISTORICAL_OV_ROUTES:
+        from ls_netontwerp_wizard.existing_station_retention import group_codes
+        station_field=next((c for c in ('Station','Stationsnaa','Stationsnaam') if c in points),None)
+        group_field=next((c for c in ('Kabel Subgroep','Kabel_Subgroep') if c in points),None)
+        referenced=set()
+        if station_field and group_field:
+            for _,row in points.iterrows():
+                if str(row[station_field]).strip().casefold() in ('','none','nan','null'):continue
+                referenced.update(re.sub(r'^(SMG\d+)-\d+$',r'\1',c) for c in group_codes(row[group_field]))
+        if all(HISTORICAL_SCHEMA_SOURCES.get(k) for k in ('xml','excel','dxf')):
+            from ls_netontwerp_wizard.retention_schema import build_retention_schema
+            schema_stations=gpd.read_file(STATIONS_PATH)
+            sf=next((c for c in ('Stationsnaa','Stationsnaam','Station') if c in schema_stations),None)
+            if sf:
+                schema_stations['Station']=schema_stations[sf]
+                historical_schema_evidence=build_retention_schema(
+                    HISTORICAL_SCHEMA_SOURCES['xml'],HISTORICAL_SCHEMA_SOURCES['excel'],
+                    HISTORICAL_SCHEMA_SOURCES['dxf'],schema_stations.to_dict('records'))
+                for key,chain in historical_schema_evidence['paths'].items():
+                    if key.split('|',1)[1] in referenced:referenced.update(chain)
+        source=original_ls_cables.to_crs(CRS_RD)
+        function=source['Function'].fillna('').astype(str).str.upper()
+        groups=source['Kabel Subgroep'].fillna('').astype(str).str.upper().str.replace(r'^(SMG\d+)-\d+$',r'\1',regex=True)
+        extra=source.loc[function.str.contains('OV') & ~function.str.contains('LS') & groups.isin(referenced)].copy()
+        if not extra.empty:
+            extra['_Historisch_OV']=True
+            ls_cables=ls_cables.copy();ls_cables['_Historisch_OV']=False
+            ls_cables=gpd.GeoDataFrame(pd.concat([ls_cables,extra],ignore_index=True),crs=CRS_RD)
+            columns=[c for c in ('id','master_asset_id','Kabel Subgroep','Type','Function') if c in extra]
+            ov_route_records=[{**r,'Bronrol':'Hoofdkabel','Elektrisch_beoordeeld':False} for r in extra[columns].to_dict('records')]
+            (OUT/'gebruikte_ov_bronkabels.csv').write_text(extra[columns].to_csv(index=False,sep=';'),encoding='utf-8-sig')
+            log(f'OV-uitzondering: {len(extra)} als OV geregistreerde hoofdkabeldelen uit oorspronkelijke groepen meegenomen. Apart beoordelen; OV wordt niet als LS hernoemd.')
     original_connection_cables = None
     connection_cables_for_station_exclusion = None
+    ls_cables['_Aansluitkabel']=False
     cable_frames = [ls_cables]
     if CONNECTION_CABLES_PATH is not None:
         original_connection_cables = ensure_canonical_function_column(
@@ -5987,8 +6050,23 @@ def main(_automatic_retry: bool = False) -> None:
             bool(CONNECTION_FUNCTION_FILTER_ENABLED),
             "Aansluitkabels",
         )
+        if PRESERVE_EXISTING_DIRECTIONS and HISTORICAL_OV_ROUTES:
+            source=original_connection_cables.to_crs(CRS_RD)
+            function=source['Function'].fillna('').astype(str).str.upper()
+            groups=source['Kabel Subgroep'].fillna('').astype(str).str.upper().str.replace(r'^(SMG\d+)-\d+$',r'\1',regex=True)
+            extra=source.loc[function.str.contains('OV') & ~function.str.contains('LS') & groups.isin(referenced)].copy()
+            if not extra.empty:
+                extra['_Historisch_OV']=True
+                selected_connection_cables=selected_connection_cables.copy();selected_connection_cables['_Historisch_OV']=False
+                selected_connection_cables=gpd.GeoDataFrame(pd.concat([selected_connection_cables,extra],ignore_index=True),crs=CRS_RD)
+                columns=[c for c in ('id','master_asset_id','Kabel Subgroep','Type','Function') if c in extra]
+                ov_route_records.extend([{**r,'Bronrol':'Aansluitkabel','Elektrisch_beoordeeld':False} for r in extra[columns].to_dict('records')])
+                log(f'OV-uitzondering: {len(extra)} OV-aansluitkabeldelen uit gekoppelde oorspronkelijke groepen als route meegenomen, met 0 m rekenlengte.')
         connection_cables_for_station_exclusion = selected_connection_cables.copy()
+        selected_connection_cables['_Aansluitkabel']=True
         cable_frames.append(selected_connection_cables)
+    if ov_route_records:
+        pd.DataFrame(ov_route_records).to_csv(OUT/'gebruikte_ov_bronkabels.csv',index=False,sep=';',encoding='utf-8-sig')
     cables = gpd.GeoDataFrame(
         pd.concat(cable_frames, ignore_index=True, sort=False),
         geometry="geometry",
@@ -6003,7 +6081,48 @@ def main(_automatic_retry: bool = False) -> None:
             "onderlinge kruisingen en T-aansluitingen worden gezamenlijk genood."
         )
     stations = gpd.read_file(STATIONS_PATH).to_crs(CRS_RD)
-    stations = include_pinned_stations(stations, globals().get("PINNED_NEW_STATIONS", []))
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # Never disguise a manually pinned NEW station as an existing one.
+        # The independent new-only Voronoi cannot treat it as an old source;
+        # require explicit review instead of silently mis-assigning users.
+        if globals().get("PINNED_NEW_STATIONS", []):
+            raise ValueError(
+                "De originele-richtingenmodus ondersteunt nog geen handmatig "
+                "vastgezette NIEUWE stations. Verwijder die vastzetting of "
+                "gebruik de gewone autocluster; bestaande stations mogen "
+                "geen nieuwe aansluitingen overnemen."
+            )
+        retired={
+            str(name).strip() for name
+            in globals().get("RETIRED_STATION_NAMES", set())
+        }
+        if retired:
+            name_field=next(
+                (column for column in ("Stationsnaa","Stationsnaam","Station")
+                 if column in stations.columns),None
+            )
+            if not name_field:
+                raise ValueError(
+                    "Bestaande stationslaag mist stationsnaam voor uitsluiten "
+                    "van vervallen stations."
+                )
+            excluded=stations[name_field].astype(str).str.strip().isin(retired)
+            if bool(excluded.any()):
+                log(
+                    f"Behoudmodus: {int(excluded.sum())} vervallen station(s) "
+                    "uit oorspronkelijke stationsbronnen verwijderd. "
+                    "Hun aansluitingen worden uitsluitend nieuwe clusters."
+                )
+                stations=stations.loc[~excluded].reset_index(drop=True)
+        if stations.empty:
+            raise ValueError(
+                "Er zijn geen actieve bestaande stations over. "
+                "Gebruik de gewone autocluster voor een volledig nieuw net."
+            )
+    else:
+        stations = include_pinned_stations(
+            stations, globals().get("PINNED_NEW_STATIONS", [])
+        )
     flat_cabinets = None
     if FLAT_CABINETS_PATH is not None:
         flat_cabinets = gpd.read_file(FLAT_CABINETS_PATH).to_crs(CRS_RD)
@@ -6017,6 +6136,7 @@ def main(_automatic_retry: bool = False) -> None:
             station_enclosures.geometry.notna()
             & ~station_enclosures.geometry.is_empty
         ].reset_index(drop=True)
+    all_station_enclosures=station_enclosures.copy() if station_enclosures is not None else None
     distribution_cabinets = None
     if DISTRIBUTION_CABINETS_PATH is not None:
         distribution_cabinets = gpd.read_file(
@@ -6251,7 +6371,7 @@ def main(_automatic_retry: bool = False) -> None:
     # after they had already been read and logged.  Connections were then
     # replaced by artificial nearest-main-cable links.
     normal_cables = cables.copy()
-    normal_cables["Rekenfactor"] = 1.0
+    normal_cables["Rekenfactor"] = np.where(normal_cables['_Aansluitkabel'].fillna(False),0.,1.)
     network_frames = [normal_cables]
     if missing_connection_links is not None and not missing_connection_links.empty:
         inferred_cables = missing_connection_links[["geometry"]].copy()
@@ -6302,6 +6422,70 @@ def main(_automatic_retry: bool = False) -> None:
     )
 
     stations["Max_A"] = stations["KVA"] / 0.23 / 3.0
+    original_info = None
+    if PRESERVE_EXISTING_DIRECTIONS:
+        if not AUTO_NEW_STATIONS:
+            raise ValueError(
+                "Behoud originele kabelgroepen vereist automatische nieuwe stations."
+            )
+        from ls_netontwerp_wizard.existing_locked_clustering import prepare_retention
+        if RELEASE_UNVERIFIED_GROUPS:
+            from ls_netontwerp_wizard.review_retention import prepare_review_retention
+            from functools import partial
+            prepare_retention=partial(prepare_review_retention,logger=log)
+            log('CONCEPT: onzekere bestaande richtingen worden niet behouden en uitsluitend nieuwe stations aangeboden; broncontrole blijft open.')
+        schema_paths={}
+        if any(HISTORICAL_SCHEMA_SOURCES.values()):
+            if not all(HISTORICAL_SCHEMA_SOURCES.get(k) for k in ('xml','excel','dxf')):
+                raise ValueError('Kies samen de LS-schema XML, bijbehorende Excel en DXF voor bevestigde voedingspaden.')
+            from ls_netontwerp_wizard.retention_schema import build_retention_schema
+            schema_stations=stations.copy()
+            schema_stations['Station']=schema_stations['Stationsnaa']
+            evidence=historical_schema_evidence or build_retention_schema(
+                HISTORICAL_SCHEMA_SOURCES['xml'],HISTORICAL_SCHEMA_SOURCES['excel'],
+                HISTORICAL_SCHEMA_SOURCES['dxf'],schema_stations.to_dict('records'))
+            schema_paths=evidence['paths']
+            (OUT/'bevestigde_historische_schemapaden.json').write_text(
+                json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
+            log(f'Bevestigde LS-schema-voedingsketens: {len(schema_paths)}; fysieke kabelcontrole blijft verplicht.')
+        log("Oorspronkelijke stations, -00 en aftakkingen per kabeltype controleren...")
+        original_info = prepare_retention(
+            points, stations, normal_cables, MAX_ROUTE_M,
+            profile="both", distribution_cabinets=distribution_cabinets,
+            schema_paths=schema_paths,
+            flat_cabinets=flat_cabinets,
+            equipment_tolerance_m=NODE_TOLERANCE_M,end_muff_first=END_MUFF_FIRST,
+        )
+        export_end_muffs(original_info,OUT,points.crs)
+        original_records = pd.DataFrame(original_info["records"])
+        original_records.to_csv(
+            OUT / "bestaande_stations_kabelgroepen_controle.csv",
+            sep=";", decimal=",", index=False, encoding="utf-8-sig",
+        )
+        retained_count = len(original_info["retained_by_index"])
+        released_count = (
+            len(original_info["all_original_by_index"]) - retained_count
+        )
+        log(
+            f"Historische kabelgroepcontrole: {retained_count} aansluiting(en) "
+            f"behouden; {released_count} vrijgegeven. "
+            "Bestaande kabels mogen niet naar een ander station overspringen."
+        )
+        if original_info["missing_groups"]:
+            log(
+                f"{len(original_info['missing_groups'])} aansluiting(en) met "
+                "een oude stationsnaam maar zonder Kabel Subgroep worden "
+                "uitsluitend naar nieuwe stations gerouteerd."
+            )
+        if original_info["unknown_stations"]:
+            log(
+                f"{len(original_info['unknown_stations'])} aansluiting(en) "
+                "verwijzen naar een niet-beschikbaar oud station. Deze "
+                "mogen niet bij een ander bestaand station terechtkomen "
+                "en worden uitsluitend voor nieuwe stations aangeboden."
+            )
+        for warning in original_info["retention"]["waarschuwingen"]:
+            log("WAARSCHUWING bestaande kabelgroepcontrole: "+str(warning))
     existing_capacity = stations["Max_A"].to_numpy(float)
     new_capacity = NEW_KVA / 0.23 / 3.0
     theoretical_new = math.ceil(
@@ -6616,487 +6800,342 @@ def main(_automatic_retry: bool = False) -> None:
     gpd.GeoDataFrame(component_records, geometry="geometry", crs=CRS_RD).to_file(
         OUT / "netwerkcontrole.gpkg", layer="kabelcomponenten", driver="GPKG")
 
-    legacy_new_labels = sorted(
-        {
-            label
-            for label in unit_legacy
-            if re.fullmatch(r"Trafo\s+\d+", label, flags=re.I)
-        },
-        key=lambda value: int(re.search(r"\d+", value).group()),
-    )
-    candidate_nodes: list[tuple[float, float]] = []
-    candidate_node_indices: list[int] = []
-    for label in legacy_new_labels:
-        mask = unit_legacy_array == label
-        median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
-        representative = int(np.flatnonzero(mask)[0])
-        nearest = regular_graph_index_near(
-            median, unit_node_indices[representative]
-        )
-        candidate_node_indices.append(nearest)
-        candidate_nodes.append(node_list[nearest])
-        log(f"Kandidaat {label}: kabelknoop {candidate_nodes[-1]}")
-
-    # When GebiedLabel falls back to the existing Station assignment, create
-    # candidate sites inside every overloaded/missing station area. This puts
-    # new roots on the cable branches that actually need capacity instead of
-    # relying only on globally farthest geometry.
-    used_candidate_indices = set(candidate_node_indices)
-    capacity_by_label = {
-        str(stations.iloc[index]["Stationsnaa"]).strip(): float(existing_capacity[index])
-        for index in range(len(stations))
-    }
-    station_node_by_label = {
-        str(stations.iloc[index]["Stationsnaa"]).strip(): int(station_node_indices[index])
-        for index in range(len(stations))
-    }
-    non_trafo_labels = sorted(
-        {
-            str(label).strip()
-            for label in unit_legacy
-            if str(label).strip()
-            and not re.fullmatch(r"Trafo\s+\d+", str(label).strip(), flags=re.I)
-        }
-    )
-    for label in non_trafo_labels:
-        members = np.flatnonzero(unit_legacy_array == label)
-        area_load = float(unit_load[members].sum())
-        current_capacity = capacity_by_label.get(label, 0.0)
-        required_candidates = max(
-            0,
-            int(
-                math.ceil(
-                    max(
-                        0.0,
-                        area_load / TARGET_UTILIZATION - current_capacity,
-                    )
-                    / new_capacity
-                    - 1e-12
+    if PRESERVE_EXISTING_DIRECTIONS:
+        from ls_netontwerp_wizard.existing_locked_clustering import solve_locked_voronoi,RetentionSeparationError
+        planned_main_segments=None;planned_obstacles=None;planned_obstacle_interiors=None
+        if PLANNED_150AL_FEEDERS:
+            planned_main_segments,planned_obstacles=prepare_planned_150al_corridors(
+                original_ls_cables,all_station_enclosures,plan_area,bool(ALLOW_EXTERNAL_ROUTES),bool(HISTORICAL_OV_ROUTES))
+            from shapely.prepared import prep
+            planned_obstacle_interiors=planned_obstacles.buffer(-.001)
+            planned_obstacle_check=prep(planned_obstacles)
+            planned_interior_check=prep(planned_obstacle_interiors)
+        site_parts=planned_main_segments if planned_main_segments else station_placement_parts
+        site_main_tree=STRtree(site_parts) if site_parts else None
+        site_service_tree=STRtree(connection_exclusion_parts) if connection_exclusion_parts else None
+        def preserved_station_site(xy):
+            array=np.asarray([xy],dtype=float);point=Point(xy)
+            if point_tree.query(array)[0][0]<NEW_STATION_POINT_CLEARANCE_M:return False
+            if site_main_tree is None or site_parts[int(site_main_tree.nearest(point))].distance(point)>.08:return False
+            if planned_obstacles is not None and planned_obstacle_check.covers(point):return False
+            if site_service_tree is not None and connection_exclusion_parts[int(site_service_tree.nearest(point))].distance(point)<NEW_STATION_CONNECTION_CABLE_CLEARANCE_M:return False
+            if excluded_station_mask(array,globals().get('EXCLUDED_STATION_AREAS',[]))[0]:return False
+            if plan_area is not None and not buffered_plan.covers(Point(xy)):return False
+            return True
+        for separation_attempt in range(len(points)+1):
+            try:
+                preserved_solution = solve_locked_voronoi(
+                    graph, node_list, unit_node_indices, unit_load,
+                    point_to_unit, stations["Stationsnaa"].astype(str).tolist(),
+                    station_node_indices, regular_node_indices, original_info,
+                    new_capacity, MAX_ROUTE_M,
+                    solve_greedy_voronoi_connected_assignment, log,
+                    placement_check=preserved_station_site,
+                    planned_main_segments=planned_main_segments,
+                    planned_connection_check=(lambda line: not planned_interior_check.intersects(line) or line.intersection(planned_obstacle_interiors).length<=1e-6) if planned_obstacles is not None else None,
+                    protected_equipment=unary_union(list(all_station_enclosures.geometry)) if PLANNED_150AL_FEEDERS and all_station_enclosures is not None else None,
                 )
-            ),
+                break
+            except RetentionSeparationError as exc:
+                if not RELEASE_UNVERIFIED_GROUPS:raise
+                dropped=set(exc.point_indices)&set(original_info['retained_by_index'])
+                for i in original_info['retained_by_index']:
+                    if exc.edge_ids:
+                        members=original_info.get('connections_by_index',{}).get(i,[])
+                        if any(exc.edge_ids.intersection(original_info['retention']['whole_path_edge_ids'][c.id]) for c in members):dropped.add(i)
+                    elif original_info['retained_by_index'][i] in exc.stations:dropped.add(i)
+                if not dropped:raise
+                forced=dict(original_info.get('verification_failures',{}))
+                forced.update({int(i):'Concept - fysieke scheiding niet bewezen: '+str(exc) for i in dropped})
+                log(f'CONCEPT: {len(dropped)} extra oorspronkelijke aansluiting(en) niet behouden wegens gedeelde/ongescheiden route. Geen stationwisseling naar een ander bestaand station.')
+                from ls_netontwerp_wizard.review_retention import prepare_review_retention
+                original_info=prepare_review_retention(points,stations,normal_cables,MAX_ROUTE_M,
+                    profile='both',distribution_cabinets=distribution_cabinets,schema_paths=schema_paths,
+                    flat_cabinets=flat_cabinets,equipment_tolerance_m=NODE_TOLERANCE_M,end_muff_first=END_MUFF_FIRST,
+                    forced_release=forced,logger=log)
+                export_end_muffs(original_info,OUT,points.crs)
+                pd.DataFrame(original_info['records']).to_csv(OUT/'bestaande_stations_kabelgroepen_controle.csv',
+                    sep=';',decimal=',',index=False,encoding='utf-8-sig')
+        else:raise ValueError('Fysieke scheiding kon niet worden afgerond.')
+        # Distinct GEN conductors can share physical XY while remaining
+        # electrically separate. Keep the exact circuit graph returned by
+        # preservation through route construction and all final checks.
+        original_node_count=len(node_list)
+        graph=preserved_solution.get('model_graph',graph)
+        node_list=preserved_solution.get('model_nodes',node_list)
+        if len(node_list)>original_node_count:
+            previous_index=node_index
+            placement_tree=cKDTree(np.asarray(node_list[:original_node_count],dtype=float))
+            component_extension=[]
+            for node in node_list[original_node_count:]:
+                # This lookup classifies the placement surface only; it
+                # never adds an electrical link between the circuit nodes.
+                index=previous_index.get(tuple(node))
+                if index is None:index=int(placement_tree.query(np.asarray(node,dtype=float))[1])
+                component_extension.append(graph_component_by_node_index[index])
+            graph_component_by_node_index=np.concatenate([graph_component_by_node_index,component_extension])
+        node_index={node:i for i,node in enumerate(node_list)}
+        node_xy=np.asarray(node_list,dtype=float)
+        adjacency=nx.to_scipy_sparse_array(graph,nodelist=node_list,weight='weight',format='csr',dtype=float)
+        unit_node_indices=preserved_solution.get('unit_node_indices',unit_node_indices)
+        unit_nodes=[node_list[int(i)] for i in unit_node_indices]
+        point_node_indices=unit_node_indices[point_to_unit]
+        point_nodes=[node_list[int(i)] for i in point_node_indices]
+        circuit_audit=preserved_solution.get('circuit_audit',{})
+        (OUT/'gescheiden_bronkabels_controle.json').write_text(json.dumps(circuit_audit,ensure_ascii=False,indent=2),encoding='utf-8')
+        existing_count = len(stations)
+        final_assignment = preserved_solution["assignment"]
+        node_cluster = preserved_solution["node_cluster"]
+        new_node_indices = preserved_solution["new_node_indices"]
+        new_nodes = preserved_solution["new_nodes"]
+        selected_legacy_labels = preserved_solution["new_labels"]
+        N_NEW = len(new_nodes)
+        capacities = np.concatenate(
+            [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
         )
-        local_seed_indices: list[int] = []
-        if label in station_node_by_label:
-            local_seed_indices.append(station_node_by_label[label])
+        source_nodes = station_nodes + new_nodes
+        log(
+            f"Autocluster behoudmodus: {N_NEW} nieuwe stations; "
+            "bestaande stations zijn uitsluitend met hun oude aansluitingen "
+            "en echte Kabel Subgroep-tracés verbonden."
+        )
+    else:
+        legacy_new_labels = sorted(
+            {
+                label
+                for label in unit_legacy
+                if re.fullmatch(r"Trafo\s+\d+", label, flags=re.I)
+            },
+            key=lambda value: int(re.search(r"\d+", value).group()),
+        )
+        candidate_nodes: list[tuple[float, float]] = []
+        candidate_node_indices: list[int] = []
+        for label in legacy_new_labels:
+            mask = unit_legacy_array == label
+            median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
+            representative = int(np.flatnonzero(mask)[0])
+            nearest = regular_graph_index_near(
+                median, unit_node_indices[representative]
+            )
+            candidate_node_indices.append(nearest)
+            candidate_nodes.append(node_list[nearest])
+            log(f"Kandidaat {label}: kabelknoop {candidate_nodes[-1]}")
 
-        for candidate_number in range(1, required_candidates + 1):
-            available_members = [
-                int(unit_index)
-                for unit_index in members
-                if regular_graph_index_near(
+        # When GebiedLabel falls back to the existing Station assignment, create
+        # candidate sites inside every overloaded/missing station area. This puts
+        # new roots on the cable branches that actually need capacity instead of
+        # relying only on globally farthest geometry.
+        used_candidate_indices = set(candidate_node_indices)
+        capacity_by_label = {
+            str(stations.iloc[index]["Stationsnaa"]).strip(): float(existing_capacity[index])
+            for index in range(len(stations))
+        }
+        station_node_by_label = {
+            str(stations.iloc[index]["Stationsnaa"]).strip(): int(station_node_indices[index])
+            for index in range(len(stations))
+        }
+        non_trafo_labels = sorted(
+            {
+                str(label).strip()
+                for label in unit_legacy
+                if str(label).strip()
+                and not re.fullmatch(r"Trafo\s+\d+", str(label).strip(), flags=re.I)
+            }
+        )
+        for label in non_trafo_labels:
+            members = np.flatnonzero(unit_legacy_array == label)
+            area_load = float(unit_load[members].sum())
+            current_capacity = capacity_by_label.get(label, 0.0)
+            required_candidates = max(
+                0,
+                int(
+                    math.ceil(
+                        max(
+                            0.0,
+                            area_load / TARGET_UTILIZATION - current_capacity,
+                        )
+                        / new_capacity
+                        - 1e-12
+                    )
+                ),
+            )
+            local_seed_indices: list[int] = []
+            if label in station_node_by_label:
+                local_seed_indices.append(station_node_by_label[label])
+
+            for candidate_number in range(1, required_candidates + 1):
+                available_members = [
+                    int(unit_index)
+                    for unit_index in members
+                    if regular_graph_index_near(
+                        unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
+                    )
+                    not in used_candidate_indices
+                ]
+                if not available_members:
+                    break
+                if local_seed_indices:
+                    local_seed_xy = node_xy[np.asarray(local_seed_indices, dtype=int)]
+                    member_xy = unit_xy[np.asarray(available_members, dtype=int)]
+                    nearest_sq = np.min(
+                        np.sum(
+                            (member_xy[:, None, :] - local_seed_xy[None, :, :]) ** 2,
+                            axis=2,
+                        ),
+                        axis=1,
+                    )
+                    member_loads = unit_load[np.asarray(available_members, dtype=int)]
+                    chosen_unit = available_members[
+                        int(np.argmax(nearest_sq * (member_loads + 0.5)))
+                    ]
+                else:
+                    median = weighted_geometric_median(
+                        unit_xy[members], unit_load[members]
+                    )
+                    chosen_unit = min(
+                        available_members,
+                        key=lambda unit_index: float(
+                            np.sum((unit_xy[unit_index] - median) ** 2)
+                        ),
+                    )
+                graph_index = regular_graph_index_near(
+                    unit_xy[chosen_unit], unit_node_indices[chosen_unit]
+                )
+                legacy_new_labels.append(label)
+                candidate_node_indices.append(graph_index)
+                candidate_nodes.append(node_list[graph_index])
+                used_candidate_indices.add(graph_index)
+                local_seed_indices.append(graph_index)
+                log(
+                    f"Belastingskandidaat {label} {candidate_number}/"
+                    f"{required_candidates}: kabelknoop {candidate_nodes[-1]}"
+                )
+
+        # If the automatically selected station count is larger than the supplied
+        # Trafo candidate labels, add deterministic demand-weighted farthest sites.
+        # They start on a real connection cable node and are relocated to the
+        # load-weighted center of their assigned cluster in the normal iterations.
+        seed_indices = list(station_node_indices) + candidate_node_indices
+        if seed_indices:
+            seed_xy = node_xy[np.asarray(seed_indices, dtype=int)]
+            closest_sq = np.min(
+                np.sum((unit_xy[:, None, :] - seed_xy[None, :, :]) ** 2, axis=2),
+                axis=1,
+            )
+        else:
+            closest_sq = np.full(len(unit_xy), np.inf)
+        auto_number = 1
+        candidate_pool_target = max(len(candidate_nodes), N_NEW + 4) if N_NEW > 0 else 0
+        while len(candidate_nodes) < candidate_pool_target:
+            scores = closest_sq * (unit_load + 0.5)
+            chosen_unit = None
+            for unit_index in np.argsort(scores)[::-1]:
+                graph_index = regular_graph_index_near(
                     unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
                 )
-                not in used_candidate_indices
-            ]
-            if not available_members:
-                break
-            if local_seed_indices:
-                local_seed_xy = node_xy[np.asarray(local_seed_indices, dtype=int)]
-                member_xy = unit_xy[np.asarray(available_members, dtype=int)]
-                nearest_sq = np.min(
-                    np.sum(
-                        (member_xy[:, None, :] - local_seed_xy[None, :, :]) ** 2,
-                        axis=2,
-                    ),
-                    axis=1,
-                )
-                member_loads = unit_load[np.asarray(available_members, dtype=int)]
-                chosen_unit = available_members[
-                    int(np.argmax(nearest_sq * (member_loads + 0.5)))
-                ]
-            else:
-                median = weighted_geometric_median(
-                    unit_xy[members], unit_load[members]
-                )
-                chosen_unit = min(
-                    available_members,
-                    key=lambda unit_index: float(
-                        np.sum((unit_xy[unit_index] - median) ** 2)
-                    ),
-                )
+                if graph_index not in used_candidate_indices:
+                    chosen_unit = int(unit_index)
+                    break
+            if chosen_unit is None:
+                raise RuntimeError("Geen extra unieke kabelknopen voor nieuwe stations")
             graph_index = regular_graph_index_near(
                 unit_xy[chosen_unit], unit_node_indices[chosen_unit]
             )
+            automatic_name = f"Auto kandidaat {auto_number}"
+            legacy_hint = str(unit_legacy[chosen_unit]).strip()
+            label = legacy_hint or automatic_name
+            auto_number += 1
             legacy_new_labels.append(label)
             candidate_node_indices.append(graph_index)
             candidate_nodes.append(node_list[graph_index])
             used_candidate_indices.add(graph_index)
-            local_seed_indices.append(graph_index)
+            delta = unit_xy - node_xy[graph_index]
+            closest_sq = np.minimum(closest_sq, np.sum(delta * delta, axis=1))
+            hint_text = f" voor {legacy_hint}" if legacy_hint else ""
             log(
-                f"Belastingskandidaat {label} {candidate_number}/"
-                f"{required_candidates}: kabelknoop {candidate_nodes[-1]}"
+                f"Kandidaat {automatic_name}{hint_text}: "
+                f"kabelknoop {candidate_nodes[-1]}"
             )
 
-    # If the automatically selected station count is larger than the supplied
-    # Trafo candidate labels, add deterministic demand-weighted farthest sites.
-    # They start on a real connection cable node and are relocated to the
-    # load-weighted center of their assigned cluster in the normal iterations.
-    seed_indices = list(station_node_indices) + candidate_node_indices
-    if seed_indices:
-        seed_xy = node_xy[np.asarray(seed_indices, dtype=int)]
-        closest_sq = np.min(
-            np.sum((unit_xy[:, None, :] - seed_xy[None, :, :]) ** 2, axis=2),
-            axis=1,
+        # The geometric/farthest candidate pool can still miss a long, winding
+        # cable branch: a unit may look close on the map while its network route is
+        # longer than MAX_ROUTE_M. Add deterministic candidates at uncovered unit
+        # nodes until every unit has at least one available station location within
+        # the hard route limit. The facility MILP still decides which N_NEW sites
+        # are actually selected.
+        coverage_sources = np.asarray(
+            list(station_node_indices) + candidate_node_indices, dtype=int
         )
-    else:
-        closest_sq = np.full(len(unit_xy), np.inf)
-    auto_number = 1
-    candidate_pool_target = max(len(candidate_nodes), N_NEW + 4) if N_NEW > 0 else 0
-    while len(candidate_nodes) < candidate_pool_target:
-        scores = closest_sq * (unit_load + 0.5)
-        chosen_unit = None
-        for unit_index in np.argsort(scores)[::-1]:
+        coverage_distances = network_distance_matrix(
+            adjacency, coverage_sources, unit_node_indices
+        )
+        nearest_coverage = np.min(coverage_distances, axis=1)
+        route_candidate_number = 1
+        while np.any(nearest_coverage > MAX_ROUTE_M + 1e-7):
+            uncovered = np.flatnonzero(nearest_coverage > MAX_ROUTE_M + 1e-7)
+            chosen_unit = int(
+                uncovered[np.argmax(nearest_coverage[uncovered] * (unit_load[uncovered] + 0.5))]
+            )
             graph_index = regular_graph_index_near(
-                unit_xy[int(unit_index)], unit_node_indices[int(unit_index)]
+                unit_xy[chosen_unit], unit_node_indices[chosen_unit]
             )
-            if graph_index not in used_candidate_indices:
-                chosen_unit = int(unit_index)
-                break
-        if chosen_unit is None:
-            raise RuntimeError("Geen extra unieke kabelknopen voor nieuwe stations")
-        graph_index = regular_graph_index_near(
-            unit_xy[chosen_unit], unit_node_indices[chosen_unit]
-        )
-        automatic_name = f"Auto kandidaat {auto_number}"
-        legacy_hint = str(unit_legacy[chosen_unit]).strip()
-        label = legacy_hint or automatic_name
-        auto_number += 1
-        legacy_new_labels.append(label)
-        candidate_node_indices.append(graph_index)
-        candidate_nodes.append(node_list[graph_index])
-        used_candidate_indices.add(graph_index)
-        delta = unit_xy - node_xy[graph_index]
-        closest_sq = np.minimum(closest_sq, np.sum(delta * delta, axis=1))
-        hint_text = f" voor {legacy_hint}" if legacy_hint else ""
-        log(
-            f"Kandidaat {automatic_name}{hint_text}: "
-            f"kabelknoop {candidate_nodes[-1]}"
-        )
-
-    # The geometric/farthest candidate pool can still miss a long, winding
-    # cable branch: a unit may look close on the map while its network route is
-    # longer than MAX_ROUTE_M. Add deterministic candidates at uncovered unit
-    # nodes until every unit has at least one available station location within
-    # the hard route limit. The facility MILP still decides which N_NEW sites
-    # are actually selected.
-    coverage_sources = np.asarray(
-        list(station_node_indices) + candidate_node_indices, dtype=int
-    )
-    coverage_distances = network_distance_matrix(
-        adjacency, coverage_sources, unit_node_indices
-    )
-    nearest_coverage = np.min(coverage_distances, axis=1)
-    route_candidate_number = 1
-    while np.any(nearest_coverage > MAX_ROUTE_M + 1e-7):
-        uncovered = np.flatnonzero(nearest_coverage > MAX_ROUTE_M + 1e-7)
-        chosen_unit = int(
-            uncovered[np.argmax(nearest_coverage[uncovered] * (unit_load[uncovered] + 0.5))]
-        )
-        graph_index = regular_graph_index_near(
-            unit_xy[chosen_unit], unit_node_indices[chosen_unit]
-        )
-        if graph_index in used_candidate_indices:
-            raise RuntimeError(
-                "Route-dekkingskandidaat kon niet op een unieke kabelknoop "
-                "worden geplaatst"
-            )
-        previous_distance = float(nearest_coverage[chosen_unit])
-        automatic_name = f"Route kandidaat {route_candidate_number}"
-        legacy_hint = str(unit_legacy[chosen_unit]).strip()
-        label = legacy_hint or automatic_name
-        route_candidate_number += 1
-        legacy_new_labels.append(label)
-        candidate_node_indices.append(graph_index)
-        candidate_nodes.append(node_list[graph_index])
-        used_candidate_indices.add(graph_index)
-
-        new_coverage = network_distance_matrix(
-            adjacency, np.asarray([graph_index], dtype=int), unit_node_indices
-        )[:, 0]
-        nearest_coverage = np.minimum(nearest_coverage, new_coverage)
-        hint_text = f" voor {legacy_hint}" if legacy_hint else ""
-        log(
-            f"Kandidaat {automatic_name}{hint_text}: kabelknoop "
-            f"{candidate_nodes[-1]} (voorheen {previous_distance:.1f} m van "
-            "de dichtstbijzijnde beschikbare stationslocatie)"
-        )
-
-    junction_candidates = junction_station_candidates(
-        graph,node_list,regular_node_indices,raw_main_node_indices,
-        unit_node_indices,unit_load,new_capacity,radius_m=min(350.,MAX_ROUTE_M),
-        limit=max(8,min(24,len(candidate_node_indices))),seed_indices=candidate_node_indices) if AUTO_NEW_STATIONS else []
-    junction_candidate_nodes = {row['index'] for row in junction_candidates}
-    for row in junction_candidates:
-        index=row['index']
-        if index in candidate_node_indices:continue
-        candidate_node_indices.append(index);candidate_nodes.append(node_list[index])
-        legacy_new_labels.append(f"Knooppunt met {row['directions']} belastbare richtingen")
-        log(f"Extra knooppuntkandidaat {node_list[index]}: {row['directions']} richtingen, {row['load']:.1f} A bereikbaar binnen 350 m.")
-    initial_voronoi_node_cluster = None
-    all_distances = None
-    if AUTO_NEW_STATIONS:
-        # Skip slow MILP station selection and connected assignment. The old
-        # cable-Voronoi fallback is the automatic method from the start.
-        log("Automatische berekening: direct kabel-Voronoi, zonder voorafgaande MILP-solvers.")
-        try:
-            (
-                voronoi_assignment,
-                facility_min_util,
-                initial_voronoi_node_cluster,
-                voronoi_candidate_indices,
-                _voronoi_unit_distances,
-            ) = solve_greedy_voronoi_connected_assignment(
-                adjacency, node_list, unit_node_indices, unit_load,
-                station_node_indices, candidate_node_indices,
-                existing_capacity, new_capacity, regular_node_indices,
-                graph_component_by_node_index, None,
-            )
-        except RuntimeError as exc:
-            count_options = automatic_new_station_count_options(
-                float(design_current.sum()),
-                float(existing_capacity.sum()),
-                float(new_capacity),
-            )
-            remaining_counts = [
-                count for count in count_options if count not in _AUTO_COUNTS_TRIED
-            ]
-            if remaining_counts:
-                log(
-                    f"Kabel-Voronoi nog niet geldig; opnieuw proberen met "
-                    f"{remaining_counts[0]} als automatisch startaantal."
+            if graph_index in used_candidate_indices:
+                raise RuntimeError(
+                    "Route-dekkingskandidaat kon niet op een unieke kabelknoop "
+                    "worden geplaatst"
                 )
-                return main(_automatic_retry=True)
-            raise RuntimeError(
-                "De directe kabel-Voronoi-berekening kon geen capaciteitsgeldige "
-                "en kabelverbonden stationsverdeling vinden."
-            ) from exc
-        while len(candidate_nodes) < len(candidate_node_indices):
-            index = len(candidate_nodes)
-            candidate_nodes.append(node_list[candidate_node_indices[index]])
-            legacy_new_labels.append(f"Capaciteitskandidaat {index + 1}")
-        selected_mask = np.zeros(len(candidate_node_indices), dtype=bool)
-        selected_mask[voronoi_candidate_indices] = True
-        existing_count = len(stations)
-        compact_to_global = np.asarray(
-            list(range(existing_count))
-            + [existing_count + int(index) for index in voronoi_candidate_indices],
-            dtype=int,
-        )
-        initial_assignment = compact_to_global[voronoi_assignment]
-        N_NEW = len(voronoi_candidate_indices)
-        _AUTO_COUNTS_TRIED.add(N_NEW)
-        log(
-            f"Directe kabel-Voronoi selecteert {N_NEW} nieuwe stations en "
-            "behoudt de bestaande stations als vaste bronnen."
-        )
-    else:
-        # A manually fixed count still requires the exact-count solver.
-        all_source_indices = np.concatenate(
-            [station_node_indices, np.asarray(candidate_node_indices, dtype=int)]
-        )
-        all_distances = network_distance_matrix(
-            adjacency, all_source_indices, unit_node_indices
-        )
-        initial_assignment, selected_mask, facility_min_util = solve_facility_selection(
-            all_distances, unit_load, existing_capacity, unit_legacy_array,
-            stations["Stationsnaa"].astype(str).tolist() + legacy_new_labels,
-            len(legacy_new_labels),
-        )
-    selected_candidate_indices = np.flatnonzero(selected_mask)
-    selected_legacy_labels = [legacy_new_labels[i] for i in selected_candidate_indices]
-    log("Geselecteerde kandidaatgebieden: " + ", ".join(selected_legacy_labels))
+            previous_distance = float(nearest_coverage[chosen_unit])
+            automatic_name = f"Route kandidaat {route_candidate_number}"
+            legacy_hint = str(unit_legacy[chosen_unit]).strip()
+            label = legacy_hint or automatic_name
+            route_candidate_number += 1
+            legacy_new_labels.append(label)
+            candidate_node_indices.append(graph_index)
+            candidate_nodes.append(node_list[graph_index])
+            used_candidate_indices.add(graph_index)
 
-    # Collapse the assignment indices from all candidates to the selected set.
-    existing_count = len(stations)
-    selected_global_station_indices = list(range(existing_count)) + [
-        existing_count + int(i) for i in selected_candidate_indices
-    ]
-    selected_assignment = np.empty(len(groups), dtype=int)
-    global_to_selected = {
-        global_index: selected_index
-        for selected_index, global_index in enumerate(selected_global_station_indices)
-    }
-    for unit_index, global_station_index in enumerate(initial_assignment):
-        if int(global_station_index) not in global_to_selected:
-            raise RuntimeError("Een aansluiting is aan een niet-geselecteerd station toegewezen")
-        selected_assignment[unit_index] = global_to_selected[int(global_station_index)]
-
-    new_nodes = [candidate_nodes[i] for i in selected_candidate_indices]
-    new_node_indices = [candidate_node_indices[i] for i in selected_candidate_indices]
-    capacities = np.concatenate(
-        [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
-    )
-    final_legacy_labels = stations["Stationsnaa"].astype(str).tolist() + selected_legacy_labels
-
-    # Relocate each new station to the load-weighted middle of its assigned area,
-    # snap it to a real cable node, and optimize the assignment once. A second
-    # centre pass can make a marginally feasible component needlessly unstable.
-    final_assignment = selected_assignment
-    final_min_util = facility_min_util
-    if AUTO_NEW_STATIONS:
-        # Compute distances only for surviving sources, not every candidate.
-        source_indices = np.concatenate(
-            [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-        )
-        final_distances = network_distance_matrix(
-            adjacency, source_indices, unit_node_indices
-        )
-    else:
-        final_distances = all_distances[:, selected_global_station_indices].copy()
-    # A Voronoi fallback already places every demand node in an exclusive,
-    # connected shortest-path territory.  Keep those proven source locations;
-    # moving them and solving the same large MILP again would only reintroduce
-    # the solver failure that triggered the fallback.
-    for iteration in range(0 if initial_voronoi_node_cluster is not None else 1):
-        log(f"Nieuwe stations centreren, iteratie {iteration + 1}/1...")
-        previous_new_nodes = list(new_nodes)
-        previous_new_node_indices = list(new_node_indices)
-        previous_assignment = final_assignment.copy()
-        previous_distances = final_distances.copy()
-        for new_index in range(N_NEW):
-            if int(new_node_indices[new_index]) in junction_candidate_nodes:
-                # Do not turn a solver-selected multi-direction site back into
-                # a terminal site merely by geometric centring. All ordinary
-                # assignment and exclusive-route checks still follow.
-                continue
-            station_index = existing_count + new_index
-            mask = final_assignment == station_index
-            if not np.any(mask):
-                raise RuntimeError("Leeg nieuw cluster tijdens centreren")
-            median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
-            assigned_units = np.flatnonzero(mask)
-            representative = int(assigned_units[0])
-            nearest = regular_graph_index_near(
-                median, unit_node_indices[representative]
-            )
-            new_node_indices[new_index] = nearest
-            new_nodes[new_index] = node_list[nearest]
-        source_indices = np.concatenate(
-            [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-        )
-        final_distances = network_distance_matrix(
-            adjacency, source_indices, unit_node_indices
-        )
-        try:
-            final_assignment, final_min_util = solve_fixed_assignment(
-                final_distances,
-                unit_load,
-                capacities,
-                unit_legacy_array,
-                final_legacy_labels,
-            )
-        except RuntimeError:
-            new_nodes = previous_new_nodes
-            new_node_indices = previous_new_node_indices
-            final_assignment = previous_assignment
-            final_distances = previous_distances
+            new_coverage = network_distance_matrix(
+                adjacency, np.asarray([graph_index], dtype=int), unit_node_indices
+            )[:, 0]
+            nearest_coverage = np.minimum(nearest_coverage, new_coverage)
+            hint_text = f" voor {legacy_hint}" if legacy_hint else ""
             log(
-                "Centreren zou de capaciteit- of routevoorwaarden breken; "
-                "de laatst geldige stationslocaties blijven behouden."
+                f"Kandidaat {automatic_name}{hint_text}: kabelknoop "
+                f"{candidate_nodes[-1]} (voorheen {previous_distance:.1f} m van "
+                "de dichtstbijzijnde beschikbare stationslocatie)"
             )
-            break
 
-    source_nodes = station_nodes + new_nodes
-    try:
-        if initial_voronoi_node_cluster is not None:
-            node_cluster = initial_voronoi_node_cluster
-            log(
-                "De geldige kabel-Voronoi-verdeling wordt rechtstreeks als "
-                "eindtoedeling gebruikt."
-            )
-        else:
-            final_assignment, final_min_util, node_cluster = solve_cable_connected_assignment(
-                graph,
-                node_list,
-                adjacency,
-                final_distances,
-                unit_load,
-                capacities,
-                unit_nodes,
-                unit_node_indices,
-                source_nodes,
-                final_assignment,
-            )
-    except RuntimeError as exc:
-        if (
-            AUTO_NEW_STATIONS
-            and str(exc)
-            == "Geen capaciteitsgeldige kabelverbonden toedeling gevonden"
-        ):
+        junction_candidates = junction_station_candidates(
+            graph,node_list,regular_node_indices,raw_main_node_indices,
+            unit_node_indices,unit_load,new_capacity,radius_m=min(350.,MAX_ROUTE_M),
+            limit=max(8,min(24,len(candidate_node_indices))),seed_indices=candidate_node_indices) if AUTO_NEW_STATIONS else []
+        junction_candidate_nodes = {row['index'] for row in junction_candidates}
+        for row in junction_candidates:
+            index=row['index']
+            if index in candidate_node_indices:continue
+            candidate_node_indices.append(index);candidate_nodes.append(node_list[index])
+            legacy_new_labels.append(f"Knooppunt met {row['directions']} belastbare richtingen")
+            log(f"Extra knooppuntkandidaat {node_list[index]}: {row['directions']} richtingen, {row['load']:.1f} A bereikbaar binnen 350 m.")
+        initial_voronoi_node_cluster = None
+        all_distances = None
+        if AUTO_NEW_STATIONS:
+            # Skip slow MILP station selection and connected assignment. The old
+            # cable-Voronoi fallback is the automatic method from the start.
+            log("Automatische berekening: direct kabel-Voronoi, zonder voorafgaande MILP-solvers.")
             try:
                 (
                     voronoi_assignment,
-                    voronoi_min_util,
-                    voronoi_node_cluster,
+                    facility_min_util,
+                    initial_voronoi_node_cluster,
                     voronoi_candidate_indices,
                     _voronoi_unit_distances,
                 ) = solve_greedy_voronoi_connected_assignment(
-                    adjacency,
-                    node_list,
-                    unit_node_indices,
-                    unit_load,
-                    station_node_indices,
-                    candidate_node_indices,
-                    existing_capacity,
-                    new_capacity,
-                    regular_node_indices,
-                    graph_component_by_node_index,
-                    # Reconsider every prepared main-cable candidate. Starting
-                    # only with the failed MILP selection can otherwise cause
-                    # dozens of almost coincident emergency candidates to be
-                    # added before a connected balance is found.
-                    None,
+                    adjacency, node_list, unit_node_indices, unit_load,
+                    station_node_indices, candidate_node_indices,
+                    existing_capacity, new_capacity, regular_node_indices,
+                    graph_component_by_node_index, None,
                 )
-            except RuntimeError as voronoi_exc:
-                log(f"Kabel-Voronoi-terugval nog niet geldig: {voronoi_exc}")
-            else:
-                while len(candidate_nodes) < len(candidate_node_indices):
-                    appended_index = len(candidate_nodes)
-                    candidate_nodes.append(
-                        node_list[candidate_node_indices[appended_index]]
-                    )
-                    legacy_new_labels.append(
-                        f"Capaciteitskandidaat {appended_index + 1}"
-                    )
-                selected_candidate_indices = np.asarray(
-                    voronoi_candidate_indices, dtype=int
-                )
-                N_NEW = len(voronoi_candidate_indices)
-                selected_legacy_labels = [
-                    legacy_new_labels[index]
-                    for index in voronoi_candidate_indices
-                ]
-                new_nodes = [
-                    candidate_nodes[index] for index in voronoi_candidate_indices
-                ]
-                new_node_indices = [
-                    candidate_node_indices[index]
-                    for index in voronoi_candidate_indices
-                ]
-                capacities = np.concatenate(
-                    [
-                        existing_capacity,
-                        np.full(N_NEW, new_capacity, dtype=float),
-                    ]
-                )
-                final_legacy_labels = (
-                    stations["Stationsnaa"].astype(str).tolist()
-                    + selected_legacy_labels
-                )
-                source_nodes = station_nodes + new_nodes
-                source_indices = np.concatenate(
-                    [station_node_indices, np.asarray(new_node_indices, dtype=int)]
-                )
-                final_distances = network_distance_matrix(
-                    adjacency, source_indices, unit_node_indices
-                )
-                final_assignment = voronoi_assignment
-                final_min_util = voronoi_min_util
-                node_cluster = voronoi_node_cluster
-                exc = None
-            if exc is None:
-                pass
-            else:
+            except RuntimeError as exc:
                 count_options = automatic_new_station_count_options(
                     float(design_current.sum()),
                     float(existing_capacity.sum()),
@@ -7107,32 +7146,281 @@ def main(_automatic_retry: bool = False) -> None:
                 ]
                 if remaining_counts:
                     log(
-                        f"{N_NEW} nieuwe stations is niet kabeltopologisch haalbaar; "
-                        f"automatisch opnieuw proberen met {remaining_counts[0]}."
+                        f"Kabel-Voronoi nog niet geldig; opnieuw proberen met "
+                        f"{remaining_counts[0]} als automatisch startaantal."
                     )
                     return main(_automatic_retry=True)
-        if exc is not None:
-            raise exc
-    # The facility model uses a fixed candidate count. Remove candidates which
-    # have become unnecessary after connected assignment/centring, giving
-    # existing capacity priority without weakening any network constraint.
-    if AUTO_NEW_STATIONS:
-        final_assignment, node_cluster, kept = absorb_new_territories_into_existing(
-            graph, node_list, node_cluster, source_nodes, unit_nodes,
-            final_assignment, unit_load, capacities, existing_count)
-        if len(kept) != len(capacities):
-            retained_new = [index - existing_count for index in kept if index >= existing_count]
-            new_nodes = [new_nodes[i] for i in retained_new]
-            new_node_indices = [new_node_indices[i] for i in retained_new]
-            selected_legacy_labels = [selected_legacy_labels[i] for i in retained_new]
-            capacities = capacities[kept]
-            source_nodes = station_nodes + new_nodes
-            N_NEW = len(new_nodes)
+                raise RuntimeError(
+                    "De directe kabel-Voronoi-berekening kon geen capaciteitsgeldige "
+                    "en kabelverbonden stationsverdeling vinden."
+                ) from exc
+            while len(candidate_nodes) < len(candidate_node_indices):
+                index = len(candidate_nodes)
+                candidate_nodes.append(node_list[candidate_node_indices[index]])
+                legacy_new_labels.append(f"Capaciteitskandidaat {index + 1}")
+            selected_mask = np.zeros(len(candidate_node_indices), dtype=bool)
+            selected_mask[voronoi_candidate_indices] = True
+            existing_count = len(stations)
+            compact_to_global = np.asarray(
+                list(range(existing_count))
+                + [existing_count + int(index) for index in voronoi_candidate_indices],
+                dtype=int,
+            )
+            initial_assignment = compact_to_global[voronoi_assignment]
+            N_NEW = len(voronoi_candidate_indices)
+            _AUTO_COUNTS_TRIED.add(N_NEW)
+            log(
+                f"Directe kabel-Voronoi selecteert {N_NEW} nieuwe stations en "
+                "behoudt de bestaande stations als vaste bronnen."
+            )
+        else:
+            # A manually fixed count still requires the exact-count solver.
+            all_source_indices = np.concatenate(
+                [station_node_indices, np.asarray(candidate_node_indices, dtype=int)]
+            )
+            all_distances = network_distance_matrix(
+                adjacency, all_source_indices, unit_node_indices
+            )
+            initial_assignment, selected_mask, facility_min_util = solve_facility_selection(
+                all_distances, unit_load, existing_capacity, unit_legacy_array,
+                stations["Stationsnaa"].astype(str).tolist() + legacy_new_labels,
+                len(legacy_new_labels),
+            )
+        selected_candidate_indices = np.flatnonzero(selected_mask)
+        selected_legacy_labels = [legacy_new_labels[i] for i in selected_candidate_indices]
+        log("Geselecteerde kandidaatgebieden: " + ", ".join(selected_legacy_labels))
+
+        # Collapse the assignment indices from all candidates to the selected set.
+        existing_count = len(stations)
+        selected_global_station_indices = list(range(existing_count)) + [
+            existing_count + int(i) for i in selected_candidate_indices
+        ]
+        selected_assignment = np.empty(len(groups), dtype=int)
+        global_to_selected = {
+            global_index: selected_index
+            for selected_index, global_index in enumerate(selected_global_station_indices)
+        }
+        for unit_index, global_station_index in enumerate(initial_assignment):
+            if int(global_station_index) not in global_to_selected:
+                raise RuntimeError("Een aansluiting is aan een niet-geselecteerd station toegewezen")
+            selected_assignment[unit_index] = global_to_selected[int(global_station_index)]
+
+        new_nodes = [candidate_nodes[i] for i in selected_candidate_indices]
+        new_node_indices = [candidate_node_indices[i] for i in selected_candidate_indices]
+        capacities = np.concatenate(
+            [existing_capacity, np.full(N_NEW, new_capacity, dtype=float)]
+        )
+        final_legacy_labels = stations["Stationsnaa"].astype(str).tolist() + selected_legacy_labels
+
+        # Relocate each new station to the load-weighted middle of its assigned area,
+        # snap it to a real cable node, and optimize the assignment once. A second
+        # centre pass can make a marginally feasible component needlessly unstable.
+        final_assignment = selected_assignment
+        final_min_util = facility_min_util
+        if AUTO_NEW_STATIONS:
+            # Compute distances only for surviving sources, not every candidate.
+            source_indices = np.concatenate(
+                [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+            )
+            final_distances = network_distance_matrix(
+                adjacency, source_indices, unit_node_indices
+            )
+        else:
+            final_distances = all_distances[:, selected_global_station_indices].copy()
+        # A Voronoi fallback already places every demand node in an exclusive,
+        # connected shortest-path territory.  Keep those proven source locations;
+        # moving them and solving the same large MILP again would only reintroduce
+        # the solver failure that triggered the fallback.
+        for iteration in range(0 if initial_voronoi_node_cluster is not None else 1):
+            log(f"Nieuwe stations centreren, iteratie {iteration + 1}/1...")
+            previous_new_nodes = list(new_nodes)
+            previous_new_node_indices = list(new_node_indices)
+            previous_assignment = final_assignment.copy()
+            previous_distances = final_distances.copy()
+            for new_index in range(N_NEW):
+                if int(new_node_indices[new_index]) in junction_candidate_nodes:
+                    # Do not turn a solver-selected multi-direction site back into
+                    # a terminal site merely by geometric centring. All ordinary
+                    # assignment and exclusive-route checks still follow.
+                    continue
+                station_index = existing_count + new_index
+                mask = final_assignment == station_index
+                if not np.any(mask):
+                    raise RuntimeError("Leeg nieuw cluster tijdens centreren")
+                median = weighted_geometric_median(unit_xy[mask], unit_load[mask])
+                assigned_units = np.flatnonzero(mask)
+                representative = int(assigned_units[0])
+                nearest = regular_graph_index_near(
+                    median, unit_node_indices[representative]
+                )
+                new_node_indices[new_index] = nearest
+                new_nodes[new_index] = node_list[nearest]
+            source_indices = np.concatenate(
+                [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+            )
+            final_distances = network_distance_matrix(
+                adjacency, source_indices, unit_node_indices
+            )
+            try:
+                final_assignment, final_min_util = solve_fixed_assignment(
+                    final_distances,
+                    unit_load,
+                    capacities,
+                    unit_legacy_array,
+                    final_legacy_labels,
+                )
+            except RuntimeError:
+                new_nodes = previous_new_nodes
+                new_node_indices = previous_new_node_indices
+                final_assignment = previous_assignment
+                final_distances = previous_distances
+                log(
+                    "Centreren zou de capaciteit- of routevoorwaarden breken; "
+                    "de laatst geldige stationslocaties blijven behouden."
+                )
+                break
+
+        source_nodes = station_nodes + new_nodes
+        try:
+            if initial_voronoi_node_cluster is not None:
+                node_cluster = initial_voronoi_node_cluster
+                log(
+                    "De geldige kabel-Voronoi-verdeling wordt rechtstreeks als "
+                    "eindtoedeling gebruikt."
+                )
+            else:
+                final_assignment, final_min_util, node_cluster = solve_cable_connected_assignment(
+                    graph,
+                    node_list,
+                    adjacency,
+                    final_distances,
+                    unit_load,
+                    capacities,
+                    unit_nodes,
+                    unit_node_indices,
+                    source_nodes,
+                    final_assignment,
+                )
+        except RuntimeError as exc:
+            if (
+                AUTO_NEW_STATIONS
+                and str(exc)
+                == "Geen capaciteitsgeldige kabelverbonden toedeling gevonden"
+            ):
+                try:
+                    (
+                        voronoi_assignment,
+                        voronoi_min_util,
+                        voronoi_node_cluster,
+                        voronoi_candidate_indices,
+                        _voronoi_unit_distances,
+                    ) = solve_greedy_voronoi_connected_assignment(
+                        adjacency,
+                        node_list,
+                        unit_node_indices,
+                        unit_load,
+                        station_node_indices,
+                        candidate_node_indices,
+                        existing_capacity,
+                        new_capacity,
+                        regular_node_indices,
+                        graph_component_by_node_index,
+                        # Reconsider every prepared main-cable candidate. Starting
+                        # only with the failed MILP selection can otherwise cause
+                        # dozens of almost coincident emergency candidates to be
+                        # added before a connected balance is found.
+                        None,
+                    )
+                except RuntimeError as voronoi_exc:
+                    log(f"Kabel-Voronoi-terugval nog niet geldig: {voronoi_exc}")
+                else:
+                    while len(candidate_nodes) < len(candidate_node_indices):
+                        appended_index = len(candidate_nodes)
+                        candidate_nodes.append(
+                            node_list[candidate_node_indices[appended_index]]
+                        )
+                        legacy_new_labels.append(
+                            f"Capaciteitskandidaat {appended_index + 1}"
+                        )
+                    selected_candidate_indices = np.asarray(
+                        voronoi_candidate_indices, dtype=int
+                    )
+                    N_NEW = len(voronoi_candidate_indices)
+                    selected_legacy_labels = [
+                        legacy_new_labels[index]
+                        for index in voronoi_candidate_indices
+                    ]
+                    new_nodes = [
+                        candidate_nodes[index] for index in voronoi_candidate_indices
+                    ]
+                    new_node_indices = [
+                        candidate_node_indices[index]
+                        for index in voronoi_candidate_indices
+                    ]
+                    capacities = np.concatenate(
+                        [
+                            existing_capacity,
+                            np.full(N_NEW, new_capacity, dtype=float),
+                        ]
+                    )
+                    final_legacy_labels = (
+                        stations["Stationsnaa"].astype(str).tolist()
+                        + selected_legacy_labels
+                    )
+                    source_nodes = station_nodes + new_nodes
+                    source_indices = np.concatenate(
+                        [station_node_indices, np.asarray(new_node_indices, dtype=int)]
+                    )
+                    final_distances = network_distance_matrix(
+                        adjacency, source_indices, unit_node_indices
+                    )
+                    final_assignment = voronoi_assignment
+                    final_min_util = voronoi_min_util
+                    node_cluster = voronoi_node_cluster
+                    exc = None
+                if exc is None:
+                    pass
+                else:
+                    count_options = automatic_new_station_count_options(
+                        float(design_current.sum()),
+                        float(existing_capacity.sum()),
+                        float(new_capacity),
+                    )
+                    remaining_counts = [
+                        count for count in count_options if count not in _AUTO_COUNTS_TRIED
+                    ]
+                    if remaining_counts:
+                        log(
+                            f"{N_NEW} nieuwe stations is niet kabeltopologisch haalbaar; "
+                            f"automatisch opnieuw proberen met {remaining_counts[0]}."
+                        )
+                        return main(_automatic_retry=True)
+            if exc is not None:
+                raise exc
+        # The facility model uses a fixed candidate count. Remove candidates which
+        # have become unnecessary after connected assignment/centring, giving
+        # existing capacity priority without weakening any network constraint.
+        if AUTO_NEW_STATIONS:
+            final_assignment, node_cluster, kept = absorb_new_territories_into_existing(
+                graph, node_list, node_cluster, source_nodes, unit_nodes,
+                final_assignment, unit_load, capacities, existing_count)
+            if len(kept) != len(capacities):
+                retained_new = [index - existing_count for index in kept if index >= existing_count]
+                new_nodes = [new_nodes[i] for i in retained_new]
+                new_node_indices = [new_node_indices[i] for i in retained_new]
+                selected_legacy_labels = [selected_legacy_labels[i] for i in retained_new]
+                capacities = capacities[kept]
+                source_nodes = station_nodes + new_nodes
+                N_NEW = len(new_nodes)
     cluster_loads = np.bincount(
         final_assignment, weights=unit_load, minlength=len(capacities)
     )
     if np.any(cluster_loads > capacities + 1e-5):
         raise RuntimeError("Capaciteitsoverschrijding in eindresultaat")
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # The old facilities may legitimately retain zero original demand;
+        # the minimum is a measured outcome, not a solver guarantee.
+        final_min_util = float(np.min(cluster_loads / capacities))
     utilization = cluster_loads / capacities * 100.0
     log(
         f"Eindbenutting: minimum {utilization.min():.1f}%, "
@@ -7242,7 +7530,52 @@ def main(_automatic_retry: bool = False) -> None:
     )
     station_snap_xy = np.asarray(source_nodes, dtype=float)
 
+    designed_station_routes={}
+    if PRESERVE_EXISTING_DIRECTIONS and PLANNED_150AL_FEEDERS:
+        from ls_netontwerp_wizard.planned_direction_design import design_station_directions,direction_design_graph
+        from shapely.geometry import mapping
+        direction_rows=[];direction_features=[];direction_open={};over_ports=[]
+        unit_cable_values=[]
+        for column in ('Orig_Kabel_Verbruik','Orig_Kabel_Opwek'):
+            if column not in points:raise ValueError('Afzonderlijke oorspronkelijke kabelstromen ontbreken: '+column)
+            values=pd.to_numeric(points[column],errors='coerce').to_numpy(dtype=float)
+            if not np.isfinite(values).all() or np.any(values<0):raise ValueError('Ongeldige kabelstromen: '+column)
+            unit_cable_values.append(np.bincount(point_to_unit,weights=values,minlength=len(groups)))
+        design_owners=dict(zip(node_list,map(int,node_cluster)))
+        for station_index in range(existing_count,len(source_nodes)):
+            own=direction_design_graph(graph,design_owners,station_index)
+            designed_station_routes[station_index]=dict(lines=[],assets=defaultdict(list),length=0.,distances={})
+            station_design=designed_station_routes[station_index]
+            targets={int(u):unit_nodes[u] for u in np.flatnonzero(final_assignment==station_index)}
+            design=design_station_directions(own,source_nodes[station_index],targets,*unit_cable_values,
+                max_route_m=MAX_ROUTE_M,geometry_check=(lambda line:not planned_interior_check.intersects(line) or line.intersection(planned_obstacle_interiors).length<=1e-6))
+            direction_open.update(design['unresolved'])
+            if not design['ports_within_ten']:over_ports.append(station_index)
+            for number,bucket in enumerate(design['directions'],1):
+                assessment=bucket['assessment']
+                row={k:v for k,v in assessment.items() if k!='edges'}
+                row.update(Station=cluster_names[station_index],Richting=number,Aansluitingen=len(bucket['units']))
+                direction_rows.append(row)
+                for _edge,(u,v,planned) in assessment['edges'].items():
+                    data=own[u][v]
+                    line=data['route_geometry'];station_design['lines'].append(line)
+                    station_design['length']+=line.length
+                    asset=f'ONTWERP-{station_index}-R{number}' if planned else data.get('source_asset_id')
+                    if asset:station_design['assets'][asset].append(line)
+                    direction_features.append(dict(type='Feature',geometry=mapping(data['route_geometry']),properties=dict(
+                        Station=cluster_names[station_index],Richting=number,Status='Nieuwe 150Al' if planned else 'Hergebruik LS',
+                        Bron_kabel_ID=None if planned else data.get('source_asset_id'),
+                        Ontwerp_kabel_ID=f'{station_index}-R{number}' if planned else None)))
+                for unit,path in bucket['unit_paths'].items():
+                    station_design['distances'][unit]=sum(float(own[u][v].get('physical_length',own[u][v].get('weight',0.)))*float(own[u][v].get('calculation_factor',1.)) for u,v in path)
+        pd.DataFrame(direction_rows).to_csv(OUT/'nieuwe_richtingen_controle.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+        (OUT/'nieuwe_richtingen_ontwerp.geojson').write_text(json.dumps(dict(type='FeatureCollection',
+            crs=dict(type='name',properties=dict(name='EPSG:28992')),features=direction_features),ensure_ascii=False),encoding='utf-8')
+        (OUT/'nieuwe_richtingen_open.json').write_text(json.dumps(dict(aansluitingen=direction_open,stations_meer_dan_tien_richtingen=over_ports),ensure_ascii=False,indent=2),encoding='utf-8')
+        if direction_open or over_ports:
+            raise ValueError(f'Nieuw richtingontwerp niet passend: {len(direction_open)} aansluitingen zonder getoetste richting; {len(over_ports)} stations vragen meer dan tien voedende richtingen. Zie richtingcontrole; geen gevalideerd clusterresultaat.')
     log("Exclusieve kabelroutes binnen elk eigen kabeldeel afleiden...")
+    route_asset_geometries={}
     route_geometries, route_lengths, unit_route_m = build_exclusive_routes(
         graph,
         node_list,
@@ -7250,7 +7583,61 @@ def main(_automatic_retry: bool = False) -> None:
         source_nodes,
         unit_nodes,
         final_assignment,
+        asset_geometry_collector=route_asset_geometries if PRESERVE_EXISTING_DIRECTIONS else None,
     )
+    for station_index,design in designed_station_routes.items():
+        route_geometries[station_index]=merge_linework(design['lines'])
+        route_lengths[station_index]=design['length']
+        route_asset_geometries[station_index]={asset:unary_union(parts) for asset,parts in design['assets'].items()}
+        for unit,distance in design['distances'].items():unit_route_m[unit]=distance
+    if PRESERVE_EXISTING_DIRECTIONS:
+        # Service evidence remains visible even though its graph transit was
+        # removed and its electrical calculation length is zero.
+        planned_audit=preserved_solution.get('planned_feeders',{})
+        for transfer in planned_audit.get('transfers',[]):
+            owners={int(final_assignment[u]) for u in transfer['units']}
+            if len(owners)!=1 or min(owners)<existing_count:
+                raise RuntimeError('Een ondeelbare aansluitkabel is over meerdere voedingen verdeeld.')
+            owner=next(iter(owners))
+            service_parts=list(transfer.get('service_geometries',{}).values())
+            route_geometries[owner]=merge_linework([route_geometries[owner],*service_parts])
+            # Physical inventory includes services; the 850 m route measure
+            # and the electrical path length remain unchanged.
+            route_lengths[owner]+=sum(part.length for part in service_parts)
+            for asset,part in transfer.get('service_geometries',{}).items():
+                current=route_asset_geometries[owner].get(asset)
+                route_asset_geometries[owner][asset]=part if current is None else unary_union([current,part])
+        # Show the real original cable segment geometries and lengths
+        # determined from Kabel Subgroep, never a rounded or inferred route.
+        original_route_distance_by_point = {
+            index: float(original_info["retention"]["route_m"][record.id])
+            for index,record in original_info["all_original_by_index"].items()
+            if index in original_info["retained_by_index"]
+        }
+        for old_index,station_name in enumerate(stations["Stationsnaa"].astype(str)):
+            physical = list(
+                original_info["physical_by_station"].get(station_name,{}).values()
+            )
+            exact_linework = merge_linework(physical)
+            route_geometries[old_index] = exact_linework
+            assets=defaultdict(list)
+            for eid,line in original_info['physical_by_station'].get(station_name,{}).items():
+                for asset in original_info.get('edge_source_assets',{}).get(eid,()):assets[asset].append(line)
+            route_asset_geometries[old_index]={asset:unary_union(parts) for asset,parts in assets.items()}
+            route_lengths[old_index] = float(sum(line.length for line in physical))
+            for unit_index in np.flatnonzero(final_assignment==old_index):
+                retained_points = [
+                    original_route_distance_by_point[i]
+                    for i in groups[unit_index]
+                    if i in original_route_distance_by_point
+                ]
+                if retained_points:
+                    unit_route_m[unit_index] = max(retained_points)
+        log(
+            "De bestaande stationsroutes zijn exact teruggezet op hun "
+            "oorspronkelijke getypeerde kabeldelen; hun trajectlengtes en "
+            "elektrische groepscontroles zijn behouden."
+        )
     for new_index, link in enumerate(new_station_links):
         station_index = existing_count + new_index
         if not link.is_empty and link.length > 1e-9:
@@ -7271,23 +7658,46 @@ def main(_automatic_retry: bool = False) -> None:
         f"Routecontrole: langste station-aansluitingroute {longest_route:.1f} m "
         f"(maximum {MAX_ROUTE_M:.1f} m)."
     )
+    shared_traces=[]
+    if PRESERVE_EXISTING_DIRECTIONS:
+        from ls_netontwerp_wizard.existing_residual_circuits import distinct_conductor_overlap
+        for first in range(len(route_geometries)):
+            for second in range(first+1,len(route_geometries)):
+                shared=route_geometries[first].intersection(route_geometries[second])
+                if shared.length<=1e-6:continue
+                if not distinct_conductor_overlap(shared,route_asset_geometries.get(first,{}),route_asset_geometries.get(second,{})):
+                    raise RuntimeError(f'Kabelroutes {first} en {second}: gedeeld tracé zonder bewijs van afzonderlijke bronkabels ({shared.length:.2f} m).')
+                shared_traces.append(dict(Cluster_1=cluster_names[first],Cluster_2=cluster_names[second],Gedeeld_trace_m=shared.length,
+                    Controle='Afzonderlijke bron- of expliciete ontwerpkabel-ID\'s; geen gedeelde geleider'))
+        pd.DataFrame(shared_traces,columns=['Cluster_1','Cluster_2','Gedeeld_trace_m','Controle']).to_csv(
+            OUT/'gedeelde_traces_afzonderlijke_kabels.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+    def indicative_cable_areas():
+        areas=[]
+        for i,route in enumerate(route_geometries):
+            parts=[route.buffer(2.)] if not route.is_empty else []
+            parts.extend(Point(xy).buffer(2.) for xy in point_xy[point_assignment==i])
+            area=unary_union(parts) if parts else Point(station_display_xy[i]).buffer(.25)
+            if plan_area is not None:area=area.intersection(plan_area)
+            areas.append(area)
+        return areas
+    indicative_areas=bool(shared_traces)
     log("Clustergebieden vanuit de dichtstbijzijnde exclusieve kabels maken...")
-    cluster_polygons, _ = make_cable_based_cluster_polygons(
-        route_geometries,
-        point_xy,
-        node_xy[point_node_indices],
-        point_assignment,
-        station_display_xy,
-        station_snap_xy,
-        len(capacities),
-        plan_area,
-        allow_external_routes=bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
-    )
+    if indicative_areas:
+        cluster_polygons=indicative_cable_areas()
+        log('Aparte bronkabels delen een tracé: gebieden zijn indicatieve kabelcorridors. Elektrische exclusiviteit blijft op kabel-ID gecontroleerd.')
+    else:
+        cluster_polygons, _ = make_cable_based_cluster_polygons(
+            route_geometries,point_xy,node_xy[point_node_indices],point_assignment,
+            station_display_xy,station_snap_xy,len(capacities),plan_area,
+            allow_external_routes=bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     disconnected = [
         index
         for index, polygon in enumerate(cluster_polygons)
-        if invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
+        if not indicative_areas and invalid_disconnected_area(polygon, route_geometries[index], plan_area, bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES))
     ]
+    if disconnected and PRESERVE_EXISTING_DIRECTIONS:
+        cluster_polygons=indicative_cable_areas();indicative_areas=True;disconnected=[]
+        log('Oorspronkelijke aansluitingen blijven vast: geografische weergave als indicatieve kabelgebieden; elektrische verbindingen blijven afzonderlijk bewezen.')
     if disconnected:
         # Keep the exact failure geometry. Inputs alone are insufficient to
         # reproduce a solver-dependent boundary fault without another long run.
@@ -7328,7 +7738,7 @@ def main(_automatic_retry: bool = False) -> None:
             shared_length = route_geometries[first].intersection(
                 route_geometries[second]
             ).length
-            if shared_length > 1e-6:
+            if shared_length > 1e-6 and not PRESERVE_EXISTING_DIRECTIONS:
                 raise RuntimeError(
                     f"Kabelroutes {first} en {second} delen {shared_length:.2f} m"
                 )
@@ -7352,6 +7762,9 @@ def main(_automatic_retry: bool = False) -> None:
             "Orig_ID": safe_column("ID"),
             "Master_asset_id": safe_column("master_asset_id", ""),
             "Station": safe_column("Station", ""),
+            # Keep the complete original GEN circuit identity in the result.
+            # 'K01-00' and 'K01-01' are different physical segments.
+            "Kabel Subgroep": safe_column("Kabel Subgroep", ""),
             "Straat": safe_column("Straat", ""),
             "Huisnr": safe_column("Huisnummer"),
             "Toevoeging": safe_column("Toevoeging", ""),
@@ -7381,6 +7794,39 @@ def main(_automatic_retry: bool = False) -> None:
         geometry=points.geometry,
         crs=CRS_RD,
     )
+
+    if PRESERVE_EXISTING_DIRECTIONS:
+        connections["Oud_besluit"] = [
+            (
+                "Behouden bestaand" if index in original_info["retained_by_index"]
+                else "Vrijgegeven naar nieuw"
+                if index in original_info["all_original_by_index"]
+                else "Nieuw / geen originele groep"
+            )
+            for index in range(len(points))
+        ]
+        connections["Oud_kabelgroep"] = [
+            (
+                ", ".join(original_info["all_original_by_index"][index].source_groups
+                          or (original_info["all_original_by_index"][index].group,))
+                if index in original_info["all_original_by_index"] else ""
+            )
+            for index in range(len(points))
+        ]
+        retained_groups=set(original_info["retained_by_index"])
+        connections['OV_controle_open']=[i in original_info.get('ov_points',set()) for i in range(len(points))]
+        for index in retained_groups:
+            if connections.iloc[index]["Cluster"] != original_info["retained_by_index"][index]:
+                raise RuntimeError(
+                    f"Aansluiting {index} kreeg een ander bestaand station dan "
+                    "de oorspronkelijke geverifieerde stationstoewijzing."
+                )
+        for index in range(len(points)):
+            if index not in retained_groups and int(point_assignment[index])<existing_count:
+                raise RuntimeError(
+                    f"Vrijgegeven aansluiting {index} is onterecht opnieuw "
+                    "aan een bestaand station toegewezen."
+                )
 
     point_counts = np.bincount(point_assignment, minlength=len(capacities))
     max_route = np.asarray(
@@ -7412,6 +7858,17 @@ def main(_automatic_retry: bool = False) -> None:
     network_anchor_y = [geometry.y for geometry in stations.geometry] + [
         float(node[1]) for node in new_nodes
     ]
+    old_kept_counts = [0] * len(capacities)
+    old_released_counts = [0] * len(capacities)
+    if PRESERVE_EXISTING_DIRECTIONS:
+        old_station_index = {
+            name:i for i,name in enumerate(stations["Stationsnaa"].astype(str))
+        }
+        for _point_index,name in original_info["retained_by_index"].items():
+            old_kept_counts[old_station_index[name]] += 1
+        for _point_index,record in original_info["all_original_by_index"].items():
+            if _point_index not in original_info["retained_by_index"]:
+                old_released_counts[old_station_index[record.station]] += 1
     stations_design = gpd.GeoDataFrame(
         {
             "Cluster": cluster_names,
@@ -7422,6 +7879,8 @@ def main(_automatic_retry: bool = False) -> None:
             "Belast_A": cluster_loads,
             "Benut_pct": utilization,
             "Aantal": point_counts,
+            "Orig_behouden":old_kept_counts,
+            "Orig_vrijgegeven":old_released_counts,
             "Gem_route": mean_route,
             "Max_route": max_route,
             "Route_km": route_lengths / 1000.0,
@@ -7448,6 +7907,7 @@ def main(_automatic_retry: bool = False) -> None:
         "Buitenplan_toegestaan": bool(plan_area is not None and ALLOW_EXTERNAL_ROUTES),
     }
     areas = gpd.GeoDataFrame(common_summary, geometry=cluster_polygons, crs=CRS_RD)
+    areas['Gebiedstype']='Indicatief kabelgebied' if indicative_areas else 'Kabelgebaseerd stationsgebied'
     routes = gpd.GeoDataFrame(
         common_summary, geometry=route_geometries, crs=CRS_RD
     )
@@ -7517,6 +7977,83 @@ def main(_automatic_retry: bool = False) -> None:
         equipment_links,
         missing_connection_links,
     )
+    if PRESERVE_EXISTING_DIRECTIONS:
+        cut_features=[]
+        for item in original_info['retention'].get('eindmof_voorstellen',[]):
+            if not item.get('Actueel_voorstel',True) or item.get('X') is None:continue
+            row=dict(item)
+            row['Vrijgegeven_aansluitingen']='; '.join(row['Vrijgegeven_aansluitingen'])
+            row['geometry']=Point(item['X'],item['Y'])
+            cut_features.append(row)
+        if cut_features:
+            gpd.GeoDataFrame(cut_features,geometry='geometry',crs=points.crs).to_file(
+                gpkg,layer='eindmof_voorstellen',driver='GPKG')
+        # A dedicated source-level electrical review layer, one feature for
+        # the EXACT -00/-01/-02 subgroup, not one combined tree or one length.
+        direction_features=[]
+        for (station,group),assessment in sorted(
+            original_info["retention"]["richtingen"].items()
+        ):
+            segments=assessment["segmenten"]
+            physical=[
+                original_info["edge_geometries"][edge_id]
+                for edge_id,_cable_type,_length in segments
+            ]
+            direction_features.append({
+                "Orig_station":station,
+                "Kabel_Subgroep":group,
+                "Via_verdeelkast":original_info["cabinet_metadata"].get(
+                    (station,group),""
+                ),
+                "Bovenliggende_groep":original_info["feeder_parents"].get(
+                    (station,group),""
+                ),
+                "Lengte_m":float(assessment["length_m"]),
+                "Fysiek_m":float(assessment["fysiek_uniek_m"]),
+                "Belasting_A":float(assessment["belasting_a"]),
+                "Max_ontwerp_A":float(assessment["max_ontwerp_a"]),
+                "gG_A":int(assessment["gg_a"] or 0),
+                "Impedantie_Ohm":float(assessment["impedantie_ohm"]),
+                "Voldoet":bool(assessment["pass"] and not assessment.get('ov_elektrisch_onbeoordeeld',False)),
+                "LS_rekenmodel_voldoet":bool(assessment['pass']),
+                "OV_controle_open":bool(assessment.get('ov_elektrisch_onbeoordeeld',False)),
+                "Status":'OV elektrisch niet beoordeeld' if assessment.get('ov_elektrisch_onbeoordeeld') else 'LS-rekencontrole',
+                "Reken_m":float(assessment['rekenlengte_m']),
+                "Aansluitkabel_m":float(assessment['aansluitkabels_m']),
+                "Kab_delen":"; ".join(
+                    f"{kind}: {length:.2f} m"
+                    for _edge_id,kind,length in segments
+                ),
+                "Afzekering_bekend":bool(assessment["werkelijk_gg_bekend"]),
+                "geometry":merge_linework(physical),
+            })
+        if direction_features:
+            try:
+                gpd.GeoDataFrame(
+                    direction_features,geometry="geometry",crs=CRS_RD,
+                ).to_file(
+                    gpkg,layer="bestaande_richtingen_controle",
+                    driver="GPKG",mode="a",
+                )
+                log(
+                    "Bestaande kabelgroepen staan per -00/-01/-02 in de "
+                    "GeoPackage-laag 'bestaande_richtingen_controle', inclusief "
+                    "kabeldelen, gG, belasting en lengte."
+                )
+            except Exception as exc:
+                # The CSV still contains the decision and the main clustering
+                # is valid; preserve electrical audit separately if attaching
+                # to the main GeoPackage fails on a particular GDAL version.
+                gpd.GeoDataFrame(
+                    direction_features,geometry="geometry",crs=CRS_RD,
+                ).to_file(
+                    OUT / "bestaande_richtingen_controle.gpkg",
+                    layer="bestaande_richtingen_controle",driver="GPKG",
+                )
+                log(
+                    "Richtingencontrole als afzonderlijke GeoPackage opgeslagen "
+                    f"({type(exc).__name__} bij het toevoegen aan hoofd-GeoPackage)."
+                )
     log("Overzichtskaart renderen...")
     try:
         make_map(cables, connections, stations_design, areas, routes, plan_layer)
@@ -7575,7 +8112,7 @@ stations en {N_NEW} nieuwe stations van {NEW_KVA:g} kVA. De totale ontwerpstroom
   De grenzen zijn afgeleid van de dichtstbijzijnde exclusieve kabelroutes; bij
   een knooppunt wordt zo nodig een smalle corridor om de eigen kabel gereserveerd.
   Alle eigen aansluitingen, routes en het station liggen binnen het eigen gebied.
-- Gegarandeerde minimale benutting in de eindoplossing: {final_min_util * 100:.0f}%.
+- {'Gemeten minimale benutting (behouden bestaande stations mogen leeg zijn)' if PRESERVE_EXISTING_DIRECTIONS else 'Gegarandeerde minimale benutting in de eindoplossing'}: {final_min_util * 100:.0f}%.
 
 ## Bestanden
 
@@ -7724,6 +8261,70 @@ brongegevens aanwezig en moeten vóór uitvoering technisch worden getoetst.
         flush=True,
     )
     log(f"\nGereed: {OUT}")
+
+
+
+
+def export_end_muffs(info,out,crs):
+    """Reviewable proposals on verified source vertices, never installed assets."""
+    proposals=info['retention'].get('eindmof_voorstellen',[])
+    columns=['Station','Kabel_Subgroep','Kabeldeel','Voorstel_knoop','Reden','Voorstel_type','OV_continuiteit_controleren',
+             'Vrijgegeven_aansluitingen','Status','Behoudbaar_voortraject','Actueel_voorstel','X','Y']
+    pd.DataFrame(proposals,columns=columns).to_csv(
+        out/'eindmof_voorstellen.csv',sep=';',decimal=',',index=False,encoding='utf-8-sig')
+    features=[]
+    for item in proposals:
+        if not item.get('Actueel_voorstel',True) or item.get('X') is None or item.get('Y') is None:continue
+        props=dict(item);props['Vrijgegeven_aansluitingen']='; '.join(props['Vrijgegeven_aansluitingen'])
+        features.append(dict(type='Feature',properties=props,
+            geometry=dict(type='Point',coordinates=[item['X'],item['Y']])))
+    result=dict(type='FeatureCollection',features=features)
+    if crs is not None:result['crs']=dict(type='name',properties=dict(name=str(crs)))
+    (out/'eindmof_voorstellen.geojson').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+
+
+def prepare_planned_150al_corridors(source_main,station_areas,plan_area,allow_external,allow_ov):
+    """New design follows source main corridors and avoids known buildings."""
+    from ls_netontwerp_wizard.existing_group_trace import source_cable_in_service
+    from shapely.prepared import prep
+    frame=source_main.to_crs(CRS_RD).copy()
+    frame=frame.loc[[source_cable_in_service(row) for _,row in frame.iterrows()]]
+    function=next((c for c in ('Function','function','omschrijving') if c in frame),None)
+    if function:
+        values=frame[function].fillna('').astype(str).str.upper()
+        frame=frame.loc[values.str.contains('LS') | (values.str.contains('OV') if allow_ov else False)]
+    if frame.empty:raise ValueError('Geen hoofdkabeltracés voor nieuwe 150Al-aanlopen beschikbaar.')
+    if BAG_BUILDINGS_PATH is None:
+        raise ValueError('Nieuwe 150Al-aanlopen vragen BAG-pandgeometrie; de lokale pandenbron ontbreekt.')
+    buildings=_load_local_bag_buildings(tuple(frame.total_bounds))
+    if buildings.empty:raise ValueError('Lokale pandengeometrie is leeg; nieuwe kabels kunnen niet op pandcontact worden gecontroleerd.')
+    masks=list(buildings.geometry)
+    if station_areas is not None:masks.extend(station_areas.geometry)
+    tree=STRtree(masks);obstacles=unary_union(masks)
+    def clipped(geometries):
+        parts=[]
+        for geometry in geometries:
+            if geometry is None or geometry.is_empty:continue
+            if plan_area is not None and not allow_external:geometry=geometry.intersection(plan_area)
+            hits=tree.query(geometry,predicate='intersects')
+            if len(hits):geometry=geometry.difference(unary_union([masks[int(i)] for i in hits]))
+            parts.extend(line_parts(geometry))
+        return parts
+    source_parts=clipped(frame.geometry)
+    main=gpd.GeoDataFrame({'Rekenfactor':[1.]*len(source_parts)},geometry=source_parts,crs=CRS_RD)
+    empty=gpd.GeoDataFrame(geometry=[],crs=CRS_RD)
+    noded=node_cable_network(main,empty,empty,NODE_TOLERANCE_M)
+    # Newly proposed T-junction repairs must also stay out of the masks.
+    parts=clipped(noded.geometry)
+    inside=obstacles.buffer(-.001);inside_check=prep(inside)
+    bad=sum(part.intersection(inside).length for part in parts if inside_check.intersects(part))
+    if bad>.01:raise ValueError(f'Nieuwe 150Al-corridor loopt {bad:.3f} m door pand/stationinterieur.')
+    (OUT/'nieuwe150_broncontrole.json').write_text(json.dumps(dict(
+        source_main_features=len(frame),building_features=len(buildings),corridor_parts=len(parts),
+        new_cable_type='150AL',interior_overlap_m=bad,source='Bestaande hoofdkabeltracés; nieuw aan te leggen kabel',
+        physical_layout_status='Concept; BGT, eigendom, bomen en uitvoeringsruimte afzonderlijk controleren'),ensure_ascii=False,indent=2),encoding='utf-8')
+    log(f'Nieuwe 150Al: {len(parts)} kandidaat-tracédelen, {len(buildings)} panden en bestaande stationomtrekken beschermd. Dit zijn nieuwe ontwerpkabels, geen GEN-bronkabels.')
+    return parts,obstacles
 
 
 if __name__ == "__main__":

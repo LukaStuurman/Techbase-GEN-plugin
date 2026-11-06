@@ -1,0 +1,591 @@
+"""Originele LS-kabelgroepen: type-/lengtecontrole en conservatieve afschaling.
+
+Source electrical data: LukaStuurman/AutoCAD-Enexis-kabels-checker,
+src/Enexis.KabelChecker.Core/KabelChecker.cs.
+No geographic proximity, guessed cable type or invented branch fuse is accepted
+as proof of historic connectivity. Terminal route_edge_ids come from confirmed
+group-coded physical cable geometry.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from math import hypot, isfinite
+import re
+
+CATALOG = {
+    "240AL":(.129,.073,343.6020), "150AL":(.206,.079,260.2125),
+    "120AL":(.281,.081,232.8426), "95AL":(.320,.082,203.6016),
+    "70AL":(.443,.0835,169.1442), "50AL":(.641,.085,137.3436),
+    "35AL":(.868,.101,115.0929), "25AL":(1.200,.094,95.9931),
+    "16AL":(1.910,.096,74.3337), "185CU":(.107,.068,382.9842),
+    "150CU":(.125,.068,339.0741), "95CU":(.194,.069,266.5143),
+    "70CU":(.268,.072,222.7014), "50CU":(.387,.085,179.9739),
+    "35CU":(.524,.100,152.0127), "25CU":(.727,.094,126.6111),
+    "16CU":(1.150,.097,97.8642),
+}
+FUSES = (63,80,100,125,160,200,250)
+DESIGN_AMPS = (57.,72.,90.,113.,144.,180.,225.)
+Z_LIMITS = {
+    "evenredig":(.250,.250,.204,.163,.128,.092,.062),
+    "laatste_helft":(.215,.170,.136,.109,.085,.068,.055)
+}
+
+
+def group_code(code):
+    """Full exact group identity: K01 and K01-01 are NEVER merged."""
+    value = str(code or "").strip().upper()
+    if not value or value.casefold() in {"null", "none", "nan"}:
+        raise ValueError("Kabelgroepcode ontbreekt.")
+    if any(char in value for char in (",", ";", "|")):
+        raise ValueError(
+            f"Meerdere kabelgroepen {value!r}; aansluiting moet eenduidig gekoppeld zijn."
+        )
+    return value
+
+
+def parent_group(code):
+    """K01-00 = hoofdroute; K01-01/-02/-03 = aparte aftakkingen.
+
+    Do not invent a parent "K01" for K01-00: the main electrical route
+    is explicitly marked -00 in the 'Kabel Subgroep' source column.
+    Legacy un-suffixed codes remain valid standalone main directions.
+    """
+    code = group_code(code)
+    match = re.fullmatch(r"(.+)-(\d{2})", code)
+    if match is None or match.group(2) == "00":
+        return None
+    return match.group(1) + "-00"
+
+
+def group_codes(value):
+    """All explicit GEN memberships; never choose the first of a list."""
+    return tuple(dict.fromkeys(group_code(v) for v in re.split(r'[,;\n]+',str(value or '')) if v.strip()))
+
+
+def supplied_by(station, code, feeder_parents=None):
+    """Physical supply overrides suffix parent, e.g. cabinet V02-00 -> S01-00."""
+    code = group_code(code)
+    if feeder_parents is not None and (station, code) in feeder_parents:
+        parent=feeder_parents[(station,code)]
+        return None if parent is None else group_code(parent)
+    return parent_group(code)
+
+
+def is_descendant_group(code, ancestor, station=None, feeder_parents=None):
+    """Whether downstream group is actually supplied through ancestor."""
+    current = supplied_by(station, code, feeder_parents)
+    visited = {group_code(code)}
+    while current is not None:
+        if current == ancestor:
+            return True
+        if current in visited:
+            raise ValueError(f"Voedingslus in Kabel Subgroep voor station {station}.")
+        visited.add(current)
+        current = supplied_by(station, current, feeder_parents)
+    return False
+
+
+def direct_child_group(code, ancestor, station=None, feeder_parents=None):
+    """First independently controlled subgroup after the parent supply point."""
+    current=group_code(code)
+    visited=set()
+    while True:
+        if current in visited:
+            raise ValueError(f"Voedingslus voor station {station}: {code}.")
+        visited.add(current)
+        parent = supplied_by(station, current, feeder_parents)
+        if parent is None:
+            raise ValueError(f"Subgroep {code} ligt niet onder {ancestor}")
+        if parent == ancestor:
+            return current
+        current = parent
+
+
+def type_key(description):
+    value = str(description or "").upper().replace("²","2")
+    conductors=re.findall(r'(?<!\d)\d+\s*[*X×]\s*(\d+(?:[.,]\d+)?)\s*MM(?:\^?2)?\s*(AL|CU)',value)
+    if conductors:
+        # GEN mixed descriptions name the phase cores first, followed by a
+        # small copper screen. The screen must not change 150Al into Cu.
+        size,material=conductors[0]
+        if any(float(s.replace(',','.'))>6 for s,_m in conductors[1:]):
+            raise ValueError(f"Kabeltype bevat meerdere fasegeleiders: {description!r}")
+        key=size+material
+    else:
+        canonical=re.fullmatch(r'\s*(\d+)\s*(?:MM(?:\^?2)?\s*)?(AL|CU)\s*',value)
+        if not canonical:raise ValueError(f"Kabeltype niet eenduidig: {description!r}")
+        key=''.join(canonical.groups())
+    if key not in CATALOG:
+        raise ValueError(f"Kabeltype niet ondersteund door Enexis-checker: {description!r}")
+    return key
+
+
+@dataclass(frozen=True)
+class Cable:
+    id: str
+    group: str
+    from_node: str
+    to_node: str
+    type: str
+    length_m: float
+    calculation_factor: float = 1.
+    electrical_check: bool = True
+    ov_route: bool = False
+    rating_available: bool = True
+    protect_ov: bool = False
+    def __post_init__(self):
+        group_code(self.group)
+        if self.calculation_factor not in (0.,1.):raise ValueError('Ongeldige kabelrekenfactor.')
+        if self.calculation_factor and self.electrical_check and self.rating_available:type_key(self.type)
+        if not self.id or not self.from_node or not self.to_node or self.from_node==self.to_node:
+            raise ValueError("Kabeldeel vereist ID en twee verschillende knopen.")
+        if not isfinite(self.length_m) or self.length_m<=0:
+            raise ValueError("Ongeldige fysieke kabellengte.")
+
+    @property
+    def calculation_length_m(self):return self.length_m*self.calculation_factor
+
+
+@dataclass(frozen=True)
+class OriginalConnection:
+    id: str
+    station: str
+    group: str
+    edge_ids: tuple[str,...]
+    trafo_verbruik_a: float
+    trafo_opwek_a: float
+    kabel_verbruik_a: float
+    kabel_opwek_a: float
+    source_id: str = ""
+    source_groups: tuple[str,...] = ()
+    def __post_init__(self):
+        group_code(self.group)
+        if not self.id or not self.station or not self.edge_ids:
+            raise ValueError("Oorspronkelijke station-/groep-/routekoppeling vereist.")
+        if any(not isfinite(v) or v<0 for v in (
+            self.trafo_verbruik_a,self.trafo_opwek_a,
+            self.kabel_verbruik_a,self.kabel_opwek_a
+        )):
+            raise ValueError("Negatieve/ongeldige ontwerpstroom.")
+
+
+def cable_check(cables, installed_fuse_a=None, profile="both"):
+    """Same cable properties, grouped R/X and gG options as AutoCAD checker.
+
+    Both evenredig and laatste_helft are checked conservatively, or select
+    the established profile explicitly. No installed gG rating is invented.
+    """
+    segments=list(cables)
+    if not segments:
+        raise ValueError("Geen oorspronkelijke kabeldelen.")
+    if len({s.id for s in segments})!=len(segments):
+        raise ValueError("Dubbele kabel-ID in een richtingscontrole.")
+    if profile not in ("both","evenredig","laatste_helft"):
+        raise ValueError("Ongeldig belastingprofiel.")
+    has_ov=any(e.ov_route for e in segments)
+    has_length=any(e.calculation_factor for e in segments)
+    segments=[e for e in segments if e.calculation_factor and e.electrical_check]
+    if any(not e.rating_available for e in segments):
+        return dict(impedantie_ohm=None,minimum_zomer_a=0.,gg_a=None,max_ontwerp_a=0.,
+            controleprofiel=profile,werkelijk_gg_bekend=False,catalogus_onvolledig=True,
+            ov_elektrisch_onbeoordeeld=has_ov)
+    if not segments:
+        return dict(impedantie_ohm=0.,minimum_zomer_a=0.,gg_a=None,max_ontwerp_a=0.,
+            controleprofiel=profile,werkelijk_gg_bekend=False,
+            uitgesloten_aansluitkabels=not has_length,uitsluitend_ov_route=has_length and has_ov,
+            ov_elektrisch_onbeoordeeld=has_ov)
+    rt=xt=0.
+    ampacity=float("inf")
+    for e in segments:
+        r,x,i=CATALOG[type_key(e.type)]
+        rt+=r*e.length_m/1000.
+        xt+=x*e.length_m/1000.
+        ampacity=min(ampacity,i)
+    z=hypot(rt,xt)
+    allowable=[]
+    for idx,gg in enumerate(FUSES):
+        if installed_fuse_a is not None and gg!=installed_fuse_a:
+            continue
+        if ampacity+1e-10<DESIGN_AMPS[idx]:
+            continue
+        profiles=Z_LIMITS if profile=="both" else {profile:Z_LIMITS[profile]}
+        if all(z<=limits[idx]+1e-12 for limits in profiles.values()):
+            allowable.append((gg,DESIGN_AMPS[idx]))
+    if installed_fuse_a is not None and installed_fuse_a not in FUSES:
+        raise ValueError(f"gG-afzekering {installed_fuse_a} niet ondersteund.")
+    best=allowable[-1] if allowable else (None,0.)
+    return {
+        "impedantie_ohm":z,
+        "minimum_zomer_a":ampacity,
+        "gg_a":best[0],
+        "max_ontwerp_a":best[1],
+        "controleprofiel":profile,
+        "werkelijk_gg_bekend":installed_fuse_a is not None,
+        "ov_elektrisch_onbeoordeeld":has_ov,
+    }
+
+
+def _maximum(records,prefix):
+    # A point registered on multiple real feeders is one transformer demand.
+    # Every feeder is checked at the full demand, without guessing a split.
+    records=tuple({c.source_id or c.id:c for c in records}.values())
+    return max(
+        sum(getattr(c,prefix+"_verbruik_a") for c in records),
+        sum(getattr(c,prefix+"_opwek_a") for c in records),
+        0.,
+    )
+
+
+def check_paths(connections, cables, station_origins=None, branch_roots=None,
+                feeder_parents=None):
+    """No arbitrary paths, cable mixing or off-branch directional shortcuts.
+
+    station_origins maps station->station origin node, branch_roots maps
+    (station, subgroup)->actual intersection node with parent. A -01
+    direction starts at its parent junction, not at the substation.
+    """
+    edges={e.id:e for e in cables}
+    if len(edges)!=len(cables):
+        raise ValueError("Dubbele kabeldeel-ID's.")
+    seen={}
+    for c in connections:
+        group=group_code(c.group)
+        start=None
+        if supplied_by(c.station,group,feeder_parents):
+            if branch_roots is not None:
+                start=branch_roots.get((c.station,group))
+                if not start: raise ValueError(f"Geen bevestigd aftakpunt voor {c.station}/{group}")
+        elif station_origins is not None:
+            start=station_origins.get((c.station,group),station_origins.get(c.station))
+            if not start: raise ValueError(f"Geen bevestigd stationsbeginpunt voor {c.station}")
+        current=start
+        history=set([current]) if current else set()
+        for id in c.edge_ids:
+            if id not in edges:raise ValueError(f"Onbekend kabeldeel {id}")
+            e=edges[id]
+            if group_code(e.group)!=group:
+                raise ValueError(f"Verkeerde kabelgroep bij {c.id}: {e.group} i.p.v. {group}")
+            owner=seen.setdefault(id,(c.station,group))
+            if owner!=(c.station,group):
+                raise ValueError(f"Kabel {id} is bij meerdere stations/groepen ingedeeld.")
+            if current is None:
+                current=e.from_node
+            if current==e.from_node:
+                current=e.to_node
+            elif current==e.to_node:
+                current=e.from_node
+            else:
+                raise ValueError(f"Ongeldige onderbreking in oorspronkelijke route van {c.id}")
+            if current in history:
+                raise ValueError(f"Kabellus in {c.id}, unieke route ontbreekt.")
+            history.add(current)
+
+
+def retain_original(stations_a, connections, cables, *, installed_fuses=None,
+                    station_origins=None, branch_roots=None,
+                    parent_routes=None, profile="both", max_route_m=None,
+                    feeder_parents=None,indivisible_connections=None,end_muff_first=False):
+    """Best-effort conservative removal, never adds a foreign connection.
+
+    Returns retained/released IDs and separate per-(station, full group) cable
+    checks. Each group's length is its union of distinct original typed
+    segments. A suffix '-01' is its OWN length, not the main group's length.
+    For branching circuits shared upstream power is calculated per physical
+    edge; do not double-count it as extra transformer demand.
+    """
+    connections=tuple(connections);cables=tuple(cables)
+    if not connections:raise ValueError("Geen bestaande aansluitingen.")
+    if len(set(c.id for c in connections))!=len(connections):
+        raise ValueError("Aansluit-ID's niet uniek.")
+    sources={}
+    for c in connections:
+        signature=(c.station,c.trafo_verbruik_a,c.trafo_opwek_a,c.kabel_verbruik_a,c.kabel_opwek_a)
+        key=c.source_id or c.id
+        if key in sources and sources[key]!=signature:
+            raise ValueError(f'Tegenstrijdige bronwaarden voor meervoudige aansluiting {key}.')
+        sources[key]=signature
+    check_paths(connections,cables,station_origins,branch_roots,feeder_parents)
+    edge_by_id={e.id:e for e in cables}
+    if max_route_m is not None and (
+        not isfinite(float(max_route_m)) or float(max_route_m)<=0
+    ):
+        raise ValueError("Maximale bestaande kabelroute moet positief zijn.")
+
+    def whole_path(connection):
+        """Physically traverse -00 then branch, never concatenate side branches."""
+        full=list(connection.edge_ids)
+        code=group_code(connection.group)
+        visited=set()
+        while supplied_by(connection.station,code,feeder_parents):
+            if code in visited:
+                raise ValueError(f"Voedingslus bij {connection.station}/{code}.")
+            visited.add(code)
+            if parent_routes is None or (connection.station,code) not in parent_routes:
+                raise ValueError(f"Oorspronkelijke bovenliggende route ontbreekt voor {code}.")
+            full=list(parent_routes[(connection.station,code)])+full
+            code=supplied_by(connection.station,code,feeder_parents)
+        return tuple(full)
+
+    route_m={
+        c.id:sum(edge_by_id[eid].calculation_length_m for eid in whole_path(c))
+        for c in connections
+    }
+    active={c.id for c in connections}
+    rejected={}
+    end_muffs=[]
+    indivisible_connections=indivisible_connections or {}
+    def release_token(c):
+        source=c.source_id or c.id
+        return indivisible_connections.get(source,source)
+    def cut_proposal(connection,edge_id,reason,removed):
+        edge=edge_by_id[edge_id]
+        key=(connection.station,edge.group)
+        node=(branch_roots or {}).get(key) or (station_origins or {}).get(key) or (station_origins or {}).get(connection.station)
+        path=[eid for eid in whole_path(connection) if edge_by_id[eid].group==edge.group]
+        for eid in path:
+            if eid==edge_id:break
+            part=edge_by_id[eid]
+            if node==part.from_node:node=part.to_node
+            elif node==part.to_node:node=part.from_node
+            else:node=None;break
+        end_muffs.append(dict(Station=connection.station,Kabel_Subgroep=edge.group,
+            Kabeldeel=edge_id,Voorstel_knoop=node,Reden=reason,
+            Voorstel_type='LS-scheiding; OV-continuiteit behouden' if edge.protect_ov else 'Nieuwe eindmof LS',
+            OV_continuiteit_controleren=edge.protect_ov,
+            Vrijgegeven_aansluitingen=tuple(sorted({c.source_id or c.id for c in removed}))))
+    unknown_tokens={release_token(c) for c in connections
+                    if any(edge_by_id[eid].calculation_factor and edge_by_id[eid].electrical_check and not edge_by_id[eid].rating_available for eid in whole_path(c))}
+    for c in connections:
+        if release_token(c) in unknown_tokens:
+            active.discard(c.id)
+            rejected[c.id]='LS-hoofdkabeltype buiten rekenbibliotheek; niet aantoonbaar te behouden, nieuw ontwerp vereist'
+    if end_muff_first:
+        recorded=set()
+        for c in connections:
+            first=next((eid for eid in whole_path(c) if edge_by_id[eid].calculation_factor and edge_by_id[eid].electrical_check and not edge_by_id[eid].rating_available),None)
+            if first and first not in recorded:
+                affected=[m for m in connections if first in whole_path(m)]
+                cut_proposal(c,first,'Eindmof vóór niet toetsbaar LS-kabeldeel; houdbaar voortraject eerst behouden',affected)
+                recorded.add(first)
+    stations=set(stations_a)
+    if any(c.station not in stations for c in connections):
+        raise ValueError("Oorspronkelijk station ontbreekt in stationsinventaris.")
+
+    def states():
+        # Group -01 starts at its own tap, but all descendant loads also run
+        # through the main group's upstream cable (once per connection).
+        by_group=defaultdict(list)
+        direct=defaultdict(list)
+        for c in connections:
+            if c.id not in active:continue
+            name=group_code(c.group)
+            direct[(c.station,name)].append(c)
+            while name:
+                by_group[(c.station,name)].append(c)
+                name=supplied_by(c.station,name,feeder_parents)
+        direction={}
+        for key,members in by_group.items():
+            own=direct.get(key,[])
+            paths=[c.edge_ids for c in own]
+            # Each child must have a verified physical path on THIS parent
+            # group to its tap. Never add the child's length to the parent.
+            children=sorted({
+                direct_child_group(c.group,key[1],c.station,feeder_parents)
+                for c in members
+                if c.group!=key[1] and is_descendant_group(
+                    c.group,key[1],c.station,feeder_parents
+                )
+            })
+            for child in children:
+                link_key=(key[0],child)
+                if parent_routes is None or link_key not in parent_routes:
+                    raise ValueError(
+                        f"Fysieke bovenliggende route tot aftakking {child} "
+                        "ontbreekt; de belasting van de parent mag niet worden genegeerd."
+                    )
+                paths.append(tuple(parent_routes[link_key]))
+            if not paths:
+                raise ValueError("Richting zonder werkelijk fysiek pad.")
+            checked=[]
+            used=set()
+            edge_consumers=defaultdict(set)
+            for consumer in members:
+                # The full Kabel Subgroep column supplies exact membership.
+                # Each consumer appears once on every shared upstream edge.
+                if consumer.group == key[1]:
+                    used_path=consumer.edge_ids
+                else:
+                    child=direct_child_group(
+                        consumer.group,key[1],consumer.station,feeder_parents
+                    )
+                    if parent_routes is None or (consumer.station,child) not in parent_routes:
+                        raise ValueError(f"Bovenliggende route {key[1]} -> {child} ontbreekt.")
+                    used_path=parent_routes[(consumer.station,child)]
+                for edge_id in used_path:
+                    edge_consumers[edge_id].add(consumer.id)
+            for path in paths:
+                path=tuple(path)
+                if not path:raise ValueError(f"Leeg fysiek pad voor {key}")
+                used.update(path)
+                physical=[edge_by_id[id] for id in path]
+                fuse=None if installed_fuses is None else installed_fuses.get(key)
+                checked.append((
+                    sum(x.calculation_length_m for x in physical),
+                    cable_check(physical,installed_fuse_a=fuse,profile=profile)
+                ))
+            # CableChecker is a feeder-path impedance calculation, NOT a sum
+            # of disconnected parallel branches. Use worst individual path,
+            # but count every endpoint load on the shared upstream feeder.
+            worst_length=max(length for length,_ in checked)
+            electric_checks=[r for r in checked if not r[1].get('uitgesloten_aansluitkabels',False)
+                             and not r[1].get('uitsluitend_ov_route',False)]
+            limiting=min(electric_checks or checked,key=lambda row:row[1]["max_ontwerp_a"])[1]
+            load=_maximum(members,"kabel")
+            union=[edge_by_id[id] for id in sorted(used)]
+            by_id={c.id:c for c in members}
+            part_loads={
+                eid: _maximum([by_id[cid] for cid in sorted(consumer_ids)], "kabel")
+                for eid,consumer_ids in edge_consumers.items()
+            }
+            # Per-segment load does not include parallel branches downstream
+            # of another segment, and terminal-side portions remain distinct.
+            for eid,current in part_loads.items():
+                if not edge_by_id[eid].calculation_factor or not edge_by_id[eid].electrical_check:continue
+                cap=CATALOG[type_key(edge_by_id[eid].type)][2]
+                if current>cap+1e-7:
+                    limiting_failure=True
+                    break
+            else:
+                limiting_failure=False
+            direction[key]={
+                **limiting,
+                "belasting_a":load,
+                "pass":(
+                    limiting.get('uitgesloten_aansluitkabels',False) or limiting.get('uitsluitend_ov_route',False) or (bool(limiting["gg_a"]) and
+                    load<=limiting["max_ontwerp_a"]+1e-7 and
+                    not limiting_failure)
+                ),
+                "deel_belasting_a":part_loads,
+                "length_m":worst_length,
+                "fysiek_uniek_m":sum(x.length_m for x in union),
+                "rekenlengte_m":sum(x.calculation_length_m for x in union),
+                "aansluitkabels_m":sum(x.length_m for x in union if not x.calculation_factor),
+                "ov_elektrisch_onbeoordeeld":any(x.ov_route for x in union),
+                "ov_route_m":sum(x.calculation_length_m for x in union if x.ov_route),
+                "paden":len(paths),
+                "segmenten":tuple((x.id,x.type,x.length_m) for x in union),
+                "behouden_ids":tuple(sorted({c.source_id or c.id for c in members}))
+            }
+        station={}
+        for name,capacity in stations_a.items():
+            if not isfinite(capacity) or capacity<=0:
+                raise ValueError(f"Station {name} heeft geen betrouwbare trafocapaciteit.")
+            members=[c for c in connections if c.station==name and c.id in active]
+            v=max(
+                _maximum(members,"trafo"),
+                # The general clustering model adds each point's 'Hoogste
+                # Trafo' (max of demand and generation). Check that
+                # conservative total too, so fixed existing assignments
+                # cannot later exceed the clustering capacity.
+                sum(max(c.trafo_verbruik_a,c.trafo_opwek_a) for c in
+                    {c.source_id or c.id:c for c in members}.values()),
+            )
+            station[name]={"belasting_a":v,"maximum_a":capacity,"pass":v<=capacity+1e-7}
+        return station,direction
+
+    # Repeatedly release the most constraining original endpoint, e.g. a far
+    # branch or high-demand connection. Every resulting set is a subset of
+    # verified original membership. Never assign a cable to a new station here.
+    for _ in range(len(connections)+1):
+        station,groups=states()
+        bad_groups={k for k,x in groups.items() if not x["pass"]}
+        bad_stations={k for k,x in station.items() if not x["pass"]}
+        if max_route_m is not None:
+            bad_route_ids={c.id for c in connections if c.id in active and
+                           route_m[c.id]>max_route_m+1e-7}
+        else:
+            bad_route_ids=set()
+        if not bad_groups and not bad_stations and not bad_route_ids:
+            break
+        possibles=[c for c in connections if c.id in active and
+                   (c.id in bad_route_ids or c.station in bad_stations or any(
+                       station == c.station and (
+                           group_code(c.group) == group
+                           or is_descendant_group(
+                               c.group,group,c.station,feeder_parents
+                           )
+                       )
+                       for station,group in bad_groups
+                   ))]
+        if not possibles:
+            raise ValueError("Ongeldige richting/station kan niet door afschalen hersteld worden.")
+        chosen=max(possibles,key=lambda c:(
+            c.id in bad_route_ids,
+            any(station == c.station and (
+                group_code(c.group) == group
+                or is_descendant_group(c.group,group,c.station,feeder_parents)
+            ) for station,group in bad_groups),
+            route_m[c.id] if end_muff_first else max(c.kabel_verbruik_a,c.kabel_opwek_a,c.trafo_verbruik_a,c.trafo_opwek_a),
+            max(c.kabel_verbruik_a,c.kabel_opwek_a) if end_muff_first else route_m[c.id],c.id))
+        cut_edge=None
+        if end_muff_first:
+            # Start at the downstream end, including a cabinet feeder with
+            # its own group. Cutting the overloaded parent first would discard
+            # an otherwise viable upstream direction and sibling branches.
+            physical=[eid for eid in whole_path(chosen) if edge_by_id[eid].calculation_factor]
+            # OV is route evidence only. A displaced LS service is transferred
+            # without proposing a cut through the live lighting conductor.
+            candidates=physical if physical and not edge_by_id[physical[-1]].ov_route else []
+            cut_edge=candidates[-1] if candidates else None
+            tokens={release_token(c) for c in connections if c.id in active and cut_edge is not None and cut_edge in whole_path(c)}
+            tokens.add(release_token(chosen))
+            chosen_ids={c.id for c in connections if release_token(c) in tokens}
+        else:chosen_ids={c.id for c in connections if release_token(c)==release_token(chosen)}
+        active.difference_update(chosen_ids)
+        reason=(
+            "Bestaande station-aansluitingroute te lang" if chosen.id in bad_route_ids else
+            "Kabelrichting of bestaande kabellengte/type onvoldoende" if
+            any(station==chosen.station and (
+                group_code(chosen.group)==group
+                or is_descendant_group(
+                    chosen.group,group,chosen.station,feeder_parents
+                )
+            ) for station,group in bad_groups) else
+            "Trafocapaciteit onvoldoende"
+        )
+        if not cut_edge and end_muff_first:
+            reason+='; aansluiting overzetten, geen eindmof in aansluitkabel of OV-route'
+        if cut_edge:
+            cut_proposal(chosen,cut_edge,'Richting eerst afkappen bij eindmof: '+reason,
+                         [c for c in connections if c.id in chosen_ids])
+            reason='Achter voorgesteld eindmof vrijgegeven: '+reason
+        rejected.update({ident:reason for ident in chosen_ids})
+    else:
+        raise ValueError("Bestaande richtingen niet veilig af te schalen.")
+    station,directions=states()
+    kept_nodes=defaultdict(set)
+    for c in connections:
+        if c.id in active:
+            for eid in whole_path(c):
+                edge=edge_by_id[eid]
+                kept_nodes[c.station].update((edge.from_node,edge.to_node))
+    for proposal in end_muffs:
+        node=proposal['Voorstel_knoop'];proposal_station=proposal['Station']
+        proposal['Behoudbaar_voortraject']=node in kept_nodes[proposal_station]
+        # Earlier downstream attempts can be superseded by a later cut.
+        roots={v for k,v in (station_origins or {}).items()
+               if k==proposal_station or (isinstance(k,tuple) and k[0]==proposal_station)}
+        proposal['Actueel_voorstel']=node is not None and (node in kept_nodes[proposal_station] or node in roots)
+    return {"behouden":tuple(sorted(active)),
+            "vrijgegeven":tuple(sorted(rejected)),
+            "redenen":rejected,
+            "stations":station,"richtingen":directions,
+            "route_m":route_m,
+            "whole_path_edge_ids":{c.id:whole_path(c) for c in connections},
+            "eindmof_voorstellen":end_muffs,
+            "waarschuwingen":(
+                ["gG-afzekering niet uit inventaris bevestigd; adviezen zijn berekende maxima"]
+                if installed_fuses is None else []
+            )+(['OV-kabels zijn uitsluitend routeonderdelen; elektrische OV-beoordeling staat open.']
+                if any(d.get('ov_elektrisch_onbeoordeeld') for d in directions.values()) else [])}

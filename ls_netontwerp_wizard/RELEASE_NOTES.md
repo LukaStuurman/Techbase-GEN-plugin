@@ -1,3 +1,17 @@
+## v1.33.3-rc.1 — Testrelease behoud bestaande stations en verdeelkastgroepen
+
+Optionele behoudmodus uit concept-PR #29: oorspronkelijke aansluitingen en volledige kabelsubgroepen blijven per bestaand station gescheiden; onafhankelijke verdeelkastvoedingen worden apart doorgerekend en vrijgegeven/nieuwe aansluitingen gaan uitsluitend naar nieuwe stations.
+
+Hersteld voor QGIS 4.2.3 / GEOS 3.14.1: opeenvolgende rechte kabeldelen behouden hun oorspronkelijke typegrenzen bij het noden. Elf gerichte regressies en de synthetische controle slagen.
+
+**Echte Den Dungen-proef:** de aangeleverde stations-CSV koppelt 1.998 aansluitingen exact op Master Asset ID, zonder duplicaten; 765 bronpunten blijven zonder match. De herhaalde PyQGIS-berekening stopt terecht bij meervoudige GEN-kabelgroepen. Drie gekoppelde aansluitingen hebben ieder twee groepscodes, ook de CSV vermeldt daar twee objecten. Een controleproject, technisch rapport en lokaal overzicht zijn gemaakt. Werkelijke geïnstalleerde gG en actuele schakelingen zijn niet bevestigd. Dit is een experimentele prerelease voor testen, geen geslaagde praktijkvalidatie of productieontwerp. PR #29 blijft concept; geen merge naar main.
+
+Installeer de ZIP en herstart QGIS volledig. Verifieer eerst de oorspronkelijke Station-koppeling en volledige Kabel Subgroep; zet daarna in 3a de optie **Bestaande stations en kabelgroepen exact behouden** aan en gebruik een nieuwe uitvoermap.
+
+Zie `DEN_DUNGEN_BEHOUD_TESTRELEASE.md` voor controles, ontbrekende gegevens en teststappen.
+
+---
+
 ## v1.33.2 — Kader 2.0 gasadvies en kleinzakelijk 3×25 A
 
 De gasstaffels staan in Kader 2.0 **als twee ingesloten afbeeldingen** rechts van `Ontwerpstroom_trafo` (`image2.emf` en `image3.emf`), niet als gewone Excel-cellen. Ze zijn nu overgenomen met afzonderlijke adviezen op **trafoniveau** en **LS-kabelniveau**. Het advies hangt af van de **huidige** combinatie van gasaansluiting en elektriciteitsdoorlaat, terwijl de basisontwerpstroom Type 6/7 van de **toekomstige** elektriciteitsaansluitwaarde komt.
