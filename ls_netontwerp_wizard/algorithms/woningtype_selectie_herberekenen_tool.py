@@ -203,7 +203,6 @@ def _configurations(values, module):
             "laad_fallback": float(values.get("fallback_laad", 3.7)),
             "bouwjaar_grens": int(values.get("building_year_limit", 2022)),
             "limit_fase": int(values.get("phase_limit", 3)),
-            "limit_amp": int(values.get("amp_limit", 40)),
         },
     }
     cable = dict(common)

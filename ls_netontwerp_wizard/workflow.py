@@ -936,7 +936,6 @@ class WorkflowRunner:
                 "VAL_APPARTEMENT_ZONDER_DOORLAAT": self.v["default_apartment"],
                 "VAL_BOUWJAAR_GRENS": self.v["building_year_limit"],
                 "VAL_LIMIT_FASE": self.v["phase_limit"],
-                "VAL_LIMIT_AMP": self.v["amp_limit"],
                 "MAT_WOONHUIS": self.v["matrix_woonhuis"],
                 "MAT_WOONHUIS_2022": self.v["matrix_woonhuis_2022"],
                 "MAT_WOONHUIS_KABEL": self.v["matrix_woonhuis_kabel"],

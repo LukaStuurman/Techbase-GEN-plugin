@@ -200,6 +200,29 @@ def test():
     assert consumption("3 x 50 A","woonhuis","vrijstaande woning",2024,">G25",
                        house_cfg,1,None,True,True,None,"3 x 50 A") == 210.
 
+    # A saved 63 A cutoff must not keep 3x50 A residential. Gas only
+    # participates after the fixed household classification, for both levels.
+    for framework in ("2.0", "3.0", "3.2"):
+        for level in ("trafo", "kabel"):
+            cfg = dict(
+                base, FRAMEWORK_VERSION=framework, NET_LEVEL=level,
+                DEFAULTS=dict(base["DEFAULTS"], limit_amp=63),
+                TYPES={**base["TYPES"], 1:dict(fixed=0., use_amp=True, use_woon=True)},
+                WOONHUIS={"vrijstaand": 7.5},
+                GAS_ADVIES=[dict(cat=">G25", max_el=100, advies=160)],
+            )
+            def calculate(supply, gas):
+                args = (supply, "Huishoudelijk", "vrijstaand")
+                demand = consumption(*args, 2010, gas, cfg, 1, None, True,
+                                     True, None, "3x50A")
+                production = generation(*args, gas, {"vrijstaand": 5.0},
+                                        cfg, demand, True, 2010, None, "3x50A")
+                return demand, production
+            household = calculate("3x40A", "Geen")
+            assert household[0] > 0 and calculate("3x40A", "G40") == household
+            heavy = calculate("3x50A", "G40")
+            assert heavy[0] == heavy[1] and heavy[0] > calculate("3x50A", "Geen")[0]
+
     # The former 3.1 preset still uses precisely the same current/gas path
     # under its renamed 3.2 selection.
     old_context = (calc, {"design_framework": "3.1", "one_phase_exception": True},
