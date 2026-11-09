@@ -8,6 +8,7 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterField,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterNumber,
+                       QgsProcessingParameterDefinition,
                        QgsProcessingParameterMatrix,
                        QgsProcessingParameterEnum,
                        QgsProcessingParameterString,
@@ -297,14 +298,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             return float(table_to_use.get("appartement", 5.5))
         return 0.0
 
-    limit_fase = config['DEFAULTS'].get('limit_fase', 3)
-    limit_amp = config['DEFAULTS'].get('limit_amp', 40)
-
-    # Boven de ampèregrens wordt een huishoudelijke aansluiting zakelijk gerekend.
-    # Voor deze grens tellen 1- en 2-fase als 3-fase; precies 40A blijft huishoudelijk.
-    # De beleidsgrens 3x40A blijft minimaal huishoudelijk, ook als een
-    # instelbare amperegrens per ongeluk lager staat.
-    is_heavy_woon = (fases > 0 and el_amp > max(limit_amp, 40))
+    is_heavy_woon = g_type in (1, 4) and kader_20.classify_category(
+        g_type, fases, el_amp
+    ) == 10
 
     val = 0.0
     
@@ -318,8 +314,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             if type_cfg['use_amp']: 
                 val = amp_to_ontwerp(el_amp, config['AMP_GLOBAL'])
         else:
-            in_band = (fases >= limit_fase and el_amp <= max(limit_amp, 40)) or (fases > 0 and fases < limit_fase)
-            if (g_type == 4) or in_band:
+            if g_type == 4 or fases > 0:
                 if type_cfg['use_woon']: 
                     table_to_use = config['WOONHUIS']
                     if is_nieuwbouw and 'WOONHUIS_2022' in config and config['WOONHUIS_2022']:
@@ -359,15 +354,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     val_gas = 0.0
     gas_cat = normalize_gas(ld_gas_type)
     
-    # Gas is not applicable to public charging points or street furniture.
-    # Also ignore it for light single-phase residential connections when the
-    # corresponding exception is enabled.
-    ignore_gas = (g_type in [8, 9]) or (
-        g_type in [1, 4] and 0 < fases <= 3 and el_amp <= 40
-    ) or (
-        use_1fase_exc and g_type in [1, 4] and fases < limit_fase and el_amp <= limit_amp
-    )
-    
+    # The household classification determines eligibility for gas advice.
+    ignore_gas = g_type in (8, 9) or (g_type in (1, 4) and not is_heavy_woon)
+
     if not ignore_gas:
         if el_amp > 0:
             trafo_amp = get_gas_advies(gas_cat, el_amp, config['GAS_ADVIES'])
@@ -383,7 +372,10 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
         if gas_is_heavy and val_gas > val: final_val = val_gas
         else: final_val = val
     else:
-        unknown_ok = (fases >= limit_fase and el_amp <= max(limit_amp, 40)) or (fases > 0 and fases < limit_fase)
+        limit_fase = config['DEFAULTS'].get('limit_fase', 3)
+        unknown_ok = not is_heavy_woon and (
+            (fases >= limit_fase and el_amp <= 40) or (0 < fases < limit_fase)
+        )
         table_fallback = config['WOONHUIS']
         if is_nieuwbouw and 'WOONHUIS_2022' in config and config['WOONHUIS_2022']:
             table_fallback = config['WOONHUIS_2022']
@@ -442,11 +434,10 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     zero_ids = config.get('OPWEK_RULES', {}).get('zero_ids', [4, 8, 9])
     zero_text = config.get('OPWEK_RULES', {}).get('zero_text', 'appartement')
     
-    limit_fase = config['DEFAULTS'].get('limit_fase', 3)
-    limit_amp = config['DEFAULTS'].get('limit_amp', 40)
-    
-    is_heavy_woon = (fases > 0 and el_amp > max(limit_amp, 40))
-    
+    is_heavy_woon = g_type in (1, 4) and kader_20.classify_category(
+        g_type, fases, el_amp
+    ) == 10
+
     # Eea-0205.K 3.2: zware woon/appartement-aansluitingen worden via de
     # ampere-/zakelijke tabel berekend. Opwek volgt daar dezelfde waarde als
     # verbruik en mag niet eerst door de appartement/hoogbouw-nulregel vallen.
@@ -460,33 +451,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
     if zero_text and zero_text in clean_text(type_woning) and g_type == 1: 
         return 0.0
     
-    # Specifieke Woonhuis Opwek Logica
     if g_type == 1:
-        val_opwek = woonhuis_ontwerp(type_woning, opwek_table)
-        
-        # Gas correctie berekenen voor opwek
-        val_gas = 0.0
-        gas_cat = normalize_gas(ld_gas_type)
-        ignore_gas = (
-            0 < fases <= 3 and el_amp <= 40
-        ) or (
-            use_1fase_exc and g_type == 1 and fases < limit_fase and el_amp <= limit_amp
-        )
-        
-        if not ignore_gas:
-            if el_amp > 0:
-                trafo_amp = get_gas_advies(gas_cat, el_amp, config['GAS_ADVIES'])
-                if trafo_amp > 0: 
-                    val_gas = amp_to_ontwerp(trafo_amp, config['AMP_GLOBAL'])
-            gas_is_heavy = (gas_cat in [">G25", "G10-G25"])
-        else:
-            gas_is_heavy = False
-        
-        if gas_is_heavy and val_gas > val_opwek: 
-            return val_gas
-        else: 
-            return val_opwek
-            
+        return woonhuis_ontwerp(type_woning, opwek_table)
+
     return normal_val
 
 # ==============================================================================
@@ -578,7 +545,15 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         
         # Grenswaarden Configuratie
         self.addParameter(QgsProcessingParameterNumber(self.VAL_LIMIT_FASE, self.tr('Grens Fase (Woonhuis -> Zakelijk)'), type=QgsProcessingParameterNumber.Integer, defaultValue=3))
-        self.addParameter(QgsProcessingParameterNumber(self.VAL_LIMIT_AMP, self.tr('Grens Ampère (> Woonhuis = Zakelijk)'), type=QgsProcessingParameterNumber.Integer, defaultValue=40))
+        # Retain the processing key for saved models. The policy is fixed.
+        legacy_amp_limit = QgsProcessingParameterNumber(
+            self.VAL_LIMIT_AMP, self.tr('Voormalige instelbare ampèregrens'),
+            type=QgsProcessingParameterNumber.Integer, defaultValue=40,
+        )
+        legacy_amp_limit.setFlags(
+            legacy_amp_limit.flags() | QgsProcessingParameterDefinition.FlagHidden
+        )
+        self.addParameter(legacy_amp_limit)
 
         # Matrices Woonhuis
         p_woon = QgsProcessingParameterMatrix(self.MAT_WOONHUIS, self.tr('Config: Woonhuis (Oud / < Grens)'))
@@ -697,7 +672,6 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         opwek_zero_text = self.parameterAsString(parameters, self.VAL_OPWEK_ZERO_TEXT, context).lower().strip()
 
         limit_fase = self.parameterAsInt(parameters, self.VAL_LIMIT_FASE, context)
-        limit_amp = self.parameterAsInt(parameters, self.VAL_LIMIT_AMP, context)
 
         raw_amp = self.parameterAsMatrix(parameters, self.MAT_AMP, context)
         cfg_amp = []
@@ -773,8 +747,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             'DEFAULTS': {
                 'laad_fallback': self.parameterAsDouble(parameters, self.VAL_FALLBACK_LAAD, context),
                 'bouwjaar_grens': self.parameterAsInt(parameters, self.VAL_BOUWJAAR_GRENS, context),
-                'limit_fase': limit_fase,
-                'limit_amp': limit_amp
+                'limit_fase': limit_fase
             }
         }
         

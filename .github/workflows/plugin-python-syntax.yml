@@ -31,3 +31,27 @@ jobs:
         run: python ls_netontwerp_wizard/test_kader_20.py
       - name: Bewaak 3.2-waarden en controleer 2.0-futures
         run: python ls_netontwerp_wizard/test_kader_comparison_20_32.py
+      - name: Originele stations, kabelgroepen en aftakkingen controleren
+        run: python ls_netontwerp_wizard/test_existing_station_retention.py
+      - name: Geometrische trace van -00 hoofdroute en -01/-02/-03 aftakkingen
+        run: |
+          python -m pip install "shapely>=2.0" "networkx>=3" "geopandas>=1.0" "scipy>=1.14"
+          python ls_netontwerp_wizard/test_end_muff_first.py
+          python ls_netontwerp_wizard/test_residual_circuit_identity.py
+          python ls_netontwerp_wizard/test_planned_feeder_network.py
+          python ls_netontwerp_wizard/test_reuse_first_routing.py
+          python ls_netontwerp_wizard/test_planned_direction_design.py
+          python ls_netontwerp_wizard/test_new_feeder_validation.py
+          python ls_netontwerp_wizard/test_existing_group_trace.py
+          python ls_netontwerp_wizard/test_locked_original_autocluster.py
+          python ls_netontwerp_wizard/test_existing_cabinet_feeders.py
+          python ls_netontwerp_wizard/test_existing_multiple_memberships.py
+          python ls_netontwerp_wizard/test_service_cable_exclusion.py
+          python ls_netontwerp_wizard/test_review_retention.py
+          python ls_netontwerp_wizard/generate_existing_station_control.py --output-dir controle_verdeelkasten
+      - name: Publiceer controlebestand en vier CSV-overzichten
+        uses: actions/upload-artifact@v4
+        with:
+          name: controle-bestaande-stations-verdeelkast
+          path: controle_verdeelkasten/
+          if-no-files-found: error

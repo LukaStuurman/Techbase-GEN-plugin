@@ -362,14 +362,16 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
     mappings = {}
     for code in sorted({cable_code(f.get('Kabelgroepnummer')) for f in fields.values()} - {''}):
         check(); node = 'c:' + code; candidates = sorted(name for name, previous in paths.items() if node in previous)
-        route = []
+        route = []; node_route = [node]
         if len(candidates) == 1:
             previous = paths[candidates[0]]
             while previous[node] is not None:
                 parent = previous[node]; route.append(graph[parent][node]); node = parent
+                node_route.append(node)
         mappings[code] = {'stations': candidates, 'path': ' → '.join(reversed(route)),
                           'transformers': [f'{transformer_roots[i][1]}/{transformer_roots[i][2]}' for i, prev in trafo_paths.items() if 'c:' + code in prev],
-                          'evidence': 'LS-schakelpad'}
+                          'evidence': 'LS-schakelpad',
+                          'cable_path': [n[2:] for n in reversed(node_route) if n.startswith('c:')]}
     ov_new, ov_conflicts, ov_labels = 0, 0, 0
     if ov_dxf_path:
         check()
@@ -406,6 +408,8 @@ def build_mapping(xml_path, excel_path, dxf_path='', administrative=False, cance
     if any(file_digest(p) != digest for p, digest in files.items()):
         raise ValueError('Een schemabron veranderde tijdens de berekening. Probeer opnieuw met vaste exports.')
     return {'groups': mappings, 'issues': issues, 'corrected_rails': corrected, 'corrected_fields':corrected_fields,
+            'electrical_edges': [[u,v] for u,adj in graph.items() for v in adj],
+            'source_roots': {name:sorted(nodes) for name,nodes in roots.items()},
             'counts': {'fields': len(fields), 'rails': len(rails), 'fuses': len(tables['LS Smeltveiligheid']), 'couplings': couplings,
                        'ov_codes': ov_labels, 'ov_added_groups': ov_new, 'ov_conflicts': ov_conflicts, 'corrected_fields':len(corrected_fields)},
             'files': files,

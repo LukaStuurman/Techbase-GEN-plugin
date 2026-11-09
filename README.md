@@ -1,5 +1,7 @@
 # Techbase-GEN-plugin
 
+Ontwikkeling in draft PR #29: [hergebruik, afzonderlijke nieuwe 150Al-richtingen en actuele vrijgavebeperkingen](PLANNED_150AL_VALIDATION.md). De Den Dungen-clustering in deze behoudmodus is nog niet volledig gevalideerd.
+
 ## Laatste versie: 1.33.2
 
 [Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.2/ls_netontwerp_wizard-1.33.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.2)

@@ -65,6 +65,9 @@ from .station_name_csv import (
 
 
 TEXT_OPTIONS = {
+    "retention_schema_xml": ("Bevestigde LS-schema XML voor behoudmodus (optioneel)", ""),
+    "retention_schema_excel": ("Bijbehorende veld/rail/smelt-Excel (optioneel)", ""),
+    "retention_schema_dxf": ("LS-schema DXF voor fysieke veldcontrole (optioneel)", ""),
     # Excel import
     "sheet_cable": ("Excel-tabblad kabels", "LS Kabel"),
     "sheet_joint": ("Excel-tabblad moffen", "LS OV Kabelmof"),
@@ -122,6 +125,11 @@ BOOL_OPTIONS = {
     "only_plan": ("Alleen aansluitingen en stations binnen plangebied", True),
     "allow_external_routes": ("Kabelroutes buiten het plangebied toestaan", False),
     "automatic_stations": ("Aantal nieuwe stations automatisch", True),
+    "preserve_existing_directions": ("Bestaande stations en kabelgroepen exact behouden", False),
+    "historical_ov_routes": ("OV-kabels alleen als route gebruiken; elektrische OV-controle apart", False),
+    "planned_150al_feeders": ("Waar nodig nieuwe 150Al-aanloopkabels langs hoofdkabeltracés voorstellen", False),
+    "end_muff_first": ("Eerst houdbaar voortraject met eindmof behouden", True),
+    "release_unverified_groups": ("Concept: onzekere bestaande richtingen alleen aan nieuwe stations aanbieden", False),
     "write_shapefiles": ("Ook losse shapefiles schrijven", False),
 }
 
@@ -136,7 +144,6 @@ NUMBER_OPTIONS = {
     ),
     "building_year_limit": ("Grens nieuwbouwjaar", 2022, 1900, 2200, 0),
     "phase_limit": ("Fasegrens woonhuis/zakelijk", 3, 1, 20, 0),
-    "amp_limit": ("Ampèregrens woonhuis/zakelijk", 40, 1, 1000, 0),
     "node_tolerance": ("Knooptolerantie (m)", 1.0, 0.0, 25.0, 2),
     "manual_station_count": ("Handmatig aantal nieuwe stations", 0, 0, 100, 0),
     "new_station_kva": ("Vermogen nieuw station (kVA)", 630.0, 1.0, 5000.0, 1),
@@ -2981,6 +2988,10 @@ class LSNetontwerpDialog(QDialog):
             "node_trenches",
             "only_plan",
             "allow_external_routes",
+            "historical_ov_routes",
+            "planned_150al_feeders",
+            "end_muff_first",
+            "release_unverified_groups",
             "automatic_stations",
             "write_shapefiles",
         ):
@@ -2989,7 +3000,6 @@ class LSNetontwerpDialog(QDialog):
             "cpu_threads",
             "building_year_limit",
             "phase_limit",
-            "amp_limit",
             "node_tolerance",
             "manual_station_count",
             "new_station_kva",
@@ -2998,6 +3008,8 @@ class LSNetontwerpDialog(QDialog):
         ):
             self._add_number_option(calculation_form, key)
         self._add_text_option(calculation_form, "main_function_words")
+        for key in ("retention_schema_xml","retention_schema_excel","retention_schema_dxf"):
+            self._add_text_option(calculation_form,key)
         self._add_text_option(calculation_form, "connection_function_words")
         self._add_text_option(calculation_form, "bag_api_url")
         tabs.addTab(calculation_tab, "Berekening")

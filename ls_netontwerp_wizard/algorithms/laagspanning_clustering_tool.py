@@ -85,6 +85,7 @@ class LaagspanningClusteringAlgorithm(QgsProcessingAlgorithm):
     ALLEEN_BINNEN_PLANGEBIED = "ALLEEN_BINNEN_PLANGEBIED"
     KABELROUTES_BUITEN_PLANGEBIED = "KABELROUTES_BUITEN_PLANGEBIED"
     AUTOMATISCH_AANTAL = "AUTOMATISCH_AANTAL"
+    BEHOUD_BESTAANDE_RICHTINGEN = "BEHOUD_BESTAANDE_RICHTINGEN"
     AANTAL_NIEUWE = "AANTAL_NIEUWE"
     NIEUW_KVA = "NIEUW_KVA"
     VOORKEUR_BENUTTING = "VOORKEUR_BENUTTING"
@@ -486,6 +487,29 @@ verzoek zichtbaar worden.
                 defaultValue=True,
             )
         )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.BEHOUD_BESTAANDE_RICHTINGEN,
+                self.tr(
+                    "Bestaande stations uitsluitend originele aansluitingen op "
+                    "originele kabelgroepen laten behouden (extra controle)"
+                ),
+                defaultValue=False,
+            )
+        )
+        for kind,label in (("XML","Bevestigde LS-schema XML (optioneel)"),
+                           ("EXCEL","Bijbehorende veld/rail/smelt-Excel (optioneel)"),
+                           ("DXF","LS-schema DXF voor fysieke veldcontrole (optioneel)")):
+            self.addParameter(QgsProcessingParameterString(
+                "HISTORISCH_SCHEMA_"+kind,self.tr(label),defaultValue="",optional=True))
+        self.addParameter(QgsProcessingParameterBoolean("HISTORISCHE_OV_ROUTES",
+            self.tr("Oorspronkelijke OV-routes voor gekoppelde aansluitingen toestaan en markeren"),defaultValue=False))
+        self.addParameter(QgsProcessingParameterBoolean("NIEUWE_150AL_AANLOOPKABELS",
+            self.tr("Waar nodig nieuwe 150Al-aanloopkabels langs hoofdkabeltracés voorstellen"),defaultValue=False))
+        self.addParameter(QgsProcessingParameterBoolean("EINDMOF_EERST",
+            self.tr("Eerst houdbaar voortraject met eindmof behouden bij overschrijding"),defaultValue=True))
+        self.addParameter(QgsProcessingParameterBoolean("CONCEPT_ONZEKERE_RICHTINGEN",
+            self.tr("Concept: niet aantoonbaar behoudbare richtingen uitsluitend naar nieuwe stations"),defaultValue=False))
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.AANTAL_NIEUWE,
@@ -1336,6 +1360,44 @@ verzoek zichtbaar worden.
         automatic_count = self.parameterAsBool(
             parameters, self.AUTOMATISCH_AANTAL, context
         )
+        preserve_existing = self.parameterAsBool(
+            parameters, self.BEHOUD_BESTAANDE_RICHTINGEN, context
+        )
+        if preserve_existing and not automatic_count:
+            raise QgsProcessingException(
+                "De bestaande-kabelgroepenmodus werkt alleen met automatisch "
+                "gekozen nieuwe stations. Zet automatische stationskeuze aan."
+            )
+        original_component_fields = []
+        if preserve_existing:
+            # The default clustering writes a single 'Ontwerpstroom' field
+            # and drops its namesakes. Preserve all four original currents
+            # explicitly: the transformer and branch cable calculations must
+            # NEVER use the single combined surrogate.
+            required_currents = (
+                ("Hoogste Trafo", "Hoogste Trafo"),
+                ("Ontwerpstroom", "Orig_Trafo_Verbruik"),
+                ("Opwek ontwerpstroom", "Orig_Trafo_Opwek"),
+                ("Ontwerpstroom kabel", "Orig_Kabel_Verbruik"),
+                ("Kabel opwek ontwerpstroom", "Orig_Kabel_Opwek"),
+            )
+            found = {}
+            for source_name, canonical_name in required_currents:
+                index = self._automatic_field_index(
+                    points, (source_name,),
+                    f"Kabelgroephistorie: {source_name}", numeric=True,
+                )
+                found[source_name] = index
+                if source_name != "Hoogste Trafo":
+                    original_component_fields.append(
+                        (canonical_name,index,QVariant.Double)
+                    )
+            design_index = found["Hoogste Trafo"]
+            feedback.pushInfo(
+                "Behoudmodus gebruikt Hoogste Trafo als clusterbelasting, "
+                "maar bewaart apart trafo verbruik/opwek en kabel "
+                "verbruik/opwek voor de oorspronkelijke kabelgroepen."
+            )
         n_new = self.parameterAsInt(parameters, self.AANTAL_NIEUWE, context)
         new_kva = self.parameterAsDouble(parameters, self.NIEUW_KVA, context)
         target_utilization = (
@@ -1436,6 +1498,7 @@ verzoek zichtbaar worden.
                     ("GebiedLabel", label_index, QVariant.String),
                     ("Station", station_assignment_index, QVariant.String),
                     ("Multistory", multistory_index, QVariant.String),
+                    *original_component_fields,
                 ],
                 context,
                 feedback,
@@ -1578,6 +1641,10 @@ verzoek zichtbaar worden.
             engine.PINNED_NEW_STATIONS = [{**rule, "name": name} for name, rule in policies.items()
                                           if rule.get("protected") and rule.get("type", "").casefold() == "nieuw"]
             engine.RESERVED_STATION_NAMES = set(policies)
+            engine.RETIRED_STATION_NAMES = {
+                name for name,rule in policies.items()
+                if rule.get("status") == "Vervallen"
+            }
             engine.STATION_CAPACITY_OVERRIDES = {name: rule["kva"] for name, rule in policies.items()
                                                  if rule.get("capacity_override") and not rule.get("status")}
             engine.STATIONS_PATH = stations_path
@@ -1596,6 +1663,15 @@ verzoek zichtbaar worden.
             engine.N_NEW = n_new
             engine.NEW_KVA = new_kva
             engine.AUTO_NEW_STATIONS = automatic_count
+            engine.PRESERVE_EXISTING_DIRECTIONS = preserve_existing
+            engine.HISTORICAL_OV_ROUTES=self.parameterAsBool(parameters,"HISTORISCHE_OV_ROUTES",context)
+            engine.PLANNED_150AL_FEEDERS=self.parameterAsBool(parameters,"NIEUWE_150AL_AANLOOPKABELS",context)
+            engine.END_MUFF_FIRST=self.parameterAsBool(parameters,"EINDMOF_EERST",context)
+            engine.RELEASE_UNVERIFIED_GROUPS=self.parameterAsBool(parameters,"CONCEPT_ONZEKERE_RICHTINGEN",context)
+            engine.HISTORICAL_SCHEMA_SOURCES = {
+                kind.lower():self.parameterAsString(parameters,"HISTORISCH_SCHEMA_"+kind,context).strip()
+                for kind in ("XML","EXCEL","DXF")
+            }
             engine.TARGET_UTILIZATION = target_utilization
             engine.MAX_ROUTE_M = max_route_m
             engine.WRITE_SHAPEFILES = bool(write_shapefiles)
@@ -1674,6 +1750,9 @@ verzoek zichtbaar worden.
             if feedback.isCanceled() or "geannuleerd" in str(exc).casefold():
                 raise QgsProcessingException("Berekening geannuleerd; voorbereide invoer is behouden.") from exc
             try:
+                for name in ('gebruikte_ov_bronkabels.csv','bevestigde_historische_schemapaden.json','eindmof_voorstellen.csv','eindmof_voorstellen.geojson','bestaande_stations_kabelgroepen_controle.csv'):
+                    evidence_path=run_output/name
+                    if evidence_path.exists():shutil.copy2(evidence_path,output_dir/name)
                 from ls_netontwerp_wizard.clustering_diagnostics import save_failure
                 message = save_failure(exc, output_dir, work_dir, calculation_log)
             except Exception as report_error:
