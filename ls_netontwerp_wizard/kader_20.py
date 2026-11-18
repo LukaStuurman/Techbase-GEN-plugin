@@ -180,11 +180,20 @@ def street_phase_hint(doorlaat, number_of_phases=None, phase=None):
     return known[0][0], sources, ""
 
 
-def _business_rate(phases, amp):
+def _business_rate(phases, amp, rate_tables=None, level="trafo"):
     if amp is None:
         return None
     value = float(amp)
     if not math.isfinite(value) or value <= 0 or phases not in (1, 2, 3):
+        return None
+    if rate_tables is not None:
+        if phases * value <= 3 * 25:
+            value = 25.0
+        elif phases != 3:
+            return None
+        for row in rate_tables["business"]:
+            if row["min"] <= value <= row["max"]:
+                return row["type"], float(row[level])
         return None
     # The first 2.0 row is 3x25 A. A smaller supply (e.g. 1x25 A,
     # 2x25 A or 3x10 A) cannot yield an invented smaller business current.
@@ -226,7 +235,7 @@ def _heavy_amp_fallback(phases, amp, amp_fallback):
     return value if math.isfinite(value) and value > 0 else None
 
 
-def business_future_basis(phases, amp, explicit_future=None, amp_fallback=None):
+def business_future_basis(phases, amp, explicit_future=None, amp_fallback=None, rate_tables=None):
     """Resolve a business calculation basis and its provenance.
 
     An explicitly chosen future service always wins, even when its tariff
@@ -242,7 +251,7 @@ def business_future_basis(phases, amp, explicit_future=None, amp_fallback=None):
     if minimum:
         return minimum, "minimum"
     try:
-        row = _business_rate(phases, amp)
+        row = _business_rate(phases, amp, rate_tables=rate_tables)
     except (TypeError, ValueError):
         row = None
     if phases == 3 and (
@@ -252,12 +261,15 @@ def business_future_basis(phases, amp, explicit_future=None, amp_fallback=None):
     return None, "undefined"
 
 
-def _current_from_suggested_amps(amps):
+def _current_from_suggested_amps(amps, level="trafo", rate_tables=None):
     """Design current for the exact suggested 2.0 standard 3-phase rating."""
+    if rate_tables is not None:
+        row = _business_rate(3, amps, rate_tables, level=level)
+        return row[1] if row else 0.0
     return {25: 8.7, 50: 44.0, 80: 65.0, 160: 138.0, 250: 210.0}[amps]
 
 
-def gas_advice(level, gas_category, phases, amps):
+def gas_advice(level, gas_category, phases, amps, rate_tables=None, amp_fallback=None):
     """Source: embedded gas advice illustrations beside the 2.0 trafo sheet.
 
     The recommendation depends on the CURRENT electricity service and gas
@@ -279,6 +291,25 @@ def gas_advice(level, gas_category, phases, amps):
         equivalent_amp = 0.0
     if not math.isfinite(equivalent_amp) or equivalent_amp < 0:
         equivalent_amp = 0.0
+    if rate_tables is not None:
+        for row in rate_tables["gas"].get(gas, []):
+            if equivalent_amp > row["max"]:
+                continue
+            advice = float(row[level])
+            if advice == -1.0:
+                if phases in (1, 2, 3) and amps:
+                    business = _business_rate(phases, amps, rate_tables, level=level)
+                    if business:
+                        return float(business[1])
+                    if phases == 3 and amp_fallback is not None:
+                        try:
+                            fallback = float(amp_fallback(float(amps)))
+                            return fallback if math.isfinite(fallback) and fallback > 0 else 0.0
+                        except (ValueError, TypeError):
+                            pass
+                return 0.0
+            return advice
+        return 0.0
     if gas == ">G25":
         recommended = 250 if level == "trafo" or equivalent_amp > 80 else 80
         return _current_from_suggested_amps(recommended)
@@ -322,8 +353,8 @@ def gas_advice(level, gas_category, phases, amps):
     return 0.0
 
 
-def _value_business(phases, amp):
-    row = _business_rate(phases, amp)
+def _value_business(phases, amp, level="trafo", rate_tables=None):
+    row = _business_rate(phases, amp, rate_tables, level=level)
     if row is None:
         return (0.0, "Type 6/7 - toekomstige aansluitwaarde niet gedefinieerd")
     type_number, value = row
@@ -333,7 +364,8 @@ def _value_business(phases, amp):
 def current(level, category, housing, build_year, phases, amp, *,
             generation=False, explicit_type=None, new_build_year=2022,
             gas_category=None, current_phases=None, current_amp=None,
-            amp_fallback=None, street_phase_hint=None, street_missing_rating=False):
+            amp_fallback=None, street_phase_hint=None, street_missing_rating=False,
+            rate_tables=None):
     """Return (A, Kader type description, review warning).
 
     'level' is 'trafo' or 'kabel'; classification category is the existing
@@ -361,12 +393,21 @@ def current(level, category, housing, build_year, phases, amp, *,
             raise ValueError("Type 3/4 vereist een hoogbouw/appartementcategorie")
         if category == 4 and number in (1, 2):
             raise ValueError("Type 1/2 vereist een laagbouw/woningcategorie")
-        row = HOUSEHOLD[level][number][
-            "appartement" if number in (3, 4) else normalize_housing(housing)
-        ]
+        household_name = "appartement" if number in (3, 4) else normalize_housing(housing)
+        if rate_tables is None:
+            row = HOUSEHOLD[level][number][household_name]
+        else:
+            entry = rate_tables["household"].get((number, household_name))
+            if entry is None:
+                return 0.0, f"Type {number} - woningcategorie ontbreekt in eigen tabel", "Vul deze woningcategorie aan in de 2.0-tabel"
+            row = entry[level]
         return row[1 if generation else 0], f"Type {number} ({provenance})", ""
     if category == 8:
-        value = PUBLIC_CHARGING[level].get(float(amp)) if phases == 3 and amp is not None else None
+        if rate_tables is None:
+            value = PUBLIC_CHARGING[level].get(float(amp)) if phases == 3 and amp is not None else None
+        else:
+            entry = rate_tables["charging"].get(float(amp)) if phases == 3 and amp is not None else None
+            value = entry[level] if entry is not None else None
         label = "Type 8 - netbewust publiek laden"
         if value is None:
             value = _heavy_amp_fallback(phases, amp, amp_fallback)
@@ -378,6 +419,9 @@ def current(level, category, housing, build_year, phases, amp, *,
     if category == 9:
         value = None
         label = "Type 9 - straatmeubilair"
+        lowest = (STREET_FURNITURE[25] if rate_tables is None
+                  else next((item[level] for item in rate_tables["street"]
+                             if item["min"] <= 25 <= item["max"]), None))
         if not phases and (amp is None or amp == 0) and street_missing_rating:
             label += " (aanname: laagste 3x25A-profiel; doorlaatwaarde ontbreekt)"
             warning = ""
@@ -388,13 +432,15 @@ def current(level, category, housing, build_year, phases, amp, *,
                 if hint_warning:
                     label += " (tegenstrijdige fasevelden; controleren)"
                     warning = hint_warning
-            return (0.0 if generation else 5.8), label, warning
+            if lowest is None:
+                return 0.0, label, "Het laagste straatmeubilairprofiel ontbreekt in Kader 2.0"
+            return (0.0 if generation else lowest), label, warning
         if not phases and (amp is None or amp == 0) and street_phase_hint:
             hint_phases, hint_source, hint_warning = street_phase_hint
             if hint_warning:
                 return 0.0, "Type 9 - tegenstrijdige fasevelden (herstellen)", hint_warning
             if hint_phases == 1:
-                value = 5.8
+                value = lowest
                 label += f" (1-fase via {hint_source}; amperage onbekend, laagste profiel)"
             elif hint_phases:
                 return (
@@ -405,17 +451,20 @@ def current(level, category, housing, build_year, phases, amp, *,
         if amp is not None:
             nominal = float(amp)
             if phases == 1 and math.isfinite(nominal) and nominal > 0:
-                value = 5.8
+                value = lowest
                 label += " (1-fase, laagste profiel)"
-            elif phases == 3 and nominal == 35:
-                value = 22.0
-                label += " (3x35 A, profiel 3x40-50 A)"
-            elif phases == 3 and 40 <= nominal <= 50:
-                value = 22.0
-            elif phases == 3 and 63 <= nominal <= 80:
-                value = 36.0
-            elif phases == 3 and nominal == 25:
-                value = 5.8
+            elif phases == 3:
+                if rate_tables is not None:
+                    value = next((item[level] for item in rate_tables["street"]
+                                  if item["min"] <= nominal <= item["max"]), None)
+                elif nominal == 35 or 40 <= nominal <= 50:
+                    value = 22.0
+                elif 63 <= nominal <= 80:
+                    value = 36.0
+                elif nominal == 25:
+                    value = 5.8
+                if nominal == 35:
+                    label += " (3x35 A, profiel 3x40-50 A)"
         if value is None:
             value = _heavy_amp_fallback(phases, amp, amp_fallback)
             if value is not None:
@@ -425,7 +474,7 @@ def current(level, category, housing, build_year, phases, amp, *,
         return (0.0 if generation else value), label, ""
     # Base from FUTURE supply; separate gas recommendation is tied to the
     # CURRENT gas+electricity supplies in two embedded Excel illustrations.
-    value, label = _value_business(phases, amp)
+    value, label = _value_business(phases, amp, level, rate_tables)
     if value <= 0:
         supplemented = _heavy_amp_fallback(phases, amp, amp_fallback)
         if supplemented is not None:
@@ -440,23 +489,26 @@ def current(level, category, housing, build_year, phases, amp, *,
         level, gas_category,
         current_phases if current_phases is not None else phases,
         current_amp if current_amp is not None else amp,
+        rate_tables=rate_tables, amp_fallback=amp_fallback,
     )
     if gas_value > value:
         return gas_value, label + " (gasadvies verhoogt ontwerpstroom)", ""
     return value, label, ""
 
 
-def riser_current(kind, number_of_units, future_connection_amp=None):
+def riser_current(kind, number_of_units, future_connection_amp=None, rate_tables=None):
     """Dedicated Kader 2.0 stijgleiding calculation (not transformer current)."""
     count = float(number_of_units)
     if not math.isfinite(count) or count < 0:
         raise ValueError("Aantal eenheden moet eindig en niet-negatief zijn")
     if kind in (3, 4):
-        return count * RISER[kind]
+        rates = RISER if rate_tables is None else rate_tables["riser"]
+        if kind in rates:
+            return count * rates[kind]
     if kind == 6 and future_connection_amp is not None:
-        business = _business_rate(3, future_connection_amp)
-        if business is not None and business[0] == 6:
-            return count * business[1]
+        rates = RISER_BUSINESS if rate_tables is None else rate_tables["riser_business"]
+        if float(future_connection_amp) in rates:
+            return count * rates[float(future_connection_amp)]
     raise ValueError("Kader 2.0 geeft geen stijgleidingwaarde voor dit type/aansluitwaarde")
 
 
