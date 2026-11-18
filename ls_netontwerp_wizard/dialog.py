@@ -3208,6 +3208,10 @@ class LSNetontwerpDialog(QDialog):
                 self.SETTINGS_PREFIX + "framework_profiles_v1",
                 json.dumps(current, ensure_ascii=False),
             )
+            self.settings.setValue(
+                self.SETTINGS_PREFIX + "design_framework",
+                str(self.framework_combo.currentData() or "3.0"),
+            )
             if self.prepared_state is not None:
                 from .workflow import WorkflowRunner
                 self.prepared_state["values"].update(self.values())
