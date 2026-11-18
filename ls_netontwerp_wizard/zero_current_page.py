@@ -638,7 +638,7 @@ class ZeroCurrentPage(QWidget):
         if category == "Zakelijk":
             previous = combo.blockSignals(True)
             label = (
-                "Bestaande toekomstige aansluitwaarde per aansluiting behouden"
+                "Toekomstige waarde gebruiken; anders huidige aansluiting"
                 if str(framework) == "2.0"
                 else "Bestaande aansluitwaarde per aansluiting behouden"
             )
@@ -649,7 +649,7 @@ class ZeroCurrentPage(QWidget):
     @staticmethod
     def _business_currents(feature, context, gas_category=None,
                            future_connection=None, unit_key=None, layer=None):
-        """Return four currents and their inputs, using this connection's gas."""
+        """Return four currents, basis, gas, current supply and basis provenance."""
         module, values, standard, cable, opwek, opwek_cable = context
         current_service = ZeroCurrentPage._field_value(
             feature, values.get("field_passthrough", "service_connection_type_type")
@@ -664,23 +664,26 @@ class ZeroCurrentPage(QWidget):
             layer, feature, standard.get("FRAMEWORK_VERSION", "3.0")
         )
         chosen_future = None
+        basis_provenance = "current"
         kwargs = {}
         service = current_service
         if standard.get("FRAMEWORK_VERSION") == "2.0":
-            chosen_future = (
+            explicit_future = (
                 future_connection or preset
                 or ZeroCurrentPage._field_value(feature, "Kader20ToekomstigeAansluitwaarde")
                 or saved_preset
             )
-            if not chosen_future:
-                chosen_future = module.kader_20.default_small_business_future(
-                    *module.parse_doorlaat(current_service)
-                )
+            phases, amps = module.parse_doorlaat(current_service)
+            chosen_future, basis_provenance = module.kader_20.business_future_basis(
+                phases, amps, explicit_future=explicit_future,
+            )
             kwargs["kader20_future"] = chosen_future
         elif preset:
             service = preset
+            basis_provenance = "explicit"
         elif saved_preset:
             service = saved_preset
+            basis_provenance = "explicit"
         one_phase = bool(values.get("one_phase_exception", True))
         normal = float(module.calculate_ontwerpstroom(
             service, "bedrijf", "", 0, actual_gas, standard,
@@ -698,7 +701,7 @@ class ZeroCurrentPage(QWidget):
             service, "bedrijf", "", actual_gas, opwek_cable, cable,
             cable_current, one_phase, **kwargs
         ))
-        return (normal, cable_current, generation, generation_cable), chosen_future, actual_gas, (current_service if standard.get("FRAMEWORK_VERSION") == "2.0" else service)
+        return (normal, cable_current, generation, generation_cable), chosen_future, actual_gas, (current_service if standard.get("FRAMEWORK_VERSION") == "2.0" else service), basis_provenance
 
     @staticmethod
     def _saved_business_connection(layer, feature, framework):
@@ -725,12 +728,20 @@ class ZeroCurrentPage(QWidget):
         ]
         if context[2].get("FRAMEWORK_VERSION") == "2.0":
             if key == ZeroCurrentPage.KEEP_EXISTING_UNIT:
-                futures = sorted({str(result[1]) for result in calculated if result[1]})
+                futures = sorted({str(result[1]) for result in calculated if result[1] and result[4] == "explicit"})
                 if futures:
-                    notes.append("Toekomstige aansluitwaarde(n): " + ", ".join(futures) + ".")
-                missing = sum(not result[1] for result in calculated)
+                    notes.append("Opgeslagen toekomstige aansluitwaarde(n): " + ", ".join(futures) + ".")
+                current_bases = sorted({str(result[1]) for result in calculated if result[4] == "current"})
+                if current_bases:
+                    notes.append("Huidige aansluiting gebruikt: " + ", ".join(current_bases) + " (geen afzonderlijke toekomstige waarde vastgelegd).")
+                if any(result[4] == "minimum" for result in calculated):
+                    notes.append("Kleinzakelijke minimumregel: 3 x 25 A.")
+                missing = sum(result[4] == "undefined" for result in calculated)
                 if missing:
-                    notes.append(f"Bij {missing} aansluiting(en) ontbreekt nog de toekomstige aansluitwaarde; kies deze bewust.")
+                    notes.append(f"Bij {missing} aansluiting(en) ontbreekt een ondersteunde aansluitwaarde; kies een toekomstige waarde of vul de stromen handmatig in.")
+                unsupported = sum(result[4] == "explicit" and max(result[0][0], result[0][2]) <= 0 for result in calculated)
+                if unsupported:
+                    notes.append(f"Bij {unsupported} aansluiting(en) heeft de gekozen toekomstige waarde geen vaste kaderwaarde; bepaal een passende toekomstwaarde of vul de stromen handmatig in.")
             else:
                 notes.append(category_note(category, key, "2.0"))
         elif calculated:
@@ -741,9 +752,9 @@ class ZeroCurrentPage(QWidget):
         if gas_category is None and calculated:
             source_gas = sorted({str(result[2]) or "Onbekend (leeg)" for result in calculated})
             notes.append("Gas uit bron: " + ", ".join(source_gas) + ".")
-            unknown = sum(str(result[2]).strip().casefold() in ("", "onbekend", "null", "none", "nvt", "n.v.t.") for result in calculated)
+            unknown = sum(str(result[2]).strip().casefold() in ("", "onbekend", "null", "none", "nvt", "n.v.t.", "n/a") for result in calculated)
             if unknown:
-                notes.append(f"Controleer {unknown} ontbrekende/onbekende gaswaarde(n); de bron blijft ongewijzigd.")
+                notes.append(f"Bij {unknown} aansluiting(en) is de gasbron onbekend; de bestaande standaardgroep wordt toegepast. Controleer de gasbron; de bron blijft ongewijzigd.")
         return preview, "\n".join(notes)
 
     def _matrix_value(self, key, fallback):
@@ -1026,7 +1037,7 @@ class ZeroCurrentPage(QWidget):
                 # Every Kader uses this connection's gas. In 2.0 the chosen
                 # FUTURE supply stays separate from its CURRENT GEN supply.
                 module, values_context, standard, cable_config, opwek, opwek_cable = household_context
-                calculated, chosen_future, actual_gas, current_service = self._business_currents(
+                calculated, chosen_future, actual_gas, current_service, basis_provenance = self._business_currents(
                     feature, household_context, gas_category=gas_category,
                     future_connection=future_connection, unit_key=unit_key, layer=layer,
                 )
@@ -1034,7 +1045,9 @@ class ZeroCurrentPage(QWidget):
                 stored_house_type = self._field_value(
                     feature, "Gevonden_Woningtype"
                 )
-                if chosen_future and not future_connection and not self._field_value(feature, "Kader20ToekomstigeAansluitwaarde"):
+                if (chosen_future and basis_provenance in ("explicit", "minimum")
+                        and not future_connection
+                        and not self._field_value(feature, "Kader20ToekomstigeAansluitwaarde")):
                     auto_future_for_feature = chosen_future
             else:
                 normal = float(currents["consumption_trafo"])
@@ -1089,6 +1102,13 @@ class ZeroCurrentPage(QWidget):
                             current_phases=current_phases,
                             current_amp=current_amp,
                         )
+                        if basis_provenance == "current":
+                            description = description.replace("toekomstige aansluitwaarde", "huidige aansluitwaarde als automatische basis")
+                            description += " (toekomstige waarde niet opgegeven)"
+                        elif basis_provenance == "minimum":
+                            description += " (automatisch kleinzakelijk min. 3x25A)"
+                        if str(actual_gas).strip().casefold() in ("", "onbekend", "null", "none", "nvt", "n.v.t.", "n/a"):
+                            description += " (gasbron onbekend; standaardgroep toegepast, controleren)"
                         attributes[type_index20] = description
                 if type_index20 >= 0 and category == "Huishoudelijk":
                     if manual_override:

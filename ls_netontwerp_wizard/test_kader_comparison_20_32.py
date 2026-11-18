@@ -1,4 +1,4 @@
-"""Pure-Python check: Kader 2.0 future values versus unchanged old 3.1 rules.
+"""Pure-Python check: Kader 2.0 business choices versus unchanged old 3.1 rules.
 
 The *label* of the existing profile is now Kader 3.2. Deliberately do not
 update its rates to those in an externally supplied 3.2 workbook.
@@ -132,11 +132,12 @@ def test():
             a,"bedrijf","",">G25",[],renamed,65,True
         )
 
-    # In 2.0 even a matching current 3x160 MUST NOT be read as the FUTURE
-    # connection automatically. Kader 3.2 continues its existing behavior.
+    # In 2.0 a supported actual rating supplies the automatic business basis
+    # when no future rating was chosen. Explicit future values still prevail.
+    # Kader 3.2 continues its existing behavior and all coefficients above stay.
     config20 = dict(base, FRAMEWORK_VERSION="2.0", NET_LEVEL="trafo")
-    assert consumption("3 x 160 A","bedrijf","",2015,">G25",config20,1,None,True) == 0
-    assert generation("3 x 160 A","bedrijf","",">G25",[],config20,0,True) == 0
+    assert consumption("3 x 160 A","bedrijf","",2015,">G25",config20,1,None,True) == 210.
+    assert generation("3 x 160 A","bedrijf","",">G25",[],config20,210,True) == 210.
     assert consumption("3 x 25 A","bedrijf","",2015,"G4",config20,1,None,True,
                        True,None,"3 x 160 A") == 138.
     # Strong current gas service can overrule the future 3x160 base at
@@ -182,11 +183,11 @@ def test():
                   current_service="3 x 63 A") == (138., 65., 138., 65.)
     assert preset(context, "Zakelijk", "lt35", ">G25",
                   current_service="3 x 25 A") == (210., 65., 210., 65.)
-    # The complete Kader 2.0 small-business fallback is automatic for
-    # smaller connections, but 3x63 without a FUTURE rating is still unknown.
+    # The small-business minimum remains, while supported heavier actual
+    # ratings can now supply the automatic basis without an explicit future.
     assert consumption("1 x 25 A","bedrijf","",2015,"G4",config20,1,None,True) == 8.7
     assert consumption("3 x 10 A","bedrijf","",2015,"G10-G25",config20,1,None,True) == 44.
-    assert consumption("3 x 63 A","bedrijf","",2015,"G4",config20,1,None,True) == 0.
+    assert consumption("3 x 63 A","bedrijf","",2015,"G4",config20,1,None,True) == 65.
     # Non-residential BAG has no GEN electrical rating; Kader 2.0 now
     # supplies the explicit first small-business row instead of 0 A.
     assert consumption("verblijfsobject","bedrijf","",2015,"G4",
@@ -239,3 +240,4 @@ def test():
 
 if __name__ == "__main__":
     test()
+

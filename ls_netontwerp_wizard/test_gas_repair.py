@@ -325,9 +325,17 @@ class GasRepairTests(unittest.TestCase):
 
     def test_current_gas_advice_does_not_use_the_future_service(self):
         layer = Layer([fixture(service="3 x 25 A", gas="G10", future="3 x 160 A"),
-                       fixture(service="3 x 63 A", gas="G10", future="3 x 25 A")])
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 25 A"),
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 160 A"),
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 125 A")])
         self.repair(layer, gas_category=None, future_connection=None)
-        self.assertEqual([component_values(f) for f in layer.getFeatures()], [(138.,138.,138.,138.), (138.,65.,138.,65.)])
+        self.assertEqual([component_values(f) for f in layer.getFeatures()], [
+            (138.,138.,138.,138.), (138.,65.,138.,65.),
+            (138.,138.,138.,138.), (0.,0.,0.,0.),
+        ])
+        # An explicitly unsupported future is not replaced by the supported
+        # actual 63 A connection or by a positive gas recommendation.
+        self.assertEqual(layer.getFeature(4)["Kader20ToekomstigeAansluitwaarde"], "3 x 125 A")
 
     def test_explicit_gas_override_changes_only_selected_sources(self):
         layer = Layer([fixture(gas=gas) for gas in ("G4", "G10", "G16")])
@@ -350,12 +358,57 @@ class GasRepairTests(unittest.TestCase):
         for fid in (2,3,4,5):
             self.assertEqual(component_values(layer.getFeature(fid)), (65.,65.,65.,65.))
 
-    def test_missing_heavy_future_is_not_invented_and_small_minimum_survives(self):
-        layer = Layer([fixture(future=None), fixture(service="1 x 25 A", future=None)])
+    def test_current_staffel_fallback_does_not_become_explicit_future(self):
+        rows = (
+            ("3 x 35 A", "G4", (32.,32.,32.,32.)),
+            ("3 x 40 A", "G4", (32.,32.,32.,32.)),
+            ("3 x 50 A", "G4", (44.,44.,44.,44.)),
+            ("3 x 63 A", "G10", (138.,65.,138.,65.)),
+            ("3 x 80 A", "G4", (65.,65.,65.,65.)),
+            ("3 x 160 A", "G16", (210.,210.,210.,210.)),
+            ("3 x 250 A", "G4", (210.,210.,210.,210.)),
+            ("3 x 125 A", "G4", (0.,0.,0.,0.)),
+        )
+        layer = Layer([fixture(service=service, gas=gas, future=None) for service, gas, _ in rows])
         self.repair(layer, gas_category=None, future_connection=None)
+        first = self.process(layer)
+        second = self.process(first)
+        for result in (layer, first, second):
+            for feature, (service, gas, expected) in zip(result.getFeatures(), rows):
+                self.assertEqual(component_values(feature), expected, service)
+                self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+                self.assertEqual(feature["service_connection_type_type"], service)
+                self.assertEqual(feature["G_Type"], gas)
+        small = Layer([fixture(service=service, future=None)
+                       for service in ("1 x 25 A", "3 x 20 A", "3 x 25 A")])
+        self.repair(small, gas_category=None, future_connection=None)
+        self.assertEqual([component_values(f) for f in small.getFeatures()], [(8.7,8.7,8.7,8.7)]*3)
+
+    def test_automatic_current_basis_follows_changed_source_connection(self):
+        layer = Layer([fixture(service="3 x 50 A", gas="G4", future=None)])
+        page = self.page("2.0")
+        preview, note = page.unit_preview(
+            self.context("2.0"), list(layer.getFeatures()), "Zakelijk",
+            page.KEEP_EXISTING_UNIT, gas_category=None, layer=layer,
+        )
+        self.assertEqual(preview, (44.,44.,44.,44.))
+        self.assertIn("huidige aansluiting", note.casefold())
+        self.assertIn("geen afzonderlijke toekomstige waarde", note.casefold())
+        self.repair(layer, gas_category=None, future_connection=None)
+        self.assertEqual(component_values(layer.getFeature(1)), (44.,44.,44.,44.))
         self.assertIn(layer.getFeature(1)["Kader20ToekomstigeAansluitwaarde"], (None,""))
-        self.assertEqual(component_values(layer.getFeature(1)), (0.,0.,0.,0.))
-        self.assertEqual(component_values(layer.getFeature(2)), (8.7,8.7,8.7,8.7))
+        layer.getFeature(1)["service_connection_type_type"] = "3 x 63 A"
+        self.assertEqual(self.preview(layer, "2.0"), (65.,65.,65.,65.))
+        first = self.process(layer)
+        f = self.by_source_id(first)[1]
+        self.assertEqual(component_values(f), (65.,65.,65.,65.))
+        self.assertIn(f["Kader20ToekomstigeAansluitwaarde"], (None,""))
+        f["service_connection_type_type"] = "3 x 160 A"
+        second = self.process(first)
+        f = self.by_source_id(second)[1]
+        self.assertEqual(component_values(f), (138.,138.,138.,138.))
+        self.assertIn(f["Kader20ToekomstigeAansluitwaarde"], (None,""))
+        self.assertEqual(f["G_Type"], "G4")
 
     def test_manual_four_values_including_zero_survive_two_recalculations(self):
         for framework in ("2.0", "3.0", "3.2", "3.1"):
@@ -482,16 +535,17 @@ class GasRepairTests(unittest.TestCase):
         self.assertNotIn("2.0", str(f["KaderType"]))
 
     def test_switch_to_20_does_not_promote_a_current_preset_to_future(self):
-        layer = Layer([fixture(service="3 x 63 A", gas="G10", future=None)])
+        layer = Layer([fixture(service="3 x 50 A", gas="G4", future=None)])
         self.repair(layer, "3.2", gas_category=None,
                     unit_name="Huidige aansluitwaarde: 3x63A", unit_key="63")
-        self.assertEqual(component_values(layer.getFeature(1)), (138.,65.,138.,65.))
-        self.assertEqual(self.preview(layer, "2.0"), (0.,0.,0.,0.))
+        self.assertEqual(component_values(layer.getFeature(1)), (51.,51.,51.,51.))
+        self.assertEqual(self.preview(layer, "2.0"), (44.,44.,44.,44.))
         first = self.process(layer, "2.0")
         second = self.process(first, "2.0")
         for result in (first, second):
             f = self.by_source_id(result)[1]
-            self.assertEqual(component_values(f), (0.,0.,0.,0.))
+            self.assertEqual(component_values(f), (44.,44.,44.,44.))
+            self.assertEqual(f["service_connection_type_type"], "3 x 50 A")
             self.assertIn(f["Kader20ToekomstigeAansluitwaarde"], (None,""))
 
 

@@ -420,8 +420,9 @@ class LSNetontwerpDialog(QDialog):
             "Kader 3.2 gebruikt dezelfde instellingen als de eerdere keuze 3.1. Kader 2.0 gebruikt eigen "
             "Excelwaarden voor verbruik en opwek op trafo-/kabelniveau. "
             "Kader 2.0 onderscheidt verwarmingssystemen; zonder expliciet "
-            "Kader20Type is bouwjaar slechts een aanname. Onbekende toekomstige "
-            "zakelijke waarden moeten handmatig worden gecontroleerd."
+            "Kader20Type is bouwjaar slechts een aanname. Zakelijk gebruikt een "
+            "ingevulde toekomstige waarde, anders een ondersteunde huidige aansluiting. "
+            "Overige aansluitwaarden en onbekende gasbronnen moeten worden gecontroleerd."
         )
         right_form.addRow("Ontwerpstroomkader", self.framework_combo)
         root.addWidget(basic)

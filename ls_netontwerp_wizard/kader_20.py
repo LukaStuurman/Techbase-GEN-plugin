@@ -161,6 +161,29 @@ def default_small_business_future(phases, amp):
     ) else None
 
 
+def business_future_basis(phases, amp, explicit_future=None):
+    """Resolve a business calculation basis and its provenance.
+
+    An explicitly chosen future service always wins, even when its tariff
+    is undefined. Otherwise keep the established small-business minimum,
+    then use an existing supported current service. A current-service basis
+    is not a planned future connection and must not be saved as one.
+    """
+    explicit = str(explicit_future).strip() if explicit_future is not None else ""
+    if explicit.casefold() not in ("", "null", "none"):
+        return explicit, "explicit"
+    minimum = default_small_business_future(phases, amp)
+    if minimum:
+        return minimum, "minimum"
+    try:
+        row = _business_rate(phases, amp)
+    except (TypeError, ValueError):
+        row = None
+    if row is not None and phases == 3:
+        return f"3 x {float(amp):g} A", "current"
+    return None, "undefined"
+
+
 def _current_from_suggested_amps(amps):
     """Design current for the exact suggested 2.0 standard 3-phase rating."""
     return {25: 8.7, 50: 44.0, 80: 65.0, 160: 138.0, 250: 210.0}[amps]
@@ -331,3 +354,4 @@ def type5_surcharge_a(count, electrical_power_kw, coincidence_factor):
     if any(not math.isfinite(x) or x < 0 for x in values):
         raise ValueError("Type 5 invoer moet eindig en niet-negatief zijn")
     return values[0] * values[1] * values[2] / 0.69
+

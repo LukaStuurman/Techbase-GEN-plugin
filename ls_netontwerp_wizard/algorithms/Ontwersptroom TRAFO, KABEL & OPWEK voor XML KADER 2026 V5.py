@@ -232,15 +232,16 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             current_phases, current_amp,
         )
         future = kader20_future
-        if category not in (1, 4, 8, 9) and not future:
-            future = kader_20.default_small_business_future(
-                current_phases, current_amp
+        if category not in (1, 4, 8, 9):
+            future, _basis_origin = kader_20.business_future_basis(
+                current_phases, current_amp, future
             )
             if not future:
                 if feedback is not None:
                     feedback.pushWarning(
-                        f"Kader 2.0 aansluiting {fid}: toekomstige zakelijke "
-                        "aansluitwaarde ontbreekt; herstel deze vóór clusteren."
+                        f"Kader 2.0 aansluiting {fid}: er is geen ondersteunde "
+                        "huidige zakelijke aansluitwaarde en geen expliciete "
+                        "toekomstige basis; herstel deze vóór clusteren."
                     )
                 return 0.0
         phases, amp = parse_doorlaat(
@@ -408,9 +409,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             current_phases, current_amp,
         )
         future = kader20_future
-        if category not in (1, 4, 8, 9) and not future:
-            future = kader_20.default_small_business_future(
-                current_phases, current_amp
+        if category not in (1, 4, 8, 9):
+            future, _basis_origin = kader_20.business_future_basis(
+                current_phases, current_amp, future
             )
             if not future:
                 return 0.0
@@ -816,6 +817,8 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         count = 0
         inferred_business_future_count = 0
         automatic_minimum_business_count = 0
+        automatic_current_business_count = 0
+        automatic_current_unknown_gas_count = 0
         
         req_panden = QgsFeatureRequest()
         req_panden.setSubsetOfAttributes([name_woning, name_bouwjaar], source_panden.fields())
@@ -934,6 +937,8 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 except (KeyError, ValueError, TypeError):
                     pass
             minimum_business_assigned = False
+            business_basis_origin = None
+            current_basis_unknown_gas = False
             if preserved is not None:
                 res_std, res_kabel, res_opwek_std, res_opwek_kabel = preserved
                 kader_type = (
@@ -947,23 +952,31 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                         map_gebruiksdoel(val_gebr, val_woning, full_config_std),
                         current_phases, current_amp,
                     )
-                    if category_for_future not in (1, 4, 8, 9) and not future_connection:
-                        # Even a 1x25 A business connection uses the first 2.0
-                        # small-business row: future 3x25 A, 8.7 A before gas.
-                        future_connection = kader_20.default_small_business_future(
-                            current_phases, current_amp
+                    if category_for_future not in (1, 4, 8, 9):
+                        # Explicit future values win. Otherwise an existing
+                        # supported current service is a usable calculation
+                        # basis, without becoming a planned future connection.
+                        future_connection, business_basis_origin = kader_20.business_future_basis(
+                            current_phases, current_amp, future_connection
                         )
-                        if future_connection:
+                        if business_basis_origin == "minimum":
                             minimum_business_assigned = True
                             automatic_minimum_business_count += 1
-                        else:
+                        elif business_basis_origin == "current":
+                            automatic_current_business_count += 1
+                            current_basis_unknown_gas = clean_text(val_gas) in (
+                                "", "null", "none", "onbekend", "nvt", "n.v.t.", "n/a"
+                            )
+                            if current_basis_unknown_gas:
+                                automatic_current_unknown_gas_count += 1
+                        elif business_basis_origin == "undefined":
                             inferred_business_future_count += 1
                             if inferred_business_future_count <= 10:
                                 feedback.pushWarning(
-                                    f"Kader 2.0 aansluiting {feat.id()}: toekomstige "
-                                    "zakelijke aansluitwaarde ontbreekt en huidige "
-                                    "doorlaat is groter dan de 3x25A-minimumstaffel. "
-                                    "Herstel deze in stap 2."
+                                    f"Kader 2.0 aansluiting {feat.id()}: huidige "
+                                    "zakelijke aansluitwaarde heeft geen vaste "
+                                    "Kader-2.0-staffel en er is geen expliciete "
+                                    "toekomstige basis. Herstel deze in stap 2."
                                 )
                 res_std = calculate_ontwerpstroom(
                     val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
@@ -995,7 +1008,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                         current_phases, current_amp,
                     )
                     if cat not in (1, 4, 8, 9) and not future_connection:
-                        kader_type = "Type 6/7 - toekomstige aansluitwaarde ontbreekt (herstellen)"
+                        kader_type = "Type 6/7 - huidige aansluitwaarde niet ondersteund; toekomstbasis ontbreekt (herstellen)"
                     else:
                         phases, amps = parse_doorlaat(
                             future_connection
@@ -1011,8 +1024,14 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                         )
                         if minimum_business_assigned:
                             kader_type += " (automatisch kleinzakelijk min. 3x25A)"
-                        if cat not in (1, 4, 8, 9) and not future_connection:
-                            kader_type += " (herstellen)"
+                        elif business_basis_origin == "current":
+                            kader_type = kader_type.replace(
+                                "toekomstige aansluitwaarde",
+                                "huidige aansluitwaarde als automatische basis",
+                            )
+                            kader_type += " (toekomstige waarde niet opgegeven)"
+                            if current_basis_unknown_gas:
+                                kader_type += " (gasbron onbekend; standaardgroep toegepast, controleren)"
 
             new_feat = QgsFeature(fields)
             new_feat.setGeometry(feat.geometry())
@@ -1033,7 +1052,8 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             ]
             for name, value in zip(numeric_output_fields + text_output_fields, calculated):
                 new_feat[name] = value
-            if framework == "2.0" and future_connection:
+            if (framework == "2.0" and future_connection
+                    and business_basis_origin in ("explicit", "minimum")):
                 new_feat["Kader20ToekomstigeAansluitwaarde"] = future_connection
             if persist_choices:
                 for name in CHOICE_FIELDS:
@@ -1049,11 +1069,26 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 f"Kader 2.0: {automatic_minimum_business_count} kleinzakelijke "
                 "aansluitingen automatisch op minimaal toekomstig 3x25A gezet."
             )
+        if automatic_current_business_count:
+            feedback.pushInfo(
+                f"Kader 2.0: {automatic_current_business_count} zakelijke "
+                "aansluitingen automatisch berekend uit de huidige ondersteunde "
+                "aansluitwaarde, met afzonderlijk gasadvies voor trafo en kabel. "
+                "Deze rekenbasis is niet als geplande toekomstige waarde opgeslagen."
+            )
+        if automatic_current_unknown_gas_count:
+            feedback.pushWarning(
+                f"Kader 2.0: bij {automatic_current_unknown_gas_count} automatisch "
+                "berekende zakelijke aansluitingen is de gasbron onbekend. "
+                "De bestaande standaardgroep G4/G6/Geen is gebruikt; controleer "
+                "de gasbron. Het oorspronkelijke gasveld is niet gewijzigd."
+            )
         if inferred_business_future_count:
             feedback.pushWarning(
                 f"Kader 2.0: {inferred_business_future_count} zakelijke/onzekere "
-                "aansluitingen zonder expliciete toekomstige aansluitwaarde. "
-                "Deze staan op 0 A en moeten vóór de clustering worden hersteld."
+                "aansluitingen hebben geen ondersteunde huidige aansluitwaarde "
+                "en geen expliciete toekomstige basis. Deze staan op 0 A en "
+                "moeten vóór de clustering worden hersteld."
             )
         return {self.OUTPUT: dest_id}
 
