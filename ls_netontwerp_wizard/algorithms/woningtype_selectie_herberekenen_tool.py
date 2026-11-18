@@ -462,6 +462,10 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             )
 
         point_changes = {}
+        phase_field_indices = {
+            name: points.fields().lookupField(name)
+            for name in ("number_of_phases", "phase")
+        }
         request = QgsFeatureRequest()
         for point in points.getFeatures(request):
             if module.is_bag_object(point[doorlaat_index]) and not module.has_residential_usage(point[gebruik_index]):
@@ -490,6 +494,10 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
             doorlaat = point[doorlaat_index]
             gebruik = point[gebruik_index]
             gas = point[gas_index]
+            phase_values = {
+                name: point[index] if index >= 0 else None
+                for name, index in phase_field_indices.items()
+            }
             if new_type == "onbekend":
                 # Expliciete huishoudelijke correctie gebruikt de onbekend-rij,
                 # ook wanneer de bron geen doorlaatwaarde bevat.
@@ -528,6 +536,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 apartment_default,
                 kader20_type,
                 future_connection,
+                **phase_values,
             )
             cable = module.calculate_ontwerpstroom(
                 doorlaat,
@@ -542,16 +551,19 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                 apartment_default,
                 kader20_type,
                 future_connection,
+                **phase_values,
             )
             generation = module.calculate_opwek_ontwerpstroom(
                 doorlaat, gebruik, new_type, gas, opwek_table,
                 std_config, normal, one_phase, effective_bouwjaar, kader20_type,
                 future_connection,
+                **phase_values,
             )
             generation_cable = module.calculate_opwek_ontwerpstroom(
                 doorlaat, gebruik, new_type, gas, opwek_cable_table,
                 cable_config, cable, one_phase, effective_bouwjaar, kader20_type,
                 future_connection,
+                **phase_values,
             )
             point_changes[int(point.id())] = {
                 output_indices["Ontwerpstroom"]: float(normal),
@@ -599,6 +611,9 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                             gas_category=module.normalize_gas(gas),
                             current_phases=current_phases,
                             current_amp=current_amp,
+                            street_phase_hint=module.kader_20.street_phase_hint(
+                                doorlaat, **phase_values
+                            ),
                         )
                         if auto_minimum:
                             type_label += " (automatisch kleinzakelijk min. 3x25A)"

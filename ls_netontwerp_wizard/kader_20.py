@@ -11,6 +11,8 @@ By explicit user choice, missing three-phase ratings above 80 A can use
 the caller's active 3.x ampere conversion, marked as a 3.2 supplement.
 Known one-phase street furniture uses the lowest street profile; 3x35 A
 uses the 3x40-50 A street profile by explicit user choice.
+An explicit one-phase source field is sufficient for that lowest profile
+when the service rating is missing; no amperage or future rating is inferred.
 Other undefined values and Type 5 heating surcharges need separate input.
 """
 
@@ -130,6 +132,42 @@ def classify_category(category, phases, amps):
     if category in (1, 4) and phases and (int(phases) > 3 or nominal > 40):
         return 10
     return category
+
+
+def street_phase_hint(doorlaat, number_of_phases=None, phase=None):
+    """Return (phase count, source fields, warning) for a missing street rating.
+
+    Only explicit phase counts are accepted. A phase conductor name such as
+    L1, R or T is not an independent declaration of the connection's phase
+    count. Partial service text participates in conflict detection, so
+    '3 fase' plus number_of_phases='1 fase' cannot become a one-phase supply.
+    Complete service ratings remain the caller's primary input.
+    """
+    def phase_count(value, allow_bare=False):
+        text = str(value).strip().casefold() if value is not None else ""
+        match = re.fullmatch(r"([123])\s*(?:[-–]\s*)?(?:f|fase(?:n)?)", text)
+        if match:
+            return int(match.group(1))
+        if allow_bare and re.fullmatch(r"[123](?:\.0+)?", text):
+            return int(float(text))
+        return 0
+
+    service = str(doorlaat).strip().casefold() if doorlaat is not None else ""
+    service_phases = phase_count(service)
+    if service not in ("", "null", "none", "onbekend", "nvt", "n.v.t.", "n/a") and not service_phases:
+        return 0, "", ""
+    candidates = [
+        (service_phases, "doorlaat"),
+        (phase_count(number_of_phases, allow_bare=True), "number_of_phases"),
+        (phase_count(phase), "phase"),
+    ]
+    known = [(count, source) for count, source in candidates if count]
+    if not known:
+        return 0, "", ""
+    sources = " + ".join(source for _count, source in known)
+    if len({count for count, _source in known}) > 1:
+        return 0, sources, "Tegenstrijdige fasevelden; controleer het aantal fasen en de doorlaatwaarde"
+    return known[0][0], sources, ""
 
 
 def _business_rate(phases, amp):
@@ -285,7 +323,7 @@ def _value_business(phases, amp):
 def current(level, category, housing, build_year, phases, amp, *,
             generation=False, explicit_type=None, new_build_year=2022,
             gas_category=None, current_phases=None, current_amp=None,
-            amp_fallback=None):
+            amp_fallback=None, street_phase_hint=None):
     """Return (A, Kader type description, review warning).
 
     'level' is 'trafo' or 'kabel'; classification category is the existing
@@ -330,6 +368,19 @@ def current(level, category, housing, build_year, phases, amp, *,
     if category == 9:
         value = None
         label = "Type 9 - straatmeubilair"
+        if not phases and (amp is None or amp == 0) and street_phase_hint:
+            hint_phases, hint_source, hint_warning = street_phase_hint
+            if hint_warning:
+                return 0.0, "Type 9 - tegenstrijdige fasevelden (herstellen)", hint_warning
+            if hint_phases == 1:
+                value = 5.8
+                label += f" (1-fase via {hint_source}; amperage onbekend, laagste profiel)"
+            elif hint_phases:
+                return (
+                    0.0,
+                    f"Type 9 - amperage ontbreekt ({hint_phases}-fase via {hint_source})",
+                    "Aantal fasen is bekend, maar de straatmeubilairregel vereist ook de amperagewaarde",
+                )
         if amp is not None:
             nominal = float(amp)
             if phases == 1 and math.isfinite(nominal) and nominal > 0:

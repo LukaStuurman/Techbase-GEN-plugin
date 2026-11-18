@@ -221,7 +221,7 @@ def parse_bouwjaar(val):
     except: 
         return 0
 
-def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
+def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None, number_of_phases=None, phase=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
         amp_fallback = lambda nominal: amp_to_ontwerp(
             nominal, config.get("AMP_GLOBAL", [])
@@ -261,6 +261,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
             amp_fallback=amp_fallback,
+            street_phase_hint=kader_20.street_phase_hint(
+                doorlaat, number_of_phases, phase
+            ),
         )
         if warning and feedback is not None:
             feedback.pushWarning(
@@ -402,7 +405,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     return final_val
 
 
-def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
+def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None, number_of_phases=None, phase=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
         amp_fallback = lambda nominal: amp_to_ontwerp(
             nominal, config.get("AMP_GLOBAL", [])
@@ -436,6 +439,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
             amp_fallback=amp_fallback,
+            street_phase_hint=kader_20.street_phase_hint(
+                doorlaat, number_of_phases, phase
+            ),
         )
         return float(value)
     if is_bag_object(doorlaat):
@@ -823,6 +829,9 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         idx_door = fields.indexOf(name_door)
         idx_gebr = fields.indexOf(name_gebr)
         idx_gas = fields.indexOf(name_gas)
+        phase_field_indices = {
+            name: fields.lookupField(name) for name in ("number_of_phases", "phase")
+        }
         
         total = source_points.featureCount()
         count = 0
@@ -843,6 +852,10 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             val_door = str(attrs[idx_door]) if idx_door >= 0 and attrs[idx_door] is not None else ""
             val_gebr = str(attrs[idx_gebr]) if idx_gebr >= 0 and attrs[idx_gebr] is not None else ""
             val_gas = str(attrs[idx_gas]) if idx_gas >= 0 and attrs[idx_gas] is not None else ""
+            phase_values = {
+                name: attrs[index] if 0 <= index < len(attrs) else None
+                for name, index in phase_field_indices.items()
+            }
             editor_choice = current_choice_values(choice_layer, feat, choices_snapshot)
             
             geom = feat.geometry()
@@ -995,23 +1008,25 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                     val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
                     full_config_std, feat.id(), feedback, use_1fase_exc,
                     default_appartement_zonder_doorlaat, explicit_kader20,
-                    future_connection,
+                    future_connection, **phase_values,
                 )
                 res_kabel = calculate_ontwerpstroom(
                     val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
                     full_config_kabel, feat.id(), None, use_1fase_exc,
                     default_appartement_zonder_doorlaat, explicit_kader20,
-                    future_connection,
+                    future_connection, **phase_values,
                 )
                 res_opwek_std = calculate_opwek_ontwerpstroom(
                     val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek,
                     full_config_std, res_std, use_1fase_exc,
                     effective_bouwjaar, explicit_kader20, future_connection,
+                    **phase_values,
                 )
                 res_opwek_kabel = calculate_opwek_ontwerpstroom(
                     val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel,
                     full_config_kabel, res_kabel, use_1fase_exc,
                     effective_bouwjaar, explicit_kader20, future_connection,
+                    **phase_values,
                 )
                 kader_type = ""
                 if framework == "2.0":
@@ -1035,6 +1050,9 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                             current_phases=current_phases,
                             current_amp=current_amp,
                             amp_fallback=kader20_amp_conversion,
+                            street_phase_hint=kader_20.street_phase_hint(
+                                val_door, **phase_values
+                            ),
                         )
                         if minimum_business_assigned:
                             kader_type += " (automatisch kleinzakelijk min. 3x25A)"

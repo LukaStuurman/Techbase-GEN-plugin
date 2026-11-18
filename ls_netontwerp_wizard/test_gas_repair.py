@@ -499,6 +499,118 @@ class GasRepairTests(unittest.TestCase):
         self.assertIn(f["Kader20ToekomstigeAansluitwaarde"], (None,""))
         self.assertEqual(f["G_Type"], "G4")
 
+    def test_street_phase_fields_resolve_only_unambiguous_one_phase_sources(self):
+        cases = (
+            ("Onbekend", "1 fase", None, 5.8),
+            (None, None, "1F", 5.8),
+            ("Onbekend", "3 fase", None, 0.),
+            (None, None, "3F", 0.),
+            ("Onbekend", "1 fase", "3F", 0.),
+            ("3 fase", "1 fase", None, 0.),
+            ("3 x 40 A", "1 fase", None, 22.),
+            ("1 x 10 A", "3 fase", "3F", 5.8),
+            ("Onbekend", None, "L1", 0.),
+            ("Onbekend", None, "R", 0.),
+            ("Onbekend", None, 1, 0.),
+            ("Onbekend", None, None, 0.),
+        )
+        layer = Layer([fixture(
+            service=service, gas="G40", future=None,
+            Gebruiksdoel="straatmeubilair", number_of_phases=count, phase=phase,
+        ) for service, count, phase, _ in cases])
+        first = self.process(layer, "2.0")
+        second = self.process(first, "2.0")
+        for result in (first, second):
+            for feature, (service, count, phase, expected) in zip(result.getFeatures(), cases):
+                with self.subTest(service=service, count=count, phase=phase):
+                    self.assertEqual(component_values(feature), (expected,expected,0.,0.))
+                    self.assertEqual(feature["service_connection_type_type"], service)
+                    self.assertEqual(feature["number_of_phases"], count)
+                    self.assertEqual(feature["phase"], phase)
+                    self.assertEqual(feature["G_Type"], "G40")
+                    self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+        # A conductor code is not proof of the connection's phase count, and
+        # conflicting explicit counts must remain visible for review.
+        for service, count, phase in (("Onbekend","1 fase","3F"), ("3 fase","1 fase",None)):
+            hint = kader_20.street_phase_hint(service, count, phase)
+            self.assertTrue(hint[2], (service,count,phase,hint))
+        # The supplement is specific to street furniture. Charging still
+        # requires its electrical rating; business retains its existing rule.
+        other = Layer([
+            fixture(service="Onbekend", gas="G40", future=None,
+                    Gebruiksdoel="oplaadpunt", number_of_phases="1 fase"),
+            fixture(service="Onbekend", gas="G40", future=None,
+                    Gebruiksdoel="bedrijf", number_of_phases="1 fase"),
+        ])
+        result = self.process(other, "2.0")
+        self.assertEqual([component_values(f) for f in result.getFeatures()],
+                         [(0.,0.,0.,0.), (210.,65.,210.,65.)])
+
+    def test_housing_selection_recalculation_passes_street_phase_fields(self):
+        # A street point can intersect a selected building. Exercise that
+        # production recalculation caller with one deliberately matched shape.
+        class Geometry:
+            def __init__(self, *_args):
+                pass
+            def isEmpty(self):
+                return False
+            def boundingBox(self):
+                return None
+            def intersects(self, _other):
+                return True
+            def distance(self, _other):
+                return 0.0
+        class Rectangle:
+            def __init__(self, *_args):
+                pass
+            def grow(self, _distance):
+                pass
+        class SpatialIndex:
+            def __init__(self):
+                self.ids = []
+            def addFeature(self, feature):
+                self.ids.append(feature.id())
+            def intersects(self, _rectangle):
+                return self.ids
+        path = ROOT / "algorithms" / "woningtype_selectie_herberekenen_tool.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        nodes = [node for node in tree.body if isinstance(node, ast.ClassDef)
+                 and node.name == "WoningtypeSelectieHerberekenenAlgorithm"]
+        nodes += [node for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name) and target.id == "HOUSING_CHOICES"
+                          for target in node.targets)]
+        scope = dict(self.production)
+        scope.update(QgsGeometry=Geometry, QgsRectangle=Rectangle, QgsSpatialIndex=SpatialIndex,
+                     QgsProcessingException=RuntimeError, _load_design_module=lambda: self.calc,
+                     _workflow_values=lambda: self.context("2.0")[1])
+        _compile(nodes, path, scope)
+        housing = Layer([{"Woningtype":"vrijstaande woning", "bouwjaar":2010}])
+        housing.selectedFeatures = lambda: list(housing.getFeatures())
+        points = Layer([fixture(service="Onbekend", gas="G40", future=None,
+                                Gebruiksdoel="straatmeubilair", number_of_phases=count)
+                        for count in ("1 fase", "3 fase")])
+        for layer in (housing, points):
+            layer.crs = lambda: "test-crs"
+            for feature in layer.getFeatures():
+                feature.geometry = lambda: Geometry()
+        parameters = {
+            "WONINGEN": housing, "AANSLUITINGEN": points,
+            "VELD_WONINGTYPE":"Woningtype", "VELD_BOUWJAAR":"bouwjaar",
+            "VELD_DOORLAAT":"service_connection_type_type", "VELD_GEBRUIK":"Gebruiksdoel",
+            "VELD_GAS":"G_Type", "NIEUW_WONINGTYPE":0,
+        }
+        algorithm = scope["WoningtypeSelectieHerberekenenAlgorithm"]()
+        for _ in range(2):
+            result = algorithm.processAlgorithm(parameters, None, Feedback())
+            self.assertEqual(result["AANTAL_AANSLUITINGEN"], 2)
+            self.assertEqual([component_values(f) for f in points.getFeatures()],
+                             [(5.8,5.8,0.,0.), (0.,0.,0.,0.)])
+            self.assertIn("number_of_phases", points.getFeature(1)["KaderType"])
+            for feature, count in zip(points.getFeatures(), ("1 fase","3 fase")):
+                self.assertEqual(feature["service_connection_type_type"], "Onbekend")
+                self.assertEqual(feature["number_of_phases"], count)
+                self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+
     def test_manual_four_values_including_zero_survive_two_recalculations(self):
         for framework in ("2.0", "3.0", "3.2", "3.1"):
             with self.subTest(framework=framework):

@@ -5,7 +5,8 @@ import math
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QApplication, QCheckBox, QComboBox, QCompleter,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLayout, QProgressBar, QPushButton, QVBoxLayout)
+    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLayout, QProgressBar, QPushButton,
+    QSizePolicy, QVBoxLayout)
 from qgis.core import QgsProcessingFeedback, QgsProject, QgsVariantUtils
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsGeometry, QgsVectorLayer
 from .ui_theme import role
@@ -125,6 +126,8 @@ class ClusterEditingGuide:
         review = QGroupBox("3. Controleer en pas toe")
         review.setProperty('uiContentMinimum',True)
         self.review_group = review
+        review_index = root.indexOf(editor.status_label)
+        root.removeWidget(editor.status_label)
         review_layout = QVBoxLayout(review)
         review_layout.setSizeConstraint(getattr(QLayout,'SizeConstraint',QLayout).SetMinimumSize)
         editor.switch_group.layout().removeWidget(editor.preview_label)
@@ -137,6 +140,9 @@ class ClusterEditingGuide:
         self.safety_label.setWordWrap(True)
         role(self.safety_label, "hint")
         review_layout.addWidget(self.safety_label)
+        # Map instructions and calculation feedback need their own rows in the
+        # same card, including when run_task hides and restores the status.
+        review_layout.addWidget(editor.status_label)
         row = QHBoxLayout()
         self.commit = QPushButton("Verplaatsen")
         role(self.commit, "primary")
@@ -156,11 +162,19 @@ class ClusterEditingGuide:
         self.progress_bar.setTextVisible(False)
         self.progress_label = QLabel()
         self.progress_label.setWordWrap(True)
+        policies = getattr(QSizePolicy, "Policy", QSizePolicy)
+        for label in (editor.preview_label, self.capacity, self.safety_label,
+                      editor.status_label, self.progress_label):
+            policy = label.sizePolicy()
+            policy.setHorizontalPolicy(policies.Expanding)
+            policy.setVerticalPolicy(policies.Minimum)
+            policy.setHeightForWidth(True)
+            label.setSizePolicy(policy)
         review_layout.addWidget(self.progress_bar)
         review_layout.addWidget(self.progress_label)
         self.progress_bar.hide()
         self.progress_label.hide()
-        root.insertWidget(root.indexOf(editor.status_label), review)
+        root.insertWidget(review_index, review)
         for widget in (editor.check_capacity, editor.check_route, editor.block_other, editor.check_shared):
             widget.toggled.connect(self.refresh_preview)
         editor.new_cluster_kva.valueChanged.connect(self.refresh_preview)
@@ -510,6 +524,7 @@ class ClusterEditingGuide:
         self.commit.setEnabled(False)
         status_was_hidden=e.status_label.isHidden()
         e.status_label.hide()
+        e._set_status("")
         self.cancel.show()
         self.cancel.setEnabled(True)
         self.progress_bar.show()
@@ -530,7 +545,7 @@ class ClusterEditingGuide:
         finally:
             e._active_cluster_feedback = None
             self.busy = False
-            e.status_label.setVisible(not status_was_hidden)
+            e.status_label.setVisible(self.failed or not status_was_hidden)
             self.cancel.hide()
             for widget in (*groups, *homes):
                 widget.setEnabled(True)
