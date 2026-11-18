@@ -2,9 +2,11 @@
 
 Ontwikkeling in draft PR #29: [hergebruik, afzonderlijke nieuwe 150Al-richtingen en actuele vrijgavebeperkingen](PLANNED_150AL_VALIDATION.md). De Den Dungen-clustering in deze behoudmodus is nog niet volledig gevalideerd.
 
-## Laatste versie: 1.33.4
+## Laatste versie: 1.33.5
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.4/ls_netontwerp_wizard-1.33.4.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.4)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.5/ls_netontwerp_wizard-1.33.5.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.5)
+
+**Nieuw in 1.33.5:** het venster **Automatische clustering – instellingen** past zich aan de breedte aan: langere waarschuwingen en checkboxteksten breken af, velden en knoppen worden herschikt, en horizontaal scrollen is niet meer nodig. De gedeelde formulieropmaak volgt smallere vensters beter. **Scope** kiest nu duidelijkere kleuren voor geografisch naburige stationsgroepen, terwijl stations, aansluitingbollen en tabelvakjes dezelfde groepskleur blijven gebruiken. Bestaande Scope-projecten krijgen een eenmalige stijlcorrectie zonder ontwerpgegevens te veranderen. [Details en validatie](ls_netontwerp_wizard/RELEASE_NOTES.md).
 
 **Hersteld in 1.33.4:** Scope toont de ontwerpstroom in de aansluitbol, met dezelfde plaatsing en schaal als het clusteringoverzicht. Eerder opgeslagen standaard Scope-labels worden automatisch bijgewerkt. De geavanceerde clusterbewerkingen blijven volledig bereikbaar en de voortgangsbalk blijft onder het dashboard bij uitklappen, scrollen en vensterverkleining. [Wijzigingen, controles en installatie](ls_netontwerp_wizard/RELEASE_NOTES.md).
 

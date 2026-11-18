@@ -1,31 +1,36 @@
-# LS Netontwerp Wizard v1.33.4
+# LS Netontwerp Wizard v1.33.5
 
-Deze versie herstelt de plaatsing van ontwerpstroomlabels in Scope en de weergave van geavanceerde clusterbewerkingen met voortgang in het hoofdvenster.
+Deze versie verbetert de responsiviteit van de QGIS-wizard en de zichtbaarheid van aangrenzende stationsgroepen op de Scope-kaart.
 
-## Ontwerpstroom in de aansluitbol
+## Responsieve vensters
 
-- Scope gebruikt dezelfde gecentreerde labelpositie en dezelfde verhouding tussen tekst en bol als het clusteringoverzicht. De ontwerpstroom staat in het bolsymbool.
-- Bestaande Scope-layouts met de automatisch gemaakte standaardlabels uit 1.33.3 worden eenmalig bijgewerkt. Na opslaan en heropenen blijft de nieuwe plaatsing behouden, zonder opnieuw te verkleinen.
-- Herkenbare aangepaste labelinstellingen, zoals een eigen tekstgrootte of extra stijlexpressies, blijven behouden. Ook aanpassingen die na de eenmalige correctie zijn gemaakt, blijven staan.
-- De bestaande stations, aansluitwaarden, categoriekleuren en vastgelegde kaartuitsnede blijven behouden. Beide overzichtslegenda’s houden één bolsymbool met **Aansluitingen**.
-- De tekstbuffer wordt stabiel uit de QGIS-tekstopmaak gelezen. Een beschadigde automatisch opgeslagen bufferexpressie van de oude standaard Scope-labels wordt bij de correctie hersteld.
+- Het venster **Automatische clustering – instellingen** heeft geen horizontale scrollbar meer nodig. De inhoud volgt de beschikbare breedte, ook wanneer het venster smaller wordt.
+- Lange omschrijvingen, het advies bij **Behoud originele bestaande stations en kabelrichtingen**, en checkboxteksten lopen automatisch door op volgende regels. De bijbehorende labelhoogte wordt na een breedtewijziging opnieuw bepaald, zodat regels niet worden afgesneden.
+- De plangebiedkeuze en knop voor het toevoegen van een bestand staan bij beperkte ruimte onder elkaar. De vaste knoppenbalk verdeelt **Instellingen opslaan**, **Clustering starten**, **Berekend project herstellen** en **Sluiten** over één, twee of vier kolommen, afhankelijk van de ruimte.
+- De oorspronkelijke checkboxwaarden, aan/uit-afhankelijkheden, tooltips, signalen en opslagfunctionaliteit blijven behouden. Ook een klik op de tekst schakelt de betreffende optie in of uit.
+- In de gedeelde formulieropmaak kunnen lange velden en toelichtingen meeschalen en waar nodig onder het veldlabel doorlopen. Verticale scrolling blijft beschikbaar, terwijl de knoppen bereikbaar blijven.
 
-## Geavanceerde clusterbewerkingen en voortgang
+## Contrast in de Scope-layout
 
-- Het scrollgebied berekent zijn hoogte opnieuw bij het uit- en inklappen van **Geavanceerde clusterbewerkingen**. De onderste optie en alle clusterknoppen blijven binnen de kaart en bereikbaar.
-- De voortgang krijgt een eigen rij onder het scrollbare dashboard. Uitklappen, scrollen of een kleiner venster laat de balk daardoor niet meer over de clusterknoppen schuiven.
-- Het venster gebruikt de bestaande Qt-layoutitems opnieuw, zodat de inhoud en het scrollbereik dezelfde actuele hoogte gebruiken.
+- De kleuren van stationsgroepen worden niet uitsluitend op basis van willekeurige/stationgebonden kleuren of opgeslagen kleuren gekozen. De plugin vergelijkt de geografische nabijheid van de aansluitingen en stations en kiest voor naburige groepen een goed onderscheidbaar alternatief.
+- De kleurkeuze is reproduceerbaar: dezelfde invoer geeft dezelfde resultaten. Bestaande kleuren blijven behouden waar ze voldoende verschillen; alleen waar nodig verandert de kleur.
+- Ieder station, zijn aansluitingbollen en het bijbehorende kleurvakje in het stationsoverzicht gebruiken dezelfde groepskleur. **Geen station gekoppeld** blijft grijs.
+- Bestaande opgeslagen Scope-layouts uit eerdere versies worden eenmalig aangepast. Daarna blijven eigen stijlwijzigingen behouden; heropenen verandert het palette niet opnieuw.
+- De kleurcorrectie verandert **geen bronwaarden, ontwerpstromen, geometrieën, stationskoppelingen of kaartuitsnede**. Het clusteringoverzicht zelf behoudt zijn eigen ontwerpstijl en de bestaande legenda met één item **Aansluitingen**.
 
 ## Controles
 
-- De uitgebreide dashboardregressie is geslaagd voor **18 schermtoestanden**. Een onafhankelijke controle slaagde voor **24 van 24 situaties**, met verschillende venster- en tekstgroottes en verborgen, lopende of afgeronde voortgang. Alle knoppen en de checkbox bleven bereikbaar, zonder overlap met de voortgang.
-- De bestaande uniforme UI-controle is geslaagd voor tien pagina’s, geavanceerde tabbladen, navigatie en beide editorstanden.
-- Nieuwe Scope en een werkelijk opgeslagen 1.33.3-project zijn met **QGIS 3.40.6** gerenderd, opgeslagen en heropend. Alle vier stroomlabels uit de proef lagen exact op het middelpunt van hun bol.
-- Tekstgrootte, symboolgrootte en tekstbuffer komen overeen met het clusteringoverzicht. De drie bestaande proefstations, hun labels en beide legenda’s bleven zichtbaar.
-- Herhaald herstel veranderde de layout niet opnieuw. Bronwaarden, geometrie, categoriekleuren en de opgeslagen kaartuitsnede bleven gelijk.
+- Python-syntaxcontrole geslaagd voor **141 bronbestanden**.
+- De bestaande regressies voor Kader 2.0, Kader 3.2, gasherstel, aansluitprofielen en kabel-/stationslogica zijn geslaagd.
+- De nieuwe zuivere regressies controleren de contrastkleurkeuze, groepen met gelijke oorspronkelijke kleuren, geografische nabijheid, lange clustertracés, volgorde-onafhankelijkheid en stations met beperkte informatie.
+- De echte offscreen **QGIS 3.40.15/PyQt5**-controle is geslaagd bij **520, 720, 980 en 1180 px** vensterbreedte: geen horizontale scrollbar, volledige waarschuwingstekst, passende knopbreedtes, klikbare checkboxtekst en consistente Scope-kleuren/tabelvakjes.
+- De bestaande native QGIS-test voor **tien wizardpagina's**, geavanceerde tabbladen, navigatie en beide editorstanden is eveneens geslaagd.
+- Zie [de geslaagde PR-controle](https://github.com/LukaStuurman/Techbase-GEN-plugin/actions/runs/44300233322) en [de wijzigingen in PR #32](https://github.com/LukaStuurman/Techbase-GEN-plugin/pull/32).
+
+**Beperking:** deze controles zijn uitgevoerd met representatieve en synthetische gegevens; de Scope-kleurverdeling is niet tegen een volledige daadwerkelijke Den Dungen-layout visueel beoordeeld. QGIS 4 is niet native in deze testreeks uitgevoerd.
 
 ## Installatie
 
-Download de release-ZIP en installeer die via **Plugins → Plugins beheren en installeren → Installeren vanuit ZIP**. Herstart QGIS volledig en open daarna je project en de LS Netontwerp Wizard. Bestaande standaard Scope-labels worden dan automatisch bijgewerkt.
+Installeer het ZIP-bestand via **QGIS → Plugins → Plugins beheren en installeren → Installeren vanuit ZIP**. Herstart QGIS volledig en open je project. Herkenbare bestaande Scope-layouts krijgen daarna de eenmalige stijlcorrectie.
 
-[Vorige versie v1.33.3 en de eerdere ontwerpstroomverbeteringen](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.3) · [Alle releases](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases)
+[Vorige stabiele release v1.33.4](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.4) · [Eerdere releases](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases)
