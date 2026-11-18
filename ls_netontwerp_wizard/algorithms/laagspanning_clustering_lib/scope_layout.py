@@ -13,9 +13,9 @@ from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsCoordinateTransfor
     QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsVariantUtils)
 
 try:
-    from .layout_style_utils import configure_layout_style, ensure_connection_labels, ensure_connections_legend
+    from .layout_style_utils import configure_layout_style, ensure_scope_connection_labels, ensure_connections_legend
 except ImportError:
-    from layout_style_utils import configure_layout_style, ensure_connection_labels, ensure_connections_legend
+    from layout_style_utils import configure_layout_style, ensure_scope_connection_labels, ensure_connections_legend
 
 
 def text(value):
@@ -269,8 +269,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     categories.append(QgsRendererCategory("", QgsMarkerSymbol.createSimple({
         "name": "circle", "size": "4.7", "color": "#94a3b8"}), "Geen station gekoppeld"))
     points.setRenderer(QgsCategorizedSymbolRenderer("Station", categories))
-    ensure_connection_labels(points, around_point=True)
-    configure_layout_style(points, symbol_scale=.42, label_scale=1.0)
+    ensure_scope_connection_labels(points)
     station_source = loaded["stations_ontwerp"]
     original_stations = False
     if context.get("stations_uri"):

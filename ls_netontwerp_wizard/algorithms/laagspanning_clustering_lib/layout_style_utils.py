@@ -29,6 +29,7 @@ from qgis.core import (
 PROPERTY_ENABLED = "LSNetontwerp/layout_dynamic_style"
 LAYOUT_NAME = "Clustering overzicht"
 CONNECTION_LEGEND_PROPERTY = "LSNetontwerp/connections_legend"
+SCOPE_CONNECTION_LABEL_PROPERTY = "LSNetontwerp/scope_centered_current_labels"
 
 
 def ensure_connection_labels(layer, *, label_scale=None, around_point=False):
@@ -79,6 +80,91 @@ def ensure_connection_labels(layer, *, label_scale=None, around_point=False):
     if changed:
         layer.triggerRepaint()
     return changed
+
+
+def _legacy_scope_connection_labels(settings):
+    """Recognize the plugin's 1.33.3 label style, not a user's custom style."""
+    text_format = settings.format()
+    buffer = text_format.buffer()
+    if not (
+        settings.isExpression
+        and settings.fieldName == 'format_number("Ontwerp_A", 1)'
+        and settings.placement == Qgis.LabelPlacement.AroundPoint
+        and abs(settings.dist - 1.0) < 1e-6
+        and settings.distUnits == Qgis.RenderUnit.Millimeters
+        and settings.offsetType == Qgis.LabelOffsetType.FromSymbolBounds
+        and text_format.font().bold()
+        and abs(text_format.size() - 5.7) < 1e-6
+        and text_format.sizeUnit() == Qgis.RenderUnit.Points
+        and text_format.color() == QColor(20, 20, 20)
+        and buffer.enabled()
+        and abs(buffer.size() - .55) < 1e-6
+        and buffer.sizeUnit() == Qgis.RenderUnit.Millimeters
+        and buffer.color() == QColor("white")
+    ):
+        return False
+    properties = settings.dataDefinedProperties()
+    expected = {
+        QgsPalLayerSettings.Size: _layout_value_expression(5.7, 5.7),
+        QgsPalLayerSettings.BufferSize: _layout_value_expression(.55, .55),
+    }
+    # QGIS substitutes unavailable fonts when a project is reopened. Preserve
+    # that font, and recognize our other defaults rather than its family name.
+    for key in properties.propertyKeys():
+        prop = properties.property(key)
+        if not prop.isActive():
+            continue
+        expression = prop.expressionString()
+        if key in expected and expression == expected[key]:
+            continue
+        if key == QgsPalLayerSettings.BufferSize:
+            # Older builds read the buffer from a temporary format owner and
+            # could persist a corrupt numeric constant. The generated 1:1
+            # expression is still recognizable; use the actual .55 mm buffer.
+            prefix = _layout_value_expression(0, 0).partition(" THEN ")[0] + " THEN "
+            if expression.startswith(prefix) and expression.endswith(" END"):
+                values = expression[len(prefix):-4].split(" ELSE ")
+                if len(values) == 2 and values[0] == values[1]:
+                    try:
+                        float(values[0])
+                        continue
+                    except ValueError:
+                        pass
+        # Custom position, text or size expressions remain deliberate styling.
+        return False
+    return True
+
+
+def ensure_scope_connection_labels(layer):
+    """Center current labels like the overview, migrating only our old default."""
+    if not isinstance(layer, QgsVectorLayer) or layer.fields().lookupField("Ontwerp_A") < 0:
+        return False
+    missing = layer.labeling() is None
+    changed = ensure_connection_labels(layer, label_scale=.40)
+    if not missing:
+        if layer.customProperty(SCOPE_CONNECTION_LABEL_PROPERTY, "") == "1":
+            return changed
+        if not isinstance(layer.labeling(), QgsVectorLayerSimpleLabeling):
+            return changed
+        if not _legacy_scope_connection_labels(layer.labeling().settings()):
+            return changed
+    settings = layer.labeling().settings()
+    settings.placement = Qgis.LabelPlacement.OverPoint
+    try:
+        settings.quadOffset = Qgis.LabelQuadrantPosition.Over
+    except (AttributeError, TypeError):
+        pass
+    settings.dist = 0.0
+    settings.xOffset = 0.0
+    settings.yOffset = 0.0
+    settings.offsetType = Qgis.LabelOffsetType.FromPoint
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    # The unscaled symbol/font remain 4.7 mm / 5.7 pt. As in the overview,
+    # both become 40% in the print layout; repeated repairs do not rescale them.
+    configure_layout_style(layer, symbol_scale=.40, label_scale=.40)
+    layer.setCustomProperty(SCOPE_CONNECTION_LABEL_PROPERTY, "1")
+    layer.triggerRepaint()
+    return True
 
 
 def ensure_connections_legend(legend, layer):
@@ -214,7 +300,9 @@ def configure_layout_style(
         settings = layer.labeling().settings()
         properties = settings.dataDefinedProperties()
         if label_scale is not None:
-            normal_size = float(settings.format().size())
+            # Keep the format alive while reading its owned buffer settings.
+            text_format = settings.format()
+            normal_size = float(text_format.size())
             properties.setProperty(
                 QgsPalLayerSettings.Size,
                 QgsProperty.fromExpression(
@@ -223,7 +311,7 @@ def configure_layout_style(
                     )
                 ),
             )
-            normal_buffer = float(settings.format().buffer().size())
+            normal_buffer = float(text_format.buffer().size())
             properties.setProperty(
                 QgsPalLayerSettings.BufferSize,
                 QgsProperty.fromExpression(
