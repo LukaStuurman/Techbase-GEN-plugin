@@ -4978,7 +4978,7 @@ def make_map(
                 markerfacecolor="#9ecae1",
                 markeredgecolor="#222222",
                 markersize=5.5,
-                label="LS-aansluiting (cijfer = ontwerpstroom A)",
+                label="Aansluitingen",
             ),
         ]
     if plan_map is not None:
@@ -5084,10 +5084,12 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         try:
             from .layout_style_utils import (
                 configure_layout_style,
+                ensure_connections_legend,
             )
         except ImportError:
             from layout_style_utils import (
                 configure_layout_style,
+                ensure_connections_legend,
             )
 
         if QgsApplication.instance() is not None:
@@ -5821,6 +5823,7 @@ def make_qgis_project(gpkg: Path) -> Path | None:
         for legend_layer in legend_layers:
             legend_node = legend_root.addLayer(legend_layer)
             legend_node.setCustomProperty("legend/splitLayer", True)
+        ensure_connections_legend(legend, source_connections)
         legend.attemptMove(
             QgsLayoutPoint(side_panel_legend_x, 170.0, Qgis.LayoutUnit.Millimeters)
         )

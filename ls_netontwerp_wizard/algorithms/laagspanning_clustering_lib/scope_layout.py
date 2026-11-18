@@ -6,12 +6,16 @@ from uuid import uuid4
 
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor, QFont
-from qgis.core import (QgsCategorizedSymbolRenderer, QgsCoordinateTransform, QgsFeature, QgsField, QgsGeometry,
+from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsCoordinateTransform, QgsFeature, QgsField, QgsGeometry,
     QgsLayoutItemLabel, QgsLayoutPoint, QgsLayoutSize, QgsMarkerSymbol, QgsPalLayerSettings,
-    QgsProperty, QgsReadWriteContext, QgsRendererCategory, QgsSymbolLayer, QgsVectorFileWriter,
+    QgsMessageLog, QgsProperty, QgsProviderRegistry, QgsReadWriteContext, QgsRectangle,
+    QgsRendererCategory, QgsSymbolLayer, QgsTextBufferSettings, QgsTextFormat, QgsVectorFileWriter,
     QgsVectorLayer, QgsVectorLayerSimpleLabeling, QgsVariantUtils)
 
-from layout_style_utils import configure_layout_style
+try:
+    from .layout_style_utils import configure_layout_style, ensure_connection_labels, ensure_connections_legend
+except ImportError:
+    from layout_style_utils import configure_layout_style, ensure_connection_labels, ensure_connections_legend
 
 
 def text(value):
@@ -19,8 +23,157 @@ def text(value):
 
 
 def field(layer, *names):
-    return next((i for i, f in enumerate(layer.fields())
-        if f.name().casefold() in {name.casefold() for name in names}), -1)
+    fields = {item.name().casefold(): index for index, item in enumerate(layer.fields())}
+    return next((fields[str(name).casefold()] for name in names
+                 if name and str(name).casefold() in fields), -1)
+
+
+def _context_layer(uri, name, manifest):
+    """Resolve portable OGR sources against their manifest, keeping URI options."""
+    registry = QgsProviderRegistry.instance()
+    parts = registry.decodeUri("ogr", str(uri))
+    path = parts.get("path", "")
+    if path and not Path(path).is_absolute():
+        parts["path"] = str((manifest.parent / path).resolve())
+        uri = registry.encodeUri("ogr", parts) or uri
+    return QgsVectorLayer(str(uri), name, "ogr")
+
+
+def _station_rows(project, source, target, context, linked_names, extent, *, original, extent_crs):
+    """Keep source station types separate from the output's Bestaand/Nieuw status."""
+    name_index = field(source, context.get("station_field", "Station"), "Station", "Cluster", "Stationsnaam", "Stationsnaa")
+    type_index = field(source, "Type")
+    rows = []
+    for feature in source.getFeatures():
+        kind = text(feature[type_index]).casefold() if type_index >= 0 else ""
+        if kind in ("nieuw", "gepland", "new", "planned"):
+            continue
+        if not original and type_index >= 0 and kind != "bestaand":
+            continue
+        shape = QgsGeometry(feature.geometry())
+        if shape.isEmpty():
+            continue
+        if source.crs() != target.crs():
+            shape.transform(QgsCoordinateTransform(source.crs(), target.crs(), project))
+        name = text(feature[name_index]) if name_index >= 0 else ""
+        # Nearby existing stations also matter when they have no connection in
+        # this selection. Linked stations outside the frame remain in scope.
+        map_shape = QgsGeometry(shape)
+        if target.crs() != extent_crs:
+            map_shape.transform(QgsCoordinateTransform(target.crs(), extent_crs, project))
+        if name not in linked_names and not extent.intersects(map_shape.boundingBox()):
+            continue
+        row = QgsFeature(target.fields())
+        row.setGeometry(shape)
+        row["Station"] = name
+        rows.append(row)
+    return rows
+
+
+def ensure_scope_station_labels(stations):
+    if stations.customProperty("LSNetontwerp/scope_station_labels", "") == "1" and stations.labelsEnabled():
+        return False
+    settings = QgsPalLayerSettings()
+    settings.fieldName = "Station"
+    settings.enabled = True
+    settings.scaleVisibility = False
+    settings.displayAll = True
+    settings.priority = 10
+    settings.obstacle = False
+    settings.zIndex = 100.0
+    try:
+        placement = settings.placementSettings()
+        placement.setAllowDegradedPlacement(True)
+        placement.setOverlapHandling(Qgis.LabelOverlapHandling.AllowOverlapAtNoCost)
+        settings.setPlacementSettings(placement)
+    except (AttributeError, TypeError):
+        pass
+    font = QFont("Arial", 8)
+    font.setBold(True)
+    text_format = QgsTextFormat()
+    text_format.setFont(font)
+    text_format.setSize(8.0)
+    text_format.setSizeUnit(Qgis.RenderUnit.Points)
+    buffer = QgsTextBufferSettings()
+    buffer.setEnabled(True)
+    buffer.setSize(.65)
+    buffer.setSizeUnit(Qgis.RenderUnit.Millimeters)
+    buffer.setColor(QColor("white"))
+    text_format.setBuffer(buffer)
+    settings.setFormat(text_format)
+    stations.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    stations.setLabelsEnabled(True)
+    configure_layout_style(stations, label_scale=.7)
+    stations.setCustomProperty("LSNetontwerp/scope_station_labels", "1")
+    return True
+
+
+def _include_station_extent(map_item, stations):
+    previous = map_item.extent()
+    extent = QgsRectangle(previous)
+    for feature in stations.getFeatures():
+        if feature.hasGeometry() and not feature.geometry().isEmpty():
+            shape = QgsGeometry(feature.geometry())
+            if stations.crs() != map_item.crs():
+                shape.transform(QgsCoordinateTransform(stations.crs(), map_item.crs(), map_item.layout().project()))
+            extent.combineExtentWith(shape.boundingBox())
+    if extent == previous:
+        return False
+    extent.grow(max(extent.width(), extent.height()) * .02)
+    map_item.zoomToExtent(extent)
+    return True
+
+
+def repair_scope_station_snapshot(project, layout, points, stations):
+    """Add missing original stations to an old snapshot; keep frozen positions."""
+    if stations.customProperty("LSNetontwerp/scope_station_snapshot_version", "") == "2":
+        return False
+    map_item = layout.itemById("scopekaart")
+    if map_item is None:
+        return False
+    linked_names = {text(feature["Station"]) for feature in points.getFeatures() if text(feature["Station"])}
+    existing_names = {text(feature["Station"]) for feature in stations.getFeatures() if text(feature["Station"])}
+    needs_source = stations.featureCount() == 0 or bool(linked_names - existing_names)
+    path = QgsProviderRegistry.instance().decodeUri(points.providerType(), points.source()).get("path", "")
+    manifest = Path(path).parent / "scope_invoer.json" if path else None
+
+    def unavailable(message):
+        if needs_source and layout.customProperty("LSNetontwerp/scope_station_warning", "") != message:
+            layout.setCustomProperty("LSNetontwerp/scope_station_warning", message)
+            QgsMessageLog.logMessage(message, "LS Netontwerp", Qgis.MessageLevel.Warning)
+        return False
+
+    if manifest is None or not manifest.exists():
+        return unavailable("Bestaande Scope-stations konden niet worden hersteld: scope_invoer.json ontbreekt. De bevroren aansluitingen blijven behouden.")
+    try:
+        context = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unavailable("Bestaande Scope-stations konden niet worden hersteld: de oorspronkelijke Scope-context is niet leesbaar.")
+    uri = context.get("stations_uri")
+    if not uri:
+        return unavailable("Bestaande Scope-stations konden niet worden hersteld: de oorspronkelijke stationsbron is niet vastgelegd.")
+    original = _context_layer(uri, "Scope stations bron", manifest)
+    if not original.isValid():
+        return unavailable("Bestaande Scope-stations konden niet worden hersteld: de oorspronkelijke stationsbron is niet beschikbaar.")
+    candidates = _station_rows(project, original, stations, context, linked_names,
+                               map_item.extent(), original=True, extent_crs=map_item.crs())
+    existing_shapes = {bytes(feature.geometry().asWkb()) for feature in stations.getFeatures() if not text(feature["Station"])}
+    additions = [feature for feature in candidates
+                 if (text(feature["Station"]) and text(feature["Station"]) not in existing_names)
+                 or (not text(feature["Station"]) and bytes(feature.geometry().asWkb()) not in existing_shapes)]
+    if not additions and stations.featureCount() == 0:
+        return unavailable("Bestaande Scope-stations konden niet worden hersteld: de oorspronkelijke bron bevat geen bruikbare bestaande stations voor deze Scope.")
+    if additions:
+        if not stations.dataProvider().addFeatures(additions)[0]:
+            return unavailable("Bestaande Scope-stations konden niet aan de opgeslagen momentopname worden toegevoegd; controleer de schrijfrechten van het Scope-bestand.")
+        stations.updateExtents()
+        stations.triggerRepaint()
+        layout.setCustomProperty("LSNetontwerp/scope_station_extent_pending", True)
+    layout.removeCustomProperty("LSNetontwerp/scope_station_warning")
+    # Repair an old snapshot once. Future source edits must not silently change
+    # the existing-situation map when the project is opened again.
+    stations.setCustomProperty("LSNetontwerp/scope_station_snapshot_version", "2")
+    return True
 
 
 def snapshot(project, memory, path, name, first):
@@ -47,15 +200,15 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     manifest = output_dir / "scope_invoer.json"
     if manifest.exists():
         context = json.loads(manifest.read_text(encoding="utf-8"))
-    def geometry(layer, feature):
+    def geometry(layer, feature, target_crs):
         result = QgsGeometry(feature.geometry())
-        if layer.crs() != project.crs():
-            result.transform(QgsCoordinateTransform(layer.crs(), project.crs(), project))
+        if layer.crs() != target_crs:
+            result.transform(QgsCoordinateTransform(layer.crs(), target_crs, project))
         return result
     source = loaded["aansluitingen_geclusterd"]
     from_original = False
     if field(source, "Station") < 0 and context.get("points_uri"):
-        original = QgsVectorLayer(context["points_uri"], "Scope bron", "ogr")
+        original = _context_layer(context["points_uri"], "Scope bron", manifest)
         if original.isValid():
             source, from_original = original, True
     source_station = field(source, "Station")
@@ -70,17 +223,19 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
         lookup, _ = load_station_name_lookup(context["station_csv"], context.get("station_csv_field", "SourceFile"))
     else:
         normalize_asset_id = lambda value: text(value).casefold()
-    points = QgsVectorLayer("Point?crs=EPSG:28992", "Aansluitingen bestaande stations (Scope)", "memory")
+    points = QgsVectorLayer("Point", "Aansluitingen bestaande stations (Scope)", "memory")
+    points.setCrs(loaded["aansluitingen_geclusterd"].crs())
     points.dataProvider().addAttributes([QgsField("Station", QVariant.String),
         QgsField("Master_asset_id", QVariant.String), QgsField("Ontwerp_A", QVariant.Double)])
     points.updateFields()
     # Older results lost IDs. Select original features by their exact geometry,
     # without assigning one apartment's identity to another coincident point.
-    result_geometries = {bytes(f.geometry().asWkb()) for f in loaded["aansluitingen_geclusterd"].getFeatures()}
+    result_geometries = {bytes(geometry(loaded["aansluitingen_geclusterd"], feature, points.crs()).asWkb())
+                         for feature in loaded["aansluitingen_geclusterd"].getFeatures()}
     rows = []
     stations_seen = set()
     for feature in source.getFeatures():
-        shape = geometry(source, feature)
+        shape = geometry(source, feature, points.crs())
         if from_original and bytes(shape.asWkb()) not in result_geometries:
             continue
         identity = text(feature[asset]) if asset >= 0 else ""
@@ -95,6 +250,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
         raise RuntimeError("De Scope-aansluitingen konden niet worden voorbereid.")
     path = output_dir / f"scope_bestaande_stations_{uuid4().hex[:8]}.gpkg"
     points = snapshot(project, points, path, "aansluitingen_scope", True)
+    points.setCustomProperty("LSNetontwerp/scope_role", "connections")
 
     def color(station):
         saved = context.get("station_colors", {}).get(station)
@@ -113,41 +269,36 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     categories.append(QgsRendererCategory("", QgsMarkerSymbol.createSimple({
         "name": "circle", "size": "4.7", "color": "#94a3b8"}), "Geen station gekoppeld"))
     points.setRenderer(QgsCategorizedSymbolRenderer("Station", categories))
-    configure_layout_style(points, symbol_scale=.42)
+    ensure_connection_labels(points, around_point=True)
+    configure_layout_style(points, symbol_scale=.42, label_scale=1.0)
     station_source = loaded["stations_ontwerp"]
+    original_stations = False
     if context.get("stations_uri"):
-        candidate = QgsVectorLayer(context["stations_uri"], "Scope stations bron", "ogr")
+        candidate = _context_layer(context["stations_uri"], "Scope stations bron", manifest)
         if candidate.isValid():
             station_source = candidate
-    name_index = field(station_source, context.get("station_field", "Station"), "Cluster", "Stationsnaam", "Stationsnaa")
-    type_index = field(station_source, "Type")
-    stations = QgsVectorLayer("Point?crs=EPSG:28992", "Bestaande stations (Scope)", "memory")
+            original_stations = True
+    stations = QgsVectorLayer("Point", "Bestaande stations (Scope)", "memory")
+    stations.setCrs(points.crs())
     stations.dataProvider().addAttributes([QgsField("Station", QVariant.String)])
     stations.updateFields()
-    rows = []
-    for feature in station_source.getFeatures():
-        if type_index >= 0 and text(feature[type_index]) != "Bestaand":
-            continue
-        name = text(feature[name_index]) if name_index >= 0 else ""
-        if name not in stations_seen:
-            continue
-        row = QgsFeature(stations.fields())
-        row.setGeometry(geometry(station_source, feature))
-        row.setAttributes([name])
-        rows.append(row)
-    stations.dataProvider().addFeatures(rows)
+    rows = _station_rows(project, station_source, stations, context, stations_seen,
+                         layout.itemById("clusterkaart").extent(), original=original_stations,
+                         extent_crs=layout.itemById("clusterkaart").crs())
+    if not stations.dataProvider().addFeatures(rows)[0]:
+        raise RuntimeError("De bestaande Scope-stations konden niet worden voorbereid.")
+    displayed_stations = {text(feature["Station"]) for feature in rows if text(feature["Station"])}
     stations = snapshot(project, stations, path, "stations_scope", False)
+    stations.setCustomProperty("LSNetontwerp/scope_role", "stations")
+    stations.setCustomProperty("LSNetontwerp/scope_station_snapshot_version", "2")
     symbol = QgsMarkerSymbol.createSimple({"name": "square", "size": "3.2", "color": "227,26,28", "outline_color": "0,0,0"})
-    color_cases = ["WHEN \"Station\" = '" + station.replace("'", "''") + "' THEN '" + color(station).name() + "'" for station in sorted(stations_seen)]
+    color_cases = ["WHEN \"Station\" = '" + station.replace("'", "''") + "' THEN '" + color(station).name() + "'" for station in sorted(stations_seen | displayed_stations)]
     if color_cases:
         symbol.symbolLayer(0).setDataDefinedProperty(QgsSymbolLayer.Property.FillColor,
             QgsProperty.fromExpression("CASE " + " ".join(color_cases) + " ELSE '#94a3b8' END"))
     stations.renderer().setSymbol(symbol)
-    label = QgsPalLayerSettings()
-    label.fieldName = "Station"
-    stations.setLabeling(QgsVectorLayerSimpleLabeling(label))
-    stations.setLabelsEnabled(True)
-    configure_layout_style(stations, symbol_scale=.7, label_scale=.7)
+    ensure_scope_station_labels(stations)
+    configure_layout_style(stations, symbol_scale=.7)
     group = project.layerTreeRoot().addGroup("Scope - bestaande situatie")
     group.addLayer(stations)
     group.addLayer(points)
@@ -164,6 +315,8 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     map_layers.extend(layer for layer in layout.itemById("clusterkaart").layers() if layer.providerType() == "wms")
     map_item.setLayers(map_layers)
     map_item.setKeepLayerSet(True)
+    _include_station_extent(map_item, stations)
+    scope.setCustomProperty("LSNetontwerp/scope_station_extent_repaired", "1")
     title = scope.itemById("stationsoverzicht_titel")
     title.setText("Scope - bestaande stations")
     # QGIS 4's layout duplication drops HTML-label text/IDs. Replace the
@@ -182,7 +335,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     # frozen snapshot, independent of later edits to the cluster result.
     lines = []
     import html
-    for station in sorted(stations_seen) + [""]:
+    for station in sorted(stations_seen | displayed_stations) + [""]:
         escaped = station.replace("'", "''")
         condition = f'coalesce("Station", \'\') = \'{escaped}\''
         count = f"aggregate('{points.id()}', 'count', $id, {condition})"
@@ -199,6 +352,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     legend.model().rootGroup().addLayer(stations)
     if "plangebied" in loaded:
         legend.model().rootGroup().addLayer(loaded["plangebied"])
+    ensure_connections_legend(legend, points)
     legend.updateLegend()
     # duplicateLayout() creates an unsupported QgsLayoutItemHtml frame from
     # the source HTML label in QGIS 4, underneath the replacement label.
