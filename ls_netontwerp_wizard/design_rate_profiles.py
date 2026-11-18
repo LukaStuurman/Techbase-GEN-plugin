@@ -31,7 +31,7 @@ K20_OPTIONS = {
     ),
     "k20_street": (
         "Straatmeubilair: Type 9", ("Min 3×A", "Max 3×A", "Trafo A", "Kabel A"),
-        [25, 25, 5.8, 5.8, 35, 50, 22, 22, 63, 80, 36, 36],
+        [25, 25, 5.8, 5.8, 35, 35, 22, 22, 40, 50, 22, 22, 63, 80, 36, 36],
     ),
     "k20_charging": (
         "Publiek laden: Type 8", ("3×A", "Trafo A", "Kabel A"),
