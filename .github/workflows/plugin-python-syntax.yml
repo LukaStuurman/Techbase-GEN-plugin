@@ -31,6 +31,8 @@ jobs:
         run: python ls_netontwerp_wizard/test_kader_20.py
       - name: Bewaak 3.2-waarden en controleer 2.0-futures
         run: python ls_netontwerp_wizard/test_kader_comparison_20_32.py
+      - name: Controleer eigen ontwerpstroomtabellen van Kader 2.0
+        run: python ls_netontwerp_wizard/test_editable_kader_rates.py
       - name: Controleer automatisch herstel, gas en aanvullende aansluitprofielen
         run: python ls_netontwerp_wizard/test_gas_repair.py
       - name: Controleer contrasterende Scope-kleuren
@@ -43,6 +45,7 @@ jobs:
           timeout 90s env QT_QPA_PLATFORM=offscreen /usr/bin/python3 ls_netontwerp_wizard/test_qgis_responsive_scope.py
           echo 'Native QGIS wizard page regression'
           timeout 90s env QT_QPA_PLATFORM=offscreen /usr/bin/python3 ls_netontwerp_wizard/test_uniform_ui.py
+          timeout 90s env QT_QPA_PLATFORM=offscreen /usr/bin/python3 ls_netontwerp_wizard/test_framework_rate_ui.py
       - name: Originele stations, kabelgroepen en aftakkingen controleren
         run: python ls_netontwerp_wizard/test_existing_station_retention.py
       - name: Geometrische trace van -00 hoofdroute en -01/-02/-03 aftakkingen
