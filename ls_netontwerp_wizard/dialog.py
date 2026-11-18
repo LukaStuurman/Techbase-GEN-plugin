@@ -3048,59 +3048,224 @@ class LSNetontwerpDialog(QDialog):
         return scroll
 
     def _build_design_tables(self):
+        from .design_rate_profiles import K20_OPTIONS, FRAMEWORKS
         container = QWidget()
         layout = QVBoxLayout(container)
-        note = QLabel(
-            "Pas de rekenwaarden per categorie aan. Trafo, kabel en opwek hebben "
-            "eigen tabellen. Selecteer een regel om die te kopiëren of te verplaatsen; "
-            "met kopiëren en plakken kun je waarden ook in een spreadsheet bewerken."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        categories = QTabWidget()
-        category_keys = (
-            (
-                "Wonen en opwek",
-                (
-                    "matrix_woonhuis",
-                    "matrix_woonhuis_2022",
-                    "matrix_woonhuis_kabel",
-                    "matrix_woonhuis_kabel_2022",
-                    "matrix_woonhuis_opwek",
-                    "matrix_woonhuis_opwek_kabel",
-                ),
-            ),
+        self._rate_tables = {framework: {} for framework in FRAMEWORKS}
+        self._rate_stack = QStackedWidget()
+        self._rate_status = QLabel()
+        self._rate_status.setWordWrap(True)
+        self._rate_description = QLabel()
+        self._rate_description.setWordWrap(True)
+        layout.addWidget(self._rate_description)
+        categories_3x = (
+            ("Wonen en opwek", (
+                "matrix_woonhuis", "matrix_woonhuis_2022",
+                "matrix_woonhuis_kabel", "matrix_woonhuis_kabel_2022",
+                "matrix_woonhuis_opwek", "matrix_woonhuis_opwek_kabel",
+            )),
             ("Ampère en typen", ("matrix_amp", "matrix_type")),
-            (
-                "Straat en laden",
-                (
-                    "matrix_straat",
-                    "matrix_straat_kader31",
-                    "matrix_laad",
-                    "matrix_laad_kabel",
-                ),
-            ),
+            ("Straat en laden", ("matrix_straat", "matrix_laad", "matrix_laad_kabel")),
             ("Gas", ("matrix_gas", "matrix_gas_kabel")),
             ("Classificatie", ("matrix_regex", "matrix_keywords")),
         )
-        for category_name, keys in category_keys:
-            inner = QTabWidget()
-            for key in keys:
-                label, _headers, _default = DESIGN_MATRIX_OPTIONS[key]
-                inner.addTab(self._matrix_editor(key), label)
-            categories.addTab(inner, category_name)
-        layout.addWidget(categories, 1)
+        categories_20 = (
+            ("Wonen", ("k20_household",)),
+            ("Zakelijk en gas", ("k20_business", "k20_gas")),
+            ("Straat en laden", ("k20_street", "k20_charging")),
+            ("Aanvullende berekeningen", (
+                "k20_amp_supplement", "k20_riser", "k20_riser_business",
+            )),
+            ("Classificatie", ("matrix_regex", "matrix_keywords")),
+        )
+        self._rate_views = {}
+        for framework in FRAMEWORKS:
+            categories = QTabWidget()
+            for category_name, keys in (categories_20 if framework == "2.0" else categories_3x):
+                inner = QTabWidget()
+                for key in keys:
+                    if key in K20_OPTIONS:
+                        label = K20_OPTIONS[key][0]
+                    else:
+                        label = DESIGN_MATRIX_OPTIONS[key][0]
+                        if key == "matrix_straat":
+                            label = f"Straatmeubilair – Kader {framework}"
+                    inner.addTab(self._matrix_editor(key, framework), label)
+                categories.addTab(inner, category_name)
+            self._rate_views[framework] = categories
+            self._rate_stack.addWidget(categories)
+        layout.addWidget(self._rate_stack, 1)
+        buttons = QHBoxLayout()
+        self.rate_save_button = QPushButton("Tabellen van dit kader opslaan")
+        self.rate_save_button.clicked.connect(self._save_rate_tables)
+        self.rate_reset_button = QPushButton("Alle standaardwaarden van dit kader herstellen")
+        self.rate_reset_button.clicked.connect(self._reset_rate_tables)
+        buttons.addWidget(self.rate_save_button)
+        buttons.addWidget(self.rate_reset_button)
+        layout.addLayout(buttons)
+        layout.addWidget(self._rate_status)
 
-        loose = QGroupBox("Aanvullende ontwerpstroominstellingen")
+        loose = QGroupBox("Aanvullende algemene ontwerpstroominstellingen")
         loose_form = QFormLayout(loose)
         self._add_text_option(loose_form, "opwek_zero_ids")
         self._add_text_option(loose_form, "opwek_zero_text")
         self._add_number_option(loose_form, "fallback_laad")
         layout.addWidget(loose)
+        self.framework_combo.currentIndexChanged.connect(self._show_framework_rate_tables)
+        self._show_framework_rate_tables()
         return container
 
-    def _matrix_editor(self, key):
-        _label, headers, default = DESIGN_MATRIX_OPTIONS[key]
+    def _show_framework_rate_tables(self, *_args):
+        from .design_rate_profiles import normalized_framework, K20_OPTIONS, FRAMEWORKS
+        if not hasattr(self, "_rate_tables"):
+            return
+        framework = normalized_framework(self.framework_combo.currentData())
+        self._rate_stack.setCurrentIndex(FRAMEWORKS.index(framework))
+        # Keep old callers of self.widgets working with the active Kader.
+        for key in DESIGN_MATRIX_OPTIONS:
+            table = self._rate_tables[framework].get(key)
+            if table is None:
+                table = self._rate_tables["3.0"].get(key)
+            if table is not None:
+                self.widgets[key] = table
+        # Legacy saved 3.1/3.2 street table alias used by old project state.
+        self.widgets["matrix_straat_kader31"] = self._rate_tables["3.2"]["matrix_straat"]
+        for key in K20_OPTIONS:
+            self.widgets[key] = self._rate_tables["2.0"][key]
+        if framework == "2.0":
+            description = (
+                "Kader 2.0 gebruikt eigen waarden uit de oorspronkelijke Excel 2.0: "
+                "Type 1–4 wonen, Type 6/7 zakelijk, Type 8 laden, Type 9 straatmeubilair "
+                "en apart gasadvies voor trafo en kabel. Type 5 is een aanvullende "
+                "formule en heeft nog geen automatische invoer. De ampèreaanvulling "
+                "boven 3×80 A is hieronder afzonderlijk instelbaar."
+            )
+        else:
+            description = (
+                f"Kader {framework} heeft eigen tabellen voor wonen, ampère, "
+                "straataansluitingen, laadpunten, gas en classificatie. "
+                "Wijzigingen aan een ander kader veranderen deze waarden niet."
+            )
+        self._rate_description.setText(description)
+        self.rate_save_button.setText(f"Kader {framework} opslaan")
+        self.rate_reset_button.setText(f"Kader {framework} standaard herstellen")
+
+    @staticmethod
+    def _default_rate_values(framework, key):
+        from .design_rate_profiles import K20_OPTIONS
+        if key in K20_OPTIONS:
+            return list(K20_OPTIONS[key][2])
+        if framework == "3.2" and key == "matrix_straat":
+            return list(FRAMEWORK_31_STREET_MATRIX)
+        return list(DESIGN_MATRIX_OPTIONS[key][2])
+
+    def _all_rate_profiles(self):
+        return {
+            framework: {
+                key: self._matrix_values(table)
+                for key, table in tables.items()
+            }
+            for framework, tables in self._rate_tables.items()
+        }
+
+    def _load_rate_profiles(self, saved):
+        """Load only shaped tables from a previous project or QSettings."""
+        if not isinstance(saved, dict):
+            return
+        for framework, tables in self._rate_tables.items():
+            selected = saved.get(framework)
+            if not isinstance(selected, dict):
+                continue
+            for key, table in tables.items():
+                values = selected.get(key)
+                if isinstance(values, list) and values and len(values) % table.columnCount() == 0:
+                    self._set_matrix_values(table, values)
+        self._show_framework_rate_tables()
+
+    def _reset_rate_tables(self):
+        framework = str(self.framework_combo.currentData() or "3.0")
+        question = QMessageBox.question(
+            self, "Standaardwaarden herstellen",
+            f"Alle tabellen van Kader {framework} terugzetten naar de oorspronkelijke waarden? "
+            "Andere kaders blijven ongewijzigd. Klik daarna op Opslaan om de wijziging vast te leggen.",
+        )
+        yes = (QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton")
+               else QMessageBox.Yes)
+        if question != yes:
+            return
+        for key, table in self._rate_tables[framework].items():
+            self._set_matrix_values(table, self._default_rate_values(framework, key))
+        self._rate_status.setText(f"Originele Kader {framework}-waarden hersteld. Klik op Opslaan om ze te bewaren.")
+
+    def _save_rate_tables(self):
+        from .design_rate_profiles import parse_k20_rates
+        try:
+            current = self._all_rate_profiles()
+            # Reject malformed rows before writing persistent data.
+            parse_k20_rates(current["2.0"])
+            self._validate_rate_tables(current)
+            self.settings.setValue(
+                self.SETTINGS_PREFIX + "framework_profiles_v1",
+                json.dumps(current, ensure_ascii=False),
+            )
+            self.settings.setValue(
+                self.SETTINGS_PREFIX + "design_framework",
+                str(self.framework_combo.currentData() or "3.0"),
+            )
+            if self.prepared_state is not None:
+                from .workflow import WorkflowRunner
+                self.prepared_state["values"].update(self.values())
+                WorkflowRunner._write_state(self.prepared_state)
+            framework = self.framework_combo.currentData()
+            self._rate_status.setText(
+                f"De tabellen van Kader {framework} zijn opgeslagen. "
+                "Herbereken de ontwerpstromen om bestaande resultaten bij te werken."
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Ontwerpstroomtabellen", str(exc))
+            self._rate_status.setText(f"Opslaan mislukt: {exc}")
+
+    @staticmethod
+    def _validate_rate_tables(profiles):
+        import math
+        import re
+        numeric = {
+            "matrix_woonhuis": (1,), "matrix_woonhuis_2022": (1,),
+            "matrix_woonhuis_kabel": (1,), "matrix_woonhuis_kabel_2022": (1,),
+            "matrix_woonhuis_opwek": (1,), "matrix_woonhuis_opwek_kabel": (1,),
+            "matrix_amp": (0, 1, 2, 3), "matrix_type": (0, 2, 3, 4, 5),
+            "matrix_straat": (0, 1, 2), "matrix_laad": (0, 1, 2),
+            "matrix_laad_kabel": (0, 1, 2), "matrix_gas": (1, 2),
+            "matrix_gas_kabel": (1, 2), "matrix_regex": (1,),
+            "matrix_keywords": (1,),
+        }
+        for framework, tables in profiles.items():
+            for key, flat in tables.items():
+                if key not in DESIGN_MATRIX_OPTIONS:
+                    continue
+                columns = len(DESIGN_MATRIX_OPTIONS[key][1])
+                if not flat or len(flat) % columns:
+                    raise ValueError(f"Kader {framework}, {key}: ten minste één volledige regel vereist")
+                for offset in range(0, len(flat), columns):
+                    row = flat[offset:offset + columns]
+                    for index in numeric.get(key, ()):
+                        try:
+                            value = float(str(row[index]).replace(",", "."))
+                        except (ValueError, TypeError) as exc:
+                            raise ValueError(f"Kader {framework}, {key}: regel {offset // columns + 1}, kolom {index + 1} ongeldig") from exc
+                        if not math.isfinite(value):
+                            raise ValueError(f"Kader {framework}, {key}: niet-eindige waarde")
+                    if key == "matrix_regex":
+                        try:
+                            re.compile(str(row[0]))
+                        except re.error as exc:
+                            raise ValueError(f"Kader {framework}: ongeldig regexpatroon: {exc}") from exc
+
+    def _matrix_editor(self, key, framework="3.0"):
+        from .design_rate_profiles import K20_OPTIONS
+        _label, headers, default = (K20_OPTIONS[key] if key in K20_OPTIONS
+                                    else DESIGN_MATRIX_OPTIONS[key])
+        default = self._default_rate_values(framework, key)
         container = QWidget()
         layout = QVBoxLayout(container)
         table = QTableWidget()
@@ -3116,7 +3281,9 @@ class LSNetontwerpDialog(QDialog):
         table.setMinimumHeight(260)
         table.setToolTip("Dubbelklik op een cel om de waarde te wijzigen.")
         self._set_matrix_values(table, default)
-        self.widgets[key] = table
+        self._rate_tables[framework][key] = table
+        if framework == "3.0":
+            self.widgets[key] = table
         layout.addWidget(table, 1)
         row = QHBoxLayout()
         add_button = QPushButton("Regel toevoegen")
@@ -3319,8 +3486,22 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = widget.value()
         if not values["plan"]:
             values["only_plan"] = False
+        from .design_rate_profiles import K20_OPTIONS, normalized_framework
+        current_framework = normalized_framework(values["design_framework"])
+        profiles = self._all_rate_profiles()
+        # The selected framework is always the authoritative top-level input
+        # consumed by the QGIS processing algorithm and later review dialogs.
+        for key, flat in profiles[current_framework].items():
+            values[key] = list(flat)
+        if current_framework == "2.0":
+            # The 3.2-style amp conversion above 80A is separately editable in 2.0.
+            values["matrix_amp"] = list(profiles["2.0"]["k20_amp_supplement"])
+            for key in K20_OPTIONS:
+                values[key] = list(profiles["2.0"][key])
+        values["matrix_straat_kader31"] = list(profiles["3.2"]["matrix_straat"])
         if values["design_framework"] in ("3.1", "3.2"):
-            values["matrix_straat"] = list(values["matrix_straat_kader31"])
+            values["matrix_straat"] = list(profiles["3.2"]["matrix_straat"])
+        values["framework_profiles"] = profiles
         return values
 
     def _restore_settings(self):
@@ -3332,11 +3513,22 @@ class LSNetontwerpDialog(QDialog):
             in ("true", "1")
         )
         self.output_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "output", ""))
+        profiles_text = self.settings.value(
+            self.SETTINGS_PREFIX + "framework_profiles_v1", ""
+        )
+        if profiles_text:
+            try:
+                self._load_rate_profiles(json.loads(str(profiles_text)))
+            except (ValueError, TypeError):
+                self._rate_status.setText(
+                    "De eerder opgeslagen kadertabellen zijn niet leesbaar; originele waarden geladen."
+                )
         framework = str(
             self.settings.value(self.SETTINGS_PREFIX + "design_framework", "3.0")
         )
         index = self.framework_combo.findData("3.2" if framework == "3.1" else framework)
         self.framework_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._show_framework_rate_tables()
 
     def _save_settings(self, values):
         for key in ("xml", "excel", "plan", "output"):
@@ -3346,6 +3538,11 @@ class LSNetontwerpDialog(QDialog):
         self.settings.setValue(
             self.SETTINGS_PREFIX + "design_framework",
             str(values.get("design_framework", "3.0")),
+        )
+        self.settings.setValue(
+            self.SETTINGS_PREFIX + "framework_profiles_v1",
+            json.dumps(values.get("framework_profiles") or self._all_rate_profiles(),
+                       ensure_ascii=False),
         )
 
     def _restore_prepared_state(self):
@@ -3367,10 +3564,29 @@ class LSNetontwerpDialog(QDialog):
         ):
             return
         self.prepared_state = state
-        restored_framework = str(state["values"].get("design_framework", "3.0"))
-        restored_index = self.framework_combo.findData("3.2" if restored_framework == "3.1" else restored_framework)
+        from .design_rate_profiles import normalized_framework
+        restored_framework = normalized_framework(
+            state["values"].get("design_framework", "3.0")
+        )
+        stored_profiles = state["values"].get("framework_profiles")
+        if isinstance(stored_profiles, dict):
+            self._load_rate_profiles(stored_profiles)
+        else:
+            # Upgrade an existing 1.33.x project with single, flat matrices:
+            # the original project's selected framework keeps its own edits.
+            legacy = {}
+            for key in self._rate_tables[restored_framework]:
+                current = state["values"].get(key)
+                if key == "k20_amp_supplement" and current is None:
+                    current = state["values"].get("matrix_amp")
+                if isinstance(current, list):
+                    legacy[key] = current
+            if legacy:
+                self._load_rate_profiles({restored_framework: legacy})
+        restored_index = self.framework_combo.findData(restored_framework)
         if restored_index >= 0:
             self.framework_combo.setCurrentIndex(restored_index)
+        self._show_framework_rate_tables()
         self.plan_edit.setText(str(state["values"].get("plan", "")))
         self.no_plan.setChecked(not bool(state.get("plan_gpkg")))
         from .clustering_options import CLUSTER_KEYS

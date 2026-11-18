@@ -176,8 +176,19 @@ def main():
         if captures:
             assert dialog.grab().save(str(captures / f"10-advanced-{index}.png"))
     for key, widget in dialog.widgets.items():
-        if not key.startswith("matrix_"):
+        if not (key.startswith("matrix_") or key.startswith("k20_")):
             continue
+        # Matrix widgets belong to separate framework pages. Select the
+        # owning framework before checking whether their cells are visible.
+        owners = [
+            fw for fw, tables in dialog._rate_tables.items()
+            if any(t is widget for t in tables.values())
+        ]
+        assert owners, key
+        framework = dialog.framework_combo.currentData()
+        if framework not in owners:
+            index = dialog.framework_combo.findData(owners[0])
+            dialog.framework_combo.setCurrentIndex(index)
         for tabs in dialog.findChildren(QTabWidget):
             for index in range(tabs.count()):
                 if tabs.widget(index).isAncestorOf(widget):

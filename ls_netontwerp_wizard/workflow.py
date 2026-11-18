@@ -7,6 +7,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from .design_rate_profiles import K20_KEYS
+
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
@@ -932,6 +934,7 @@ class WorkflowRunner:
                 "VAL_KADER": {"3.0": 0, "3.1": 1, "3.2": 1, "2.0": 2}.get(
                     str(self.v.get("design_framework", "3.0")), 0
                 ),
+                "VAL_K20_TABLES": json.dumps({key: self.v.get(key) for key in K20_KEYS if key in self.v}),
                 "VAL_1FASE_EXCEPTION": self.v["one_phase_exception"],
                 "VAL_APPARTEMENT_ZONDER_DOORLAAT": self.v["default_apartment"],
                 "VAL_BOUWJAAR_GRENS": self.v["building_year_limit"],
