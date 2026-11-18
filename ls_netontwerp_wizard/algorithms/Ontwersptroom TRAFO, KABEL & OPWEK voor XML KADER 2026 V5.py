@@ -675,6 +675,10 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSink(self.OUTPUT, self.tr('Output Layer')))
 
     def processAlgorithm(self, parameters, context, feedback):
+        # Keep imports local too: legacy tests load the Processing class via AST.
+        import json
+        from ls_netontwerp_wizard.design_rate_profiles import parse_k20_rates
+
         def parse_woon(mat_name):
             raw = self.parameterAsMatrix(parameters, mat_name, context)
             cfg = {}
