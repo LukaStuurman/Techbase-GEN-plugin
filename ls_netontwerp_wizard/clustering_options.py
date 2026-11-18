@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 import uuid
 
-from qgis.PyQt.QtCore import QEvent, Qt
+from qgis.PyQt.QtCore import QEvent, QTimer, Qt
 from qgis.PyQt.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
     QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject,
@@ -88,14 +88,7 @@ def _qt_constant(parent, name):
 
 
 class _ResponsiveTextLabel(QLabel):
-    """Reserve the complete wrapped height as the form's width changes."""
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        required = self.heightForWidth(max(1, self.width()))
-        if required >= 0 and abs(self.minimumHeight() - (required + 2)) > 1:
-            self.setMinimumHeight(required + 2)
-            self.updateGeometry()
+    """Wrapping text whose height is updated by the dialog after resizing."""
 
 
 class _CheckDescription(_ResponsiveTextLabel):
@@ -354,7 +347,11 @@ class ClusteringOptionsDialog(QDialog):
             form.setFieldGrowthPolicy(policy.AllNonFixedFieldsGrow)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff if hasattr(Qt, "ScrollBarPolicy") else Qt.ScrollBarAlwaysOff)
         apply_theme(self)
+        self._height_timer = QTimer(self)
+        self._height_timer.setSingleShot(True)
+        self._height_timer.timeout.connect(self._fit_wrapped_heights)
         self._update_responsive_forms()
+        self._height_timer.start(0)
 
         role(start, "primary")
         role(save, "secondary")
@@ -370,9 +367,22 @@ class ClusteringOptionsDialog(QDialog):
                 form.setRowWrapPolicy(mode)
                 form.invalidate()
 
+    def _fit_wrapped_heights(self):
+        """Measure after Qt has settled the viewport width, never in a QLabel resize event."""
+        for label in self.findChildren(QLabel):
+            if not label.wordWrap() or not label.isVisible():
+                continue
+            height = label.heightForWidth(max(1, label.width()))
+            if height >= 0 and abs(label.minimumHeight() - (height + 4)) > 1:
+                label.setMinimumHeight(height + 4)
+                label.updateGeometry()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_responsive_forms()
+        if (hasattr(self, "_height_timer") and
+                event.size().width() != event.oldSize().width()):
+            self._height_timer.start(0)
 
     def load_plan(self):
         path, _ = QFileDialog.getOpenFileName(self, "Plangebied toevoegen", "", "Vectorlagen (*.gpkg *.shp *.geojson *.json);;Alle bestanden (*)")
