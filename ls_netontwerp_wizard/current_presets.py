@@ -3,8 +3,6 @@
 Labels follow Transformator and cable direction (1). Values use the active
 wizard matrices, including the separate transformer/cable gas tables.
 """
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor
 
 HOUSEHOLD_UNIT_CHOICES = (
     ("Vrijstaand", "vrijstaande woning"),
@@ -44,6 +42,9 @@ GAS_CHOICES = (
 
 
 def fill_gas_combo(combo):
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtGui import QColor
+
     background = Qt.ItemDataRole.BackgroundRole if hasattr(Qt, "ItemDataRole") else Qt.BackgroundRole
     foreground = Qt.ItemDataRole.ForegroundRole if hasattr(Qt, "ItemDataRole") else Qt.ForegroundRole
     for label, stored, color in GAS_CHOICES:
@@ -80,6 +81,26 @@ def unit_future_connection(category, key):
          if stored == key),
         None,
     )
+
+
+def unit_connection_from_choice(category, key=None, label=None):
+    """Recover only an explicitly stored preset, including old label-only edits.
+
+    Current GEN values are not inputs here: unknown connections are never
+    rounded or promoted into a preset. Both display prefixes were emitted
+    by the editor for the same named choices in different Kader versions.
+    """
+    text = " ".join(str(label or "").split()).casefold()
+    for original, stored_key, doorlaat in UNIT_CHOICES.get(category, ()):
+        if key is not None and str(key) == stored_key:
+            return doorlaat
+        labels = (
+            original,
+            original.replace("Huidige aansluitwaarde:", "Toekomstige aansluitwaarde:"),
+        )
+        if text and any(text == " ".join(value.split()).casefold() for value in labels):
+            return doorlaat
+    return None
 
 
 def current_context(host):
@@ -143,3 +164,4 @@ def category_note(category, key, framework=None):
             return "Type 9: Grootverbruik LS (eigen richting >3x80A)"
         return "Type 8: Kleinzakelijk (niet-huishoudelijk t/m 3x80A)"
     return {"Oplaadpunt": "Type 10: Netbewust publiek laden", "Straatmeubilair": "Type 11: Straatmeubilair"}.get(category, "")
+

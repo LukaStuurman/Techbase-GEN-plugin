@@ -53,8 +53,7 @@ from .current_edit_metadata import current_choice
 from .current_inputs import connect_current_edits, set_current_values, has_manual_currents
 from .ui_theme import STYLE, apply_theme, install_dialog_theme
 from .current_presets import (
-    HOUSEHOLD_UNIT_CHOICES, fill_gas_combo, fill_unit_combo,
-    unit_currents, unit_description, unit_future_connection, category_note, current_context,
+    HOUSEHOLD_UNIT_CHOICES, unit_future_connection, current_context,
 )
 from .station_name_csv import (
     find_master_asset_id_column,
@@ -2010,14 +2009,14 @@ class LSNetontwerpDialog(QDialog):
         self.value_unit_combo = QComboBox()
         unit_form.addRow("Type wooneenheid", self.value_unit_combo)
         self.value_gas_combo = QComboBox()
-        fill_gas_combo(self.value_gas_combo)
+        ZeroCurrentPage.fill_gas_choices(self.value_gas_combo)
         self.value_gas_label = QLabel("Gasaansluiting")
         unit_form.addRow(self.value_gas_label, self.value_gas_combo)
         self.value_unit_note = QLabel()
         self.value_unit_note.setWordWrap(True)
         unit_form.addRow(self.value_unit_note)
         self.value_unit_combo.currentIndexChanged.connect(self._value_unit_changed)
-        self.value_gas_combo.currentIndexChanged.connect(self._value_unit_changed)
+        self.value_gas_combo.currentIndexChanged.connect(self._value_gas_changed)
         root.addWidget(self.value_unit_group)
 
         selection_group = QGroupBox("Kaartselectie")
@@ -2355,6 +2354,9 @@ class LSNetontwerpDialog(QDialog):
         )
         self.value_advanced_toggle.setChecked(False)
         layer = self._layer_from_combo(self.value_layer_combo)
+        previous = self.value_gas_combo.blockSignals(True)
+        self.value_gas_combo.setCurrentIndex(self.value_gas_combo.findData(None))
+        self.value_gas_combo.blockSignals(previous)
         self._value_category_changed()
         self._choose_value_category_from_selection(layer)
         self._refresh_value_selection_status(True)
@@ -2420,17 +2422,21 @@ class LSNetontwerpDialog(QDialog):
             if index >= 0:
                 self.value_housing_combo.setCurrentIndex(index)
         if category != "Huishoudelijk":
-            stored_unit = current_choice(layer, sample, "HerstelType").casefold()
-            index = next((i for i in range(self.value_unit_combo.count()) if self.value_unit_combo.itemText(i).casefold() == stored_unit), -1)
-            if index >= 0:
-                self.value_unit_combo.setCurrentIndex(index)
-            elif stored_unit:
-                self.value_unit_combo.setCurrentIndex(self.value_unit_combo.findData(None))
             if category == "Zakelijk":
-                module = current_context(self)[0]
-                gas_field = self._workflow_field_defaults().get("field_gas", "G_Type")
-                gas = module.normalize_gas(text_value(sample, gas_field))
-                self.value_gas_combo.setCurrentIndex(self.value_gas_combo.findData(gas))
+                # Read each stored future/current profile in the preview. Never
+                # copy the first selected connection's rating or gas to peers.
+                self.value_unit_combo.setCurrentIndex(
+                    self.value_unit_combo.findData(ZeroCurrentPage.KEEP_EXISTING_UNIT)
+                )
+                self.value_gas_combo.setCurrentIndex(self.value_gas_combo.findData(None))
+            else:
+                stored_key = current_choice(layer, sample, "HerstelKeuze")
+                index = self.value_unit_combo.findData(stored_key) if stored_key else -1
+                if index < 0:
+                    stored_unit = current_choice(layer, sample, "HerstelType").casefold()
+                    index = next((i for i in range(self.value_unit_combo.count()) if self.value_unit_combo.itemText(i).casefold() == stored_unit), -1)
+                if index >= 0:
+                    self.value_unit_combo.setCurrentIndex(index)
 
     def _value_matrix_current(self, key, fallback):
         items = self._workflow_field_defaults().get(key)
@@ -2468,7 +2474,7 @@ class LSNetontwerpDialog(QDialog):
         gas_relevant = category == "Zakelijk"
         self.value_gas_combo.setVisible(gas_relevant)
         self.value_gas_label.setVisible(gas_relevant)
-        fill_unit_combo(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
+        ZeroCurrentPage.fill_unit_choices(self.value_unit_combo, category, self._workflow_field_defaults().get('design_framework'))
         if category == "Straatmeubilair":
             trafo = self._value_matrix_current("matrix_straat", 5.8)
             cable = trafo
@@ -2518,33 +2524,38 @@ class LSNetontwerpDialog(QDialog):
         category = self.value_category_combo.currentData()
         key = self.value_unit_combo.currentData()
         self.value_manual_checkbox.setChecked(False)
-        self.value_unit_note.setText(
-            category_note(category, key, self._workflow_field_defaults().get("design_framework"))
-            + "\nDe stroomwaarden volgen de ingestelde tabellen en kunnen hieronder worden aangepast."
+        layer = self._layer_from_combo(self.value_layer_combo)
+        selected = list(layer.selectedFeatures()) if layer is not None else []
+        currents, note = ZeroCurrentPage.unit_preview(
+            current_context(self), selected, category, key,
+            self.value_gas_combo.currentData(), layer=layer,
         )
-        current_service = None
-        if category == "Zakelijk":
-            layer = self._layer_from_combo(self.value_layer_combo)
-            selected = list(layer.selectedFeatures()) if layer is not None else []
-            if selected:
-                field = self._workflow_field_defaults().get(
-                    "field_passthrough", "service_connection_type_type"
-                )
-                index = layer.fields().lookupField(field)
-                if index >= 0:
-                    current_service = str(selected[0][index] or "")
-        currents = unit_currents(
-            current_context(self), category, key,
-            self.value_gas_combo.currentData(), current_service=current_service,
-        )
+        self.value_unit_note.setText(note)
         if currents is not None:
             set_current_values(self._value_current_spins(), currents)
         elif category != "Huishoudelijk" and key is None:
             self.value_manual_checkbox.setChecked(True)
         self._update_value_highest_preview()
 
+    def _value_gas_changed(self, *_args):
+        if self.value_manual_checkbox.isChecked():
+            self.value_unit_note.setText(
+                "Je handmatige vier stroomwaarden blijven behouden. "
+                + ("Elke aansluiting behoudt haar eigen gaswaarde."
+                   if self.value_gas_combo.currentData() is None
+                   else "De gekozen gascategorie wordt voor de selectie opgeslagen.")
+            )
+            return
+        self._value_unit_changed()
+
     def _update_value_highest_preview(self, *_args):
         if not hasattr(self, "value_highest_preview"):
+            return
+        if self.value_category_combo.currentData() == "Zakelijk" and not self.value_manual_checkbox.isChecked():
+            self.value_highest_preview.setText(
+                "Automatisch per aansluiting: eigen gasbron en aparte trafo-/kabelberekening. "
+                "De velden tonen de maxima in de selectie; aansluitingen kunnen verschillende waarden krijgen."
+            )
             return
         if self.value_category_combo.currentData() == "Huishoudelijk" and not self.value_manual_checkbox.isChecked():
             self.value_highest_preview.setText(
@@ -2587,6 +2598,8 @@ class LSNetontwerpDialog(QDialog):
                 loaded.append(max(values) if values else 0.0)
             set_current_values(self._value_current_spins(), loaded)
             self.value_manual_checkbox.setChecked(all(has_manual_currents(feature, layer) for feature in selected))
+            if self.value_category_combo.currentData() == "Zakelijk" and not self.value_manual_checkbox.isChecked():
+                self._value_unit_changed()
             self._update_value_highest_preview()
         return bool(selected)
 
@@ -2709,6 +2722,9 @@ class LSNetontwerpDialog(QDialog):
         self.resize(920, 650)
 
     def show_zero_current_page(self, _checked=False, select_first=True, review_layer=None):
+        previous = self.zero_current_page.gas_combo.blockSignals(True)
+        self.zero_current_page.gas_combo.setCurrentIndex(self.zero_current_page.gas_combo.findData(None))
+        self.zero_current_page.gas_combo.blockSignals(previous)
         count = self.zero_current_page.refresh(select_first=select_first, review_layer=review_layer)
         self.page_stack.setCurrentWidget(self.zero_current_page)
         self.setWindowTitle("LS Netontwerp Wizard – nulwaarden herstellen")
@@ -3784,7 +3800,7 @@ class LSNetontwerpDialog(QDialog):
                     "generation_cable": self.value_generation_cable.value(),
                 },
                 house_type,
-                unit_name=unit_description(category, self.value_unit_combo.currentData()) if category != "Huishoudelijk" else None,
+                unit_name=self.value_unit_combo.currentText() if category != "Huishoudelijk" else None,
                 gas_category=(
                     self.value_gas_combo.currentData()
                     if category == "Zakelijk"
@@ -3803,6 +3819,7 @@ class LSNetontwerpDialog(QDialog):
                     and self._workflow_field_defaults().get("design_framework") == "2.0"
                     else None
                 ),
+                unit_key=self.value_unit_combo.currentData() if category != "Huishoudelijk" else None,
             )
         except Exception as exc:
             self._value_progress_update(0, f"Wijziging mislukt: {exc}")
