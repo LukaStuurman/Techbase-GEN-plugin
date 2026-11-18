@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import math
 
-from qgis.PyQt.QtCore import Qt, QVariant
+from qgis.PyQt.QtCore import QSettings, QTimer, Qt, QVariant
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -69,11 +74,23 @@ class ZeroCurrentPage(QWidget):
         self.host = host
         self.layer = None
         self._changing_selection = False
+        self._splitter_restored = False
+        self._layout_settings = getattr(host, "settings", None) or QSettings()
+        self._splitter_key = (
+            getattr(host, "SETTINGS_PREFIX", "LSNetontwerpWizard/")
+            + "zero_current_splitter"
+        )
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 8)
+        root.setContentsMargins(12, 8, 12, 10)
+        # This page already has a fixed header/footer and a scrollable editor.
+        # Keep dashboard normalization from wrapping the splitter in a second
+        # scroll area, which would prevent it from filling the window.
+        self.setProperty("uiStructured", True)
+        self.setProperty("uiFooter", True)
+        self.setProperty("uiRole", "page")
         self.home_button = self.host._add_subpage_header(
             root,
             "Ontwerpstroom nulwaarden herstellen",
@@ -81,7 +98,7 @@ class ZeroCurrentPage(QWidget):
         )
         self.host.zero_current_home_button = self.home_button
 
-        note = QLabel(
+        instructions = (
             "De lijst toont aansluitingen met een ontbrekende of nulwaarde in "
             "<b>Hoogste Trafo</b> en verblijfsobjecten met andere gebruiksdoelen "
             "die je nog moet beoordelen. Selecteer één of meerdere aansluitingen, "
@@ -91,8 +108,25 @@ class ZeroCurrentPage(QWidget):
             "trafo- en kabelopwek apart instellen. Alle zes ontwerpstroomvelden "
             "worden opgeslagen; de hoogste waarden worden uit verbruik en opwek berekend."
         )
+        note = QLabel(
+            "Selecteer aansluitingen met Ctrl of Shift en kies hieronder de juiste categorie. "
+            "<b>Sleep de balk onder de lijst</b> om de tabel groter of kleiner te maken."
+        )
         note.setWordWrap(True)
+        note.setToolTip(instructions)
         root.addWidget(note)
+
+        orientation = Qt.Orientation.Vertical if hasattr(Qt, "Orientation") else Qt.Vertical
+        self.splitter = QSplitter(orientation)
+        self.splitter.setObjectName("zeroCurrentSplitter")
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(12)
+        self.splitter.setStyleSheet(
+            "QSplitter#zeroCurrentSplitter::handle:vertical {"
+            "background: #CBD5E1; margin: 2px 8px; border-radius: 3px;}"
+            "QSplitter#zeroCurrentSplitter::handle:vertical:hover {background: #F59E0B;}"
+        )
+        root.addWidget(self.splitter, 1)
 
         selection_group = QGroupBox("Aansluitingen zonder ontwerpstroom")
         selection_layout = QVBoxLayout(selection_group)
@@ -110,6 +144,9 @@ class ZeroCurrentPage(QWidget):
         selection_layout.addLayout(selection_top)
 
         self.table = QTableWidget(0, 13)
+        expanding = QSizePolicy.Policy.Expanding if hasattr(QSizePolicy, "Policy") else QSizePolicy.Expanding
+        self.table.setSizePolicy(expanding, expanding)
+        self.table.setMinimumHeight(140)
         self.table.setHorizontalHeaderLabels(
             (
                 "FID",
@@ -155,7 +192,27 @@ class ZeroCurrentPage(QWidget):
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(lambda _row, _column: self.zoom_to_selection())
         selection_layout.addWidget(self.table, 1)
-        root.addWidget(selection_group, 3)
+        selection_group.setMinimumHeight(200)
+        self.splitter.addWidget(selection_group)
+
+        self.editor_scroll = QScrollArea()
+        self.editor_scroll.setWidgetResizable(True)
+        self.editor_scroll.setMinimumHeight(140)
+        no_frame = QFrame.Shape.NoFrame if hasattr(QFrame, "Shape") else QFrame.NoFrame
+        self.editor_scroll.setFrameShape(no_frame)
+        editor = QWidget()
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(0, 0, 8, 0)
+        constraints = QLayout.SizeConstraint if hasattr(QLayout, "SizeConstraint") else QLayout
+        editor_layout.setSizeConstraint(constraints.SetMinimumSize)
+        self.editor_scroll.setWidget(editor)
+        self.splitter.addWidget(self.editor_scroll)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.handle(1).setToolTip(
+            "Sleep omhoog of omlaag om de hoogte van de aansluitingenlijst aan te passen."
+        )
+        self.splitter.splitterMoved.connect(self._save_splitter_layout)
 
         category_group = QGroupBox("Categorie en ontwerpstroom")
         category_form = QFormLayout(category_group)
@@ -205,8 +262,8 @@ class ZeroCurrentPage(QWidget):
         unit_form.addRow(self.unit_note)
         self.unit_combo.currentIndexChanged.connect(self._unit_changed)
         self.gas_combo.currentIndexChanged.connect(self._unit_changed)
-        root.addWidget(category_group)
-        root.addWidget(self.unit_group)
+        editor_layout.addWidget(category_group)
+        editor_layout.addWidget(self.unit_group)
 
         self.current_values_group = QGroupBox("Verbruik en opwek")
         current_form = QFormLayout(self.current_values_group)
@@ -229,14 +286,18 @@ class ZeroCurrentPage(QWidget):
         )
         self.current_values_note.setWordWrap(True)
         current_form.addRow("", self.current_values_note)
-        root.addWidget(self.current_values_group)
+        editor_layout.addWidget(self.current_values_group)
+        editor_layout.addStretch(1)
         connect_current_edits(self._current_spins(), self.manual_checkbox)
 
         self.status_label = QLabel("Selecteer een of meer regels om te herstellen.")
         self.status_label.setWordWrap(True)
         root.addWidget(self.status_label)
 
-        buttons = QHBoxLayout()
+        footer = QWidget()
+        footer.setProperty("uiRole", "footer")
+        buttons = QHBoxLayout(footer)
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.addStretch(1)
         self.apply_button = QPushButton("Categorie en ontwerpstroom opslaan")
         self.apply_button.clicked.connect(self.apply_category)
@@ -245,8 +306,34 @@ class ZeroCurrentPage(QWidget):
         close_button.setObjectName("secondaryButton")
         close_button.clicked.connect(self.host.close)
         buttons.addWidget(close_button)
-        root.addLayout(buttons)
+        root.addWidget(footer)
         self._category_changed()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._splitter_restored:
+            # Restore only after the host has assigned this page its final size.
+            QTimer.singleShot(0, self._restore_splitter_layout)
+
+    def _restore_splitter_layout(self):
+        if self._splitter_restored:
+            return
+        state = self._layout_settings.value(self._splitter_key)
+        restored = False
+        if state is not None:
+            try:
+                restored = self.splitter.restoreState(state)
+            except (TypeError, ValueError):
+                pass
+        if not restored:
+            self.splitter.setSizes([640, 260])
+        self._splitter_restored = True
+
+    def _save_splitter_layout(self, _position, _index):
+        if self._splitter_restored:
+            self._layout_settings.setValue(
+                self._splitter_key, self.splitter.saveState()
+            )
 
     @staticmethod
     def _current_spin():
@@ -1002,3 +1089,4 @@ class ZeroCurrentPage(QWidget):
             f"{count} aansluiting(en) opgeslagen als {self.category_combo.currentText()}. "
             f"Nog {remaining} aansluiting(en) zonder ontwerpstroom of nog te beoordelen."
         )
+

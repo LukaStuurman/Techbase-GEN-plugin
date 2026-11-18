@@ -2712,7 +2712,14 @@ class LSNetontwerpDialog(QDialog):
         count = self.zero_current_page.refresh(select_first=select_first, review_layer=review_layer)
         self.page_stack.setCurrentWidget(self.zero_current_page)
         self.setWindowTitle("LS Netontwerp Wizard – nulwaarden herstellen")
-        self.resize(1120, 720)
+        width = max(self.width(), 1280)
+        height = max(self.height(), 900)
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, available.width())
+            height = min(height, max(self.minimumHeight(), available.height() - 40))
+        self.resize(width, height)
         if count == 0:
             self.zero_current_page.status_label.setText(
                 "Er zijn geen aansluitingen met een ontbrekende of nulwaarde in "
@@ -4297,3 +4304,4 @@ class LSNetontwerpDialog(QDialog):
             if not hasattr(self,'_repair_drawing'):self._repair_drawing=RepairDrawing(self)
             getattr(self._repair_drawing,action)()
         except Exception as exc:self.clustering_issue_label.setText(str(exc))
+
