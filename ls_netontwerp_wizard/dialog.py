@@ -3482,8 +3482,22 @@ class LSNetontwerpDialog(QDialog):
                 values[key] = widget.value()
         if not values["plan"]:
             values["only_plan"] = False
+        from .design_rate_profiles import K20_OPTIONS, normalized_framework
+        current_framework = normalized_framework(values["design_framework"])
+        profiles = self._all_rate_profiles()
+        # The selected framework is always the authoritative top-level input
+        # consumed by the QGIS processing algorithm and later review dialogs.
+        for key, flat in profiles[current_framework].items():
+            values[key] = list(flat)
+        if current_framework == "2.0":
+            # The 3.2-style amp conversion above 80A is separately editable in 2.0.
+            values["matrix_amp"] = list(profiles["2.0"]["k20_amp_supplement"])
+            for key in K20_OPTIONS:
+                values[key] = list(profiles["2.0"][key])
+        values["matrix_straat_kader31"] = list(profiles["3.2"]["matrix_straat"])
         if values["design_framework"] in ("3.1", "3.2"):
-            values["matrix_straat"] = list(values["matrix_straat_kader31"])
+            values["matrix_straat"] = list(profiles["3.2"]["matrix_straat"])
+        values["framework_profiles"] = profiles
         return values
 
     def _restore_settings(self):
@@ -3495,11 +3509,22 @@ class LSNetontwerpDialog(QDialog):
             in ("true", "1")
         )
         self.output_edit.setText(self.settings.value(self.SETTINGS_PREFIX + "output", ""))
+        profiles_text = self.settings.value(
+            self.SETTINGS_PREFIX + "framework_profiles_v1", ""
+        )
+        if profiles_text:
+            try:
+                self._load_rate_profiles(json.loads(str(profiles_text)))
+            except (ValueError, TypeError):
+                self._rate_status.setText(
+                    "De eerder opgeslagen kadertabellen zijn niet leesbaar; originele waarden geladen."
+                )
         framework = str(
             self.settings.value(self.SETTINGS_PREFIX + "design_framework", "3.0")
         )
         index = self.framework_combo.findData("3.2" if framework == "3.1" else framework)
         self.framework_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._show_framework_rate_tables()
 
     def _save_settings(self, values):
         for key in ("xml", "excel", "plan", "output"):
@@ -3509,6 +3534,11 @@ class LSNetontwerpDialog(QDialog):
         self.settings.setValue(
             self.SETTINGS_PREFIX + "design_framework",
             str(values.get("design_framework", "3.0")),
+        )
+        self.settings.setValue(
+            self.SETTINGS_PREFIX + "framework_profiles_v1",
+            json.dumps(values.get("framework_profiles") or self._all_rate_profiles(),
+                       ensure_ascii=False),
         )
 
     def _restore_prepared_state(self):
@@ -3530,10 +3560,29 @@ class LSNetontwerpDialog(QDialog):
         ):
             return
         self.prepared_state = state
-        restored_framework = str(state["values"].get("design_framework", "3.0"))
-        restored_index = self.framework_combo.findData("3.2" if restored_framework == "3.1" else restored_framework)
+        from .design_rate_profiles import normalized_framework
+        restored_framework = normalized_framework(
+            state["values"].get("design_framework", "3.0")
+        )
+        stored_profiles = state["values"].get("framework_profiles")
+        if isinstance(stored_profiles, dict):
+            self._load_rate_profiles(stored_profiles)
+        else:
+            # Upgrade an existing 1.33.x project with single, flat matrices:
+            # the original project's selected framework keeps its own edits.
+            legacy = {}
+            for key in self._rate_tables[restored_framework]:
+                current = state["values"].get(key)
+                if key == "k20_amp_supplement" and current is None:
+                    current = state["values"].get("matrix_amp")
+                if isinstance(current, list):
+                    legacy[key] = current
+            if legacy:
+                self._load_rate_profiles({restored_framework: legacy})
+        restored_index = self.framework_combo.findData(restored_framework)
         if restored_index >= 0:
             self.framework_combo.setCurrentIndex(restored_index)
+        self._show_framework_rate_tables()
         self.plan_edit.setText(str(state["values"].get("plan", "")))
         self.no_plan.setChecked(not bool(state.get("plan_gpkg")))
         from .clustering_options import CLUSTER_KEYS
