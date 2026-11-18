@@ -66,6 +66,8 @@ def _workflow_values():
 
 
 def _configurations(values, module):
+    from ls_netontwerp_wizard.design_rate_profiles import parse_k20_rates
+    k20_rates = parse_k20_rates(values)
     def raw(key, default_name):
         configured = values.get(key)
         return list(configured) if configured else list(getattr(module, default_name))
@@ -183,6 +185,7 @@ def _configurations(values, module):
         zero_ids = [4, 8, 9]
     common = {
         "FRAMEWORK_VERSION": str(values.get("design_framework", "3.0")),
+        "K20_TABLES": k20_rates,
         "NET_LEVEL": "trafo",
         "WOONHUIS": woon,
         "WOONHUIS_2022": woon_2022,
