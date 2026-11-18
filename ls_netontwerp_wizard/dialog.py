@@ -422,6 +422,9 @@ class LSNetontwerpDialog(QDialog):
             "Kader 2.0 onderscheidt verwarmingssystemen; zonder expliciet "
             "Kader20Type is bouwjaar slechts een aanname. Zakelijk gebruikt een "
             "ingevulde toekomstige waarde, anders een ondersteunde huidige aansluiting. "
+            "Ontbrekende driefasewaarden boven 3x80 A worden aangevuld met Kader 3.2. "
+            "Straatmeubilair met een bekende eenfaseaansluiting gebruikt het laagste profiel (5,8 A); "
+            "3x35 A gebruikt het profiel 3x40–50 A (22 A). "
             "Overige aansluitwaarden en onbekende gasbronnen moeten worden gecontroleerd."
         )
         right_form.addRow("Ontwerpstroomkader", self.framework_combo)

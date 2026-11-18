@@ -135,17 +135,20 @@ def clean_text(s):
 
 def parse_doorlaat(s):
     if not s: return (0, 0.0)
-    s_lower = s.lower()
-    
-    m = re.search(r"^\s*(\d)\s*[x×]\s*(\d{1,3})", s_lower)
-    if m: return (int(m.group(1)), float(m.group(2)))
-    
-    m = re.search(r"(\d)\s*fase.*?(\d{1,3})", s_lower)
-    if m: return (int(m.group(1)), float(m.group(2)))
-    
-    m = re.search(r"(\d{1,3})\s*a\b", s_lower)
-    if m: return (3, float(m.group(1)))
-    
+    s_lower = str(s).lower()
+    # Read the complete rating: 3x1000 A must never become 3x100 A.
+    # A decimal separator is retained as well, not silently truncated.
+    rating = r"(\d+(?:[.,]\d+)?)"
+
+    m = re.search(r"^\s*(\d)\s*[x×]\s*" + rating, s_lower)
+    if m: return (int(m.group(1)), float(m.group(2).replace(",", ".")))
+
+    m = re.search(r"(\d)\s*fase.*?" + rating, s_lower)
+    if m: return (int(m.group(1)), float(m.group(2).replace(",", ".")))
+
+    m = re.search(rating + r"\s*a\b", s_lower)
+    if m: return (3, float(m.group(1).replace(",", ".")))
+
     return (0, 0.0)
 
 def normalize_gas(gas_str):
@@ -220,6 +223,9 @@ def parse_bouwjaar(val):
 
 def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
+        amp_fallback = lambda nominal: amp_to_ontwerp(
+            nominal, config.get("AMP_GLOBAL", [])
+        )
         if (
             is_bag_object(doorlaat)
             and has_residential_usage(gebruiksdoel)
@@ -234,7 +240,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
         future = kader20_future
         if category not in (1, 4, 8, 9):
             future, _basis_origin = kader_20.business_future_basis(
-                current_phases, current_amp, future
+                current_phases, current_amp, future, amp_fallback=amp_fallback
             )
             if not future:
                 if feedback is not None:
@@ -254,6 +260,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
+            amp_fallback=amp_fallback,
         )
         if warning and feedback is not None:
             feedback.pushWarning(
@@ -397,6 +404,9 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
 
 def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
+        amp_fallback = lambda nominal: amp_to_ontwerp(
+            nominal, config.get("AMP_GLOBAL", [])
+        )
         if (
             is_bag_object(doorlaat)
             and has_residential_usage(gebruiksdoel)
@@ -411,7 +421,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
         future = kader20_future
         if category not in (1, 4, 8, 9):
             future, _basis_origin = kader_20.business_future_basis(
-                current_phases, current_amp, future
+                current_phases, current_amp, future, amp_fallback=amp_fallback
             )
             if not future:
                 return 0.0
@@ -425,6 +435,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
+            amp_fallback=amp_fallback,
         )
         return float(value)
     if is_bag_object(doorlaat):
@@ -819,6 +830,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         automatic_minimum_business_count = 0
         automatic_current_business_count = 0
         automatic_current_unknown_gas_count = 0
+        kader20_amp_conversion = lambda nominal: amp_to_ontwerp(nominal, cfg_amp)
         
         req_panden = QgsFeatureRequest()
         req_panden.setSubsetOfAttributes([name_woning, name_bouwjaar], source_panden.fields())
@@ -957,7 +969,8 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                         # supported current service is a usable calculation
                         # basis, without becoming a planned future connection.
                         future_connection, business_basis_origin = kader_20.business_future_basis(
-                            current_phases, current_amp, future_connection
+                            current_phases, current_amp, future_connection,
+                            amp_fallback=kader20_amp_conversion,
                         )
                         if business_basis_origin == "minimum":
                             minimum_business_assigned = True
@@ -1021,6 +1034,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                             gas_category=normalize_gas(val_gas),
                             current_phases=current_phases,
                             current_amp=current_amp,
+                            amp_fallback=kader20_amp_conversion,
                         )
                         if minimum_business_assigned:
                             kader_type += " (automatisch kleinzakelijk min. 3x25A)"

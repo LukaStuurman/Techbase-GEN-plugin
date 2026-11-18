@@ -327,15 +327,24 @@ class GasRepairTests(unittest.TestCase):
         layer = Layer([fixture(service="3 x 25 A", gas="G10", future="3 x 160 A"),
                        fixture(service="3 x 63 A", gas="G10", future="3 x 25 A"),
                        fixture(service="3 x 63 A", gas="G10", future="3 x 160 A"),
-                       fixture(service="3 x 63 A", gas="G10", future="3 x 125 A")])
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 95 A"),
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 125 A"),
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 315 A"),
+                       fixture(service="3 x 25 A", gas="G4", future="3 x 63 A"),
+                       fixture(service="3 x 63 A", gas="G10", future="3 x 45 A")])
         self.repair(layer, gas_category=None, future_connection=None)
-        self.assertEqual([component_values(f) for f in layer.getFeatures()], [
+        expected = [
             (138.,138.,138.,138.), (138.,65.,138.,65.),
-            (138.,138.,138.,138.), (0.,0.,0.,0.),
-        ])
-        # An explicitly unsupported future is not replaced by the supported
-        # actual 63 A connection or by a positive gas recommendation.
-        self.assertEqual(layer.getFeature(4)["Kader20ToekomstigeAansluitwaarde"], "3 x 125 A")
+            (138.,138.,138.,138.), (138.,85.,138.,85.),
+            (138.,106.,138.,106.), (267.8,267.8,267.8,267.8),
+            (65.,65.,65.,65.), (0.,0.,0.,0.),
+        ]
+        self.assertEqual([component_values(f) for f in layer.getFeatures()], expected)
+        first = self.process(layer)
+        self.assertEqual([component_values(f) for f in first.getFeatures()], expected)
+        # Below/equal to 80 A only supported 2.0 rows apply. A future 45 A
+        # gap is not replaced by the current 63 A supply or by gas advice.
+        self.assertEqual(layer.getFeature(8)["Kader20ToekomstigeAansluitwaarde"], "3 x 45 A")
 
     def test_explicit_gas_override_changes_only_selected_sources(self):
         layer = Layer([fixture(gas=gas) for gas in ("G4", "G10", "G16")])
@@ -367,7 +376,12 @@ class GasRepairTests(unittest.TestCase):
             ("3 x 80 A", "G4", (65.,65.,65.,65.)),
             ("3 x 160 A", "G16", (210.,210.,210.,210.)),
             ("3 x 250 A", "G4", (210.,210.,210.,210.)),
-            ("3 x 125 A", "G4", (0.,0.,0.,0.)),
+            ("3 x 95 A", "G4", (85.,85.,85.,85.)),
+            ("3 x 125 A", "G4", (106.,106.,106.,106.)),
+            ("3 x 315 A", "G4", (267.8,267.8,267.8,267.8)),
+            ("3 x 1000 A", "G4", (850.,850.,850.,850.)),
+            ("3 x 45 A", "G4", (0.,0.,0.,0.)),
+            ("3 x 60 A", "G4", (0.,0.,0.,0.)),
         )
         layer = Layer([fixture(service=service, gas=gas, future=None) for service, gas, _ in rows])
         self.repair(layer, gas_category=None, future_connection=None)
@@ -383,6 +397,81 @@ class GasRepairTests(unittest.TestCase):
                        for service in ("1 x 25 A", "3 x 20 A", "3 x 25 A")])
         self.repair(small, gas_category=None, future_connection=None)
         self.assertEqual([component_values(f) for f in small.getFeatures()], [(8.7,8.7,8.7,8.7)]*3)
+
+    def test_amp_conversion_boundaries_and_full_connection_parser(self):
+        for text, expected in (
+            ("3x999A", (3,999.)), ("3x1000A", (3,1000.)),
+            ("3 × 1000 A", (3,1000.)), ("3 fase 1000 A", (3,1000.)),
+            ("1000 A", (3,1000.)), ("3x80.1A", (3,80.1)),
+            ("3 fase 100,1 A", (3,100.1)), ("Onbekend", (0,0.)),
+        ):
+            with self.subTest(connection=text):
+                self.assertEqual(self.calc.parse_doorlaat(text), expected)
+        boundaries = (
+            (80,65.), (80.1,85.), (100,85.), (100.1,106.),
+            (125,106.), (125.1,138.), (160,138.), (160.1,210.),
+            (250,210.), (251,213.3), (315,267.8), (1000,850.),
+        )
+        layer = Layer([fixture(service=f"3 x {amps:g} A", future=None) for amps, _ in boundaries])
+        first = self.process(layer)
+        self.assertEqual([component_values(f) for f in first.getFeatures()],
+                         [(current,)*4 for _, current in boundaries])
+
+    def test_large_business_fallback_uses_the_active_conversion_matrix(self):
+        context = list(self.context("2.0"))
+        for index, expected in ((2,90.), (3,92.)):
+            config = dict(context[index])
+            config["AMP_GLOBAL"] = [dict(row) for row in config["AMP_GLOBAL"]]
+            for row in config["AMP_GLOBAL"]:
+                if row["min"] == 80 and row["max"] == 100:
+                    row["fix"] = expected
+            context[index] = config
+        page = self.page("2.0")
+        page._household_context = lambda: tuple(context)
+        layer = Layer([fixture(service="3 x 95 A", future=None)])
+        page.apply_values_to_layer(layer, [1], "Zakelijk", dict(zip(CURRENT_KEYS,(0.,)*4)),
+                                   gas_category=None, future_connection=None)
+        self.assertEqual(component_values(layer.getFeature(1)), (90.,92.,90.,92.))
+        self.assertIn(layer.getFeature(1)["Kader20ToekomstigeAansluitwaarde"], (None,""))
+
+    def test_street_and_charging_extensions_keep_profile_and_source_values(self):
+        cases = [
+            ("straatmeubilair", "1 x 6 A", 5.8),
+            ("straatmeubilair", "1 x 10 A", 5.8),
+            ("straatmeubilair", "1 x 25 A", 5.8),
+            ("straatmeubilair", "1 x 35 A", 5.8),
+            ("straatmeubilair", "1 x 125 A", 5.8),
+            ("straatmeubilair", "3 x 35 A", 22.),
+            ("straatmeubilair", "3 x 40 A", 22.),
+            ("straatmeubilair", "3 x 80 A", 36.),
+            ("straatmeubilair", "3 x 55 A", 0.),
+            ("straatmeubilair", "3 x 35.1 A", 0.),
+            ("straatmeubilair", "1 x 0 A", 0.),
+            ("straatmeubilair", "Onbekend", 0.),
+            ("straatmeubilair", None, 0.),
+            ("oplaadpunt", "3 x 55 A", 0.),
+        ]
+        for category in ("straatmeubilair", "oplaadpunt"):
+            cases.extend((category, service, current) for service, current in
+                         (("3 x 95 A",85.), ("3 x 125 A",106.), ("3 x 315 A",267.8)))
+        # G40 would force business gas advice upward. These profiles must
+        # keep their consumption conversion, zero generation and category.
+        layer = Layer([fixture(service=service, gas="G40", future=None,
+                               Gebruiksdoel=category) for category, service, _ in cases])
+        first = self.process(layer)
+        second = self.process(first)
+        for result in (first, second):
+            for feature, (category, service, expected) in zip(result.getFeatures(), cases):
+                self.assertEqual(component_values(feature), (expected,expected,0.,0.), (category,service))
+                self.assertEqual(feature["Gebruiksdoel"], category)
+                self.assertEqual(feature["service_connection_type_type"], service)
+                self.assertEqual(feature["G_Type"], "G40")
+                self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+        page = self.page("2.0")
+        for key, expected in (("straat6",5.8), ("straat10",5.8), ("straat25",5.8),
+                              ("straat35",22.), ("straat40_50",22.)):
+            preview, _ = page.unit_preview(self.context("2.0"), [], "Straatmeubilair", key)
+            self.assertEqual(preview, (expected,expected,0.,0.))
 
     def test_automatic_current_basis_follows_changed_source_connection(self):
         layer = Layer([fixture(service="3 x 50 A", gas="G4", future=None)])

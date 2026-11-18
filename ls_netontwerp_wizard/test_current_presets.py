@@ -48,7 +48,13 @@ def main():
             actual = unit_currents(context, "Zakelijk", key, gas)
             assert actual == (expected_trafo[row][gas_index], expected_cable[row][gas_index],
                               expected_trafo[row][gas_index], expected_cable[row][gas_index]), (key, gas, actual)
-    for (_, key, _), expected in zip(UNIT_CHOICES["Straatmeubilair"], (4.3, 8.7, 5.8, 22, 36)):
+    expected_street = {
+        "straat6": 4.3, "straat10": 8.7, "straat25": 5.8,
+        "straat35": 5.8, "straat40_50": 22, "straat63_80": 36,
+    }
+    assert {key for _, key, _ in UNIT_CHOICES["Straatmeubilair"]} == set(expected_street)
+    for _, key, _ in UNIT_CHOICES["Straatmeubilair"]:
+        expected = expected_street[key]
         assert unit_currents(context, "Straatmeubilair", key) == (expected, expected, 0, 0)
     assert unit_currents(context, "Oplaadpunt", "laad25") == (3.7, 4.8, 0, 0)
     assert unit_currents(context, "Zakelijk", None) is None
@@ -145,7 +151,7 @@ def main():
         dialog.show()
         app.processEvents()
         assert dialog.grab().save(sys.argv[sys.argv.index("--preview") + 1])
-    print("CURRENT_PRESETS_TEST_OK (30 business/gas pairs, 5 street choices, charging, UI, persistence)", flush=True)
+    print("CURRENT_PRESETS_TEST_OK (30 business/gas pairs, 6 street choices, charging, UI, persistence)", flush=True)
     os._exit(0)
 
 

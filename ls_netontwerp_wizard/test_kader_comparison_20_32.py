@@ -147,7 +147,7 @@ def test():
     assert generation("3 x 25 A","bedrijf","",">G25",[],config20,210,True,
                       2015,None,"3 x 160 A") == 210.
     assert consumption("3 x 25 A","bedrijf","",2015,"G4",config20,1,None,True,
-                       True,None,"3 x 100 A") == 0
+                       True,None,"3 x 100 A") == 85.
     config20_kabel = dict(config20, NET_LEVEL="kabel")
     charge_value = consumption("3 x 25 A","oplaadpunt","",2015,"G4",config20_kabel,
                                1,None,True)
@@ -177,7 +177,7 @@ def test():
                config20, config20_kabel, [], [])
     assert preset(context, "Zakelijk", "160") == (138., 138., 138., 138.)
     assert preset(context, "Zakelijk", "250") == (210., 210., 210., 210.)
-    assert preset(context, "Zakelijk", "100") == (0., 0., 0., 0.)
+    assert preset(context, "Zakelijk", "100") == (85., 85., 85., 85.)
     assert preset(context, "Oplaadpunt", "laad25") == (5.8, 6.7, 0., 0.)
     assert preset(context, "Zakelijk", "lt35", "G10-G25",
                   current_service="3 x 63 A") == (138., 65., 138., 65.)

@@ -676,6 +676,7 @@ class ZeroCurrentPage(QWidget):
             phases, amps = module.parse_doorlaat(current_service)
             chosen_future, basis_provenance = module.kader_20.business_future_basis(
                 phases, amps, explicit_future=explicit_future,
+                amp_fallback=lambda amp: module.amp_to_ontwerp(amp, standard["AMP_GLOBAL"]),
             )
             kwargs["kader20_future"] = chosen_future
         elif preset:
@@ -708,6 +709,27 @@ class ZeroCurrentPage(QWidget):
         return business_choice_connection(
             current_choice_values(layer, feature), framework,
         )
+
+    @staticmethod
+    def _business_description(context, basis, actual_gas, current_service, provenance):
+        """Describe the same configured transformer calculation as the preview."""
+        module, _values, standard, _cable, _opwek, _opwek_cable = context
+        current_phases, current_amp = module.parse_doorlaat(current_service)
+        phases, amps = module.parse_doorlaat(basis)
+        _value, description, _warning = module.kader_20.current(
+            "trafo", 10, "", 0, phases, amps,
+            gas_category=module.normalize_gas(actual_gas),
+            current_phases=current_phases, current_amp=current_amp,
+            amp_fallback=lambda amp: module.amp_to_ontwerp(amp, standard["AMP_GLOBAL"]),
+        )
+        if provenance == "current":
+            description = description.replace("toekomstige aansluitwaarde", "huidige aansluitwaarde als automatische basis")
+            description += " (toekomstige waarde niet opgegeven)"
+        elif provenance == "minimum":
+            description += " (automatisch kleinzakelijk min. 3x25A)"
+        if str(actual_gas).strip().casefold() in ("", "onbekend", "null", "none", "nvt", "n.v.t.", "n/a"):
+            description += " (gasbron onbekend; standaardgroep toegepast, controleren)"
+        return description
 
     @staticmethod
     def unit_preview(context, features, category, key, gas_category=None, layer=None):
@@ -744,6 +766,10 @@ class ZeroCurrentPage(QWidget):
                     notes.append(f"Bij {unsupported} aansluiting(en) heeft de gekozen toekomstige waarde geen vaste kaderwaarde; bepaal een passende toekomstwaarde of vul de stromen handmatig in.")
             else:
                 notes.append(category_note(category, key, "2.0"))
+            if any("aanvulling Kader 3.2" in ZeroCurrentPage._business_description(
+                context, result[1], result[2], result[3], result[4]
+            ) for result in calculated):
+                notes.append("Ontbrekende 2.0-waarden boven 3x80 A worden hier aangevuld met de staffels/formule van Kader 3.2; het aparte gasadvies blijft gelden.")
         elif calculated:
             services = sorted({str(result[3]) or "Onbekend" for result in calculated})
             notes.append("Aansluitwaarde(n) voor berekening: " + ", ".join(services) + ".")
@@ -1012,7 +1038,7 @@ class ZeroCurrentPage(QWidget):
             self._household_context()
             if not manual_override and (
                 category == "Huishoudelijk"
-                or category == "Zakelijk"
+                or category in ("Zakelijk", "Oplaadpunt", "Straatmeubilair")
             ) else None
         )
         selected_ids = {int(feature_id) for feature_id in feature_ids}
@@ -1090,26 +1116,10 @@ class ZeroCurrentPage(QWidget):
                     if manual_override:
                         attributes[type_index20] = "Kader 2.0 Type 6/7 - handmatig ingevoerd"
                     else:
-                        current_phases, current_amp = module.parse_doorlaat(
-                            current_service
+                        attributes[type_index20] = self._business_description(
+                            household_context, chosen_future, actual_gas,
+                            current_service, basis_provenance,
                         )
-                        future_phases, future_amp = module.parse_doorlaat(
-                            chosen_future
-                        )
-                        _value, description, _warning = module.kader_20.current(
-                            "trafo", 10, "", 0, future_phases, future_amp,
-                            gas_category=module.normalize_gas(actual_gas),
-                            current_phases=current_phases,
-                            current_amp=current_amp,
-                        )
-                        if basis_provenance == "current":
-                            description = description.replace("toekomstige aansluitwaarde", "huidige aansluitwaarde als automatische basis")
-                            description += " (toekomstige waarde niet opgegeven)"
-                        elif basis_provenance == "minimum":
-                            description += " (automatisch kleinzakelijk min. 3x25A)"
-                        if str(actual_gas).strip().casefold() in ("", "onbekend", "null", "none", "nvt", "n.v.t.", "n/a"):
-                            description += " (gasbron onbekend; standaardgroep toegepast, controleren)"
-                        attributes[type_index20] = description
                 if type_index20 >= 0 and category == "Huishoudelijk":
                     if manual_override:
                         attributes[type_index20] = "Kader 2.0 - handmatig ingevoerd"
@@ -1131,6 +1141,18 @@ class ZeroCurrentPage(QWidget):
                             == "appartement" else 1,
                             house_type, effective_year, 3, 25,
                             explicit_type=explicit,
+                        )
+                        attributes[type_index20] = label
+                if type_index20 >= 0 and category in ("Oplaadpunt", "Straatmeubilair"):
+                    number = 8 if category == "Oplaadpunt" else 9
+                    if manual_override:
+                        attributes[type_index20] = f"Kader 2.0 Type {number} - handmatig ingevoerd"
+                    elif selected_connection:
+                        unit_module, _unit_values, standard, _cable, _opwek, _opwek_cable = household_context
+                        phases, amps = unit_module.parse_doorlaat(selected_connection)
+                        _value, label, _warning = unit_module.kader_20.current(
+                            "trafo", number, "", 0, phases, amps,
+                            amp_fallback=lambda amp: unit_module.amp_to_ontwerp(amp, standard["AMP_GLOBAL"]),
                         )
                         attributes[type_index20] = label
             else:

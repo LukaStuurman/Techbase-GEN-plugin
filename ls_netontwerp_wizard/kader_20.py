@@ -7,8 +7,11 @@ Ontwerpstroom_stijgleiding B5:C17 and Versie beheer B4.
 IMPORTANT: Type 1-4 describes *heating system*, not merely building age.
 When no Kader20Type column is available the familiar 2022 build-year split
 is only a planning assumption. This is reported as an inferred profile.
-Undefined 'overig' connection values and Type 5 heating surcharges must be
-provided separately; no 3.0/3.1 tariff is silently substituted.
+By explicit user choice, missing three-phase ratings above 80 A can use
+the caller's active 3.x ampere conversion, marked as a 3.2 supplement.
+Known one-phase street furniture uses the lowest street profile; 3x35 A
+uses the 3x40-50 A street profile by explicit user choice.
+Other undefined values and Type 5 heating surcharges need separate input.
 """
 
 from __future__ import annotations
@@ -161,13 +164,28 @@ def default_small_business_future(phases, amp):
     ) else None
 
 
-def business_future_basis(phases, amp, explicit_future=None):
+def _heavy_amp_fallback(phases, amp, amp_fallback):
+    """Use the active 3.x conversion only for three-phase supplies above 80 A."""
+    if phases != 3 or amp_fallback is None:
+        return None
+    try:
+        nominal = float(amp)
+        if not math.isfinite(nominal) or nominal <= 80:
+            return None
+        value = float(amp_fallback(nominal))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def business_future_basis(phases, amp, explicit_future=None, amp_fallback=None):
     """Resolve a business calculation basis and its provenance.
 
     An explicitly chosen future service always wins, even when its tariff
     is undefined. Otherwise keep the established small-business minimum,
-    then use an existing supported current service. A current-service basis
-    is not a planned future connection and must not be saved as one.
+    then use a supported current service, including the requested 3.x
+    supplement above 3x80 A. A current-service basis is not a planned future
+    connection and must not be saved as one.
     """
     explicit = str(explicit_future).strip() if explicit_future is not None else ""
     if explicit.casefold() not in ("", "null", "none"):
@@ -179,7 +197,9 @@ def business_future_basis(phases, amp, explicit_future=None):
         row = _business_rate(phases, amp)
     except (TypeError, ValueError):
         row = None
-    if row is not None and phases == 3:
+    if phases == 3 and (
+        row is not None or _heavy_amp_fallback(phases, amp, amp_fallback) is not None
+    ):
         return f"3 x {float(amp):g} A", "current"
     return None, "undefined"
 
@@ -264,12 +284,15 @@ def _value_business(phases, amp):
 
 def current(level, category, housing, build_year, phases, amp, *,
             generation=False, explicit_type=None, new_build_year=2022,
-            gas_category=None, current_phases=None, current_amp=None):
+            gas_category=None, current_phases=None, current_amp=None,
+            amp_fallback=None):
     """Return (A, Kader type description, review warning).
 
     'level' is 'trafo' or 'kabel'; classification category is the existing
     plugin's 1=woon, 4=appartement, 8=laad, 9=straat, 10=zakelijk.
-    Unsupported future connections return 0 with an explicit review reason.
+    The caller supplies its active 3.x ampere converter for the requested
+    supplement above 3x80 A. Exact 2.0 rows always have priority.
+    Other unsupported connections return 0 with an explicit review reason.
     """
     if level not in HOUSEHOLD:
         raise ValueError(f"Onbekend netvlak: {level}")
@@ -296,25 +319,46 @@ def current(level, category, housing, build_year, phases, amp, *,
         return row[1 if generation else 0], f"Type {number} ({provenance})", ""
     if category == 8:
         value = PUBLIC_CHARGING[level].get(float(amp)) if phases == 3 and amp is not None else None
+        label = "Type 8 - netbewust publiek laden"
         if value is None:
-            return 0.0, "Type 8 - ongedefinieerde laadaansluiting", "Kader 2.0 definieert netbewust publiek laden alleen voor 3x25 A"
-        return (0.0 if generation else value), "Type 8 - netbewust publiek laden", ""
+            value = _heavy_amp_fallback(phases, amp, amp_fallback)
+            if value is not None:
+                label += " (aanvulling Kader 3.2)"
+        if value is None:
+            return 0.0, "Type 8 - ongedefinieerde laadaansluiting", "Geen ondersteunde Kader 2.0-laadaansluiting of zware 3-faseaanvulling"
+        return (0.0 if generation else value), label, ""
     if category == 9:
         value = None
-        if phases == 3 and amp is not None:
+        label = "Type 9 - straatmeubilair"
+        if amp is not None:
             nominal = float(amp)
-            if 40 <= nominal <= 50:
+            if phases == 1 and math.isfinite(nominal) and nominal > 0:
+                value = 5.8
+                label += " (1-fase, laagste profiel)"
+            elif phases == 3 and nominal == 35:
                 value = 22.0
-            elif 63 <= nominal <= 80:
+                label += " (3x35 A, profiel 3x40-50 A)"
+            elif phases == 3 and 40 <= nominal <= 50:
+                value = 22.0
+            elif phases == 3 and 63 <= nominal <= 80:
                 value = 36.0
-            elif nominal == 25:
+            elif phases == 3 and nominal == 25:
                 value = 5.8
         if value is None:
+            value = _heavy_amp_fallback(phases, amp, amp_fallback)
+            if value is not None:
+                label += " (aanvulling Kader 3.2)"
+        if value is None:
             return 0.0, "Type 9 - ongedefinieerd straatmeubilair", "Kader 2.0 definieert deze straatmeubilairaansluiting niet"
-        return (0.0 if generation else value), "Type 9 - straatmeubilair", ""
+        return (0.0 if generation else value), label, ""
     # Base from FUTURE supply; separate gas recommendation is tied to the
     # CURRENT gas+electricity supplies in two embedded Excel illustrations.
     value, label = _value_business(phases, amp)
+    if value <= 0:
+        supplemented = _heavy_amp_fallback(phases, amp, amp_fallback)
+        if supplemented is not None:
+            value = supplemented
+            label = "Type 7 - toekomstige aansluitwaarde (aanvulling Kader 3.2)"
     if value <= 0:
         return 0.0, label, (
             "Kader 2.0 mist een vaste waarde voor deze toekomstige zakelijke "
