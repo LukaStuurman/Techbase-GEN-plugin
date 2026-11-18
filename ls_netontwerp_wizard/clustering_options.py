@@ -87,7 +87,18 @@ def _qt_constant(parent, name):
     return getattr(getattr(parent, "MouseButton", parent), name)
 
 
-class _CheckDescription(QLabel):
+class _ResponsiveTextLabel(QLabel):
+    """Reserve the complete wrapped height as the form's width changes."""
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        required = self.heightForWidth(max(1, self.width()))
+        if required >= 0 and abs(self.minimumHeight() - (required + 2)) > 1:
+            self.setMinimumHeight(required + 2)
+            self.updateGeometry()
+
+
+class _CheckDescription(_ResponsiveTextLabel):
     """A wrapping, clickable label belonging to an unchanged QCheckBox."""
 
     def __init__(self, checkbox):
@@ -132,7 +143,7 @@ def _wrapped_checkbox(form, checkbox):
 
 
 def _note(text):
-    note = QLabel(text)
+    note = _ResponsiveTextLabel(text)
     note.setWordWrap(True)
     note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
     return note
