@@ -53,6 +53,14 @@ K20_OPTIONS = {
         "Stijgleidingen: hoogbouw", ("Type", "A per eenheid"),
         [3, 1.7, 4, 4.3],
     ),
+    "k20_amp_supplement": (
+        "Aanvulling 3.2: ontbrekende aansluitingen boven 80 A",
+        ("Min 3×A", "Max 3×A", "Vast A", "Factor"),
+        [0, 34, 8.7, 0, 34, 40, 32, 0, 40, 50, 44, 0, 50, 63, 51, 0,
+         63, 80, 65, 0, 80, 100, 85, 0, 100, 125, 106, 0,
+         125, 160, 138, 0, 160, 200, 210, 0, 200, 250, 210, 0,
+         250, 99999, 0, 0.85],
+    ),
     "k20_riser_business": (
         "Stijgleiding: zakelijk Type 6", ("Toekomstige 3×A", "A per eenheid"),
         [25, 8.7, 35, 32, 40, 32, 50, 44, 63, 65, 80, 65],
@@ -194,6 +202,23 @@ def parse_k20_rates(profile=None):
             raise ValueError("Zakelijke stijgleiding: dubbele of ongeldige aansluiting")
         riser_business[amp] = _num(current, key, i, 2)
     out["riser_business"] = riser_business
+
+    supplement = []
+    key = "k20_amp_supplement"
+    for i, (minimum, maximum, fixed, factor) in enumerate(_row_groups(profile, key), 1):
+        supplement.append({
+            "min": _num(minimum, key, i, 1),
+            "max": _num(maximum, key, i, 2),
+            "fix": _num(fixed, key, i, 3),
+            "fac": _num(factor, key, i, 4),
+        })
+    # The 3.x amp conversion uses strict > lower / <= upper thresholds.
+    # Equal endpoints between successive rows are permitted.
+    sorted_rows = sorted(supplement, key=lambda row: row["min"])
+    for i, row in enumerate(sorted_rows):
+        if row["min"] >= row["max"] or (i and row["min"] < sorted_rows[i - 1]["max"]):
+            raise ValueError("Aanvulling 3.2: overlappende of omgekeerde ampèregrenzen")
+    out["amp_supplement"] = supplement
     return out
 
 
