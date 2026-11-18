@@ -1605,16 +1605,42 @@ class VisueleClusterEditorDialog(QDialog):
 
     def _set_status(self, message, error=False):
         self.status_label.setText(message)
+        self.status_label.setToolTip("")
         self.status_label.setStyleSheet(
             "color:#b00020; font-weight:700;" if error else ""
         )
+        if not (hasattr(self, "guide") and self.guide.busy):
+            self.status_label.show()
+
+    @staticmethod
+    def _friendly_error(message):
+        text = str(message)
+        normalized = " ".join(text.casefold().split())
+        # The generic route wrapper may contain unrelated worker errors;
+        # simplify only this recognised unreachable-route cause.
+        if "niet bereikbaar zonder kabels van een ander cluster" in normalized:
+            # The worker's connection number is an internal index. Its route
+            # failure can also refer to a missing part of an existing route.
+            return (
+                "Geen bruikbare kabelroute gevonden voor deze wijziging.\n"
+                "Controleer de kabelverbindingen en kies zo nodig een ander "
+                "doelstation of pas je selectie aan."
+            )
+        return text
 
     def _error(self, message):
+        technical_message = str(message)
+        message = self._friendly_error(technical_message)
         self._set_status(message, True)
+        if message != technical_message:
+            self.status_label.setToolTip(technical_message)
         if hasattr(self, "guide") and self.guide.busy:
             self.guide.failed = True
-            self.guide.progress_label.setText(message)
-            self.guide.progress_label.setStyleSheet("color:#b00020; font-weight:700;")
+            # Keep one error surface; the unfinished progress meter is no
+            # longer useful once the operation has reported a failure.
+            self.guide.progress_bar.hide()
+            self.guide.progress_label.hide()
+            self.status_label.show()
             return
         QMessageBox.warning(self, "Visuele handmatige clustereditor", message)
 

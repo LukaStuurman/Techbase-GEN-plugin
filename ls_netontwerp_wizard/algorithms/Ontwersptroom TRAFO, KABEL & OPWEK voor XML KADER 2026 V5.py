@@ -22,7 +22,10 @@ from qgis.core import (QgsProcessing,
                        Qgis)
 import re
 import math
-from ls_netontwerp_wizard.current_edit_metadata import current_choice
+from ls_netontwerp_wizard.current_edit_metadata import (
+    CHOICE_FIELDS, current_choice_values, current_choices_snapshot,
+    business_choice_connection, manual_current_override, restored_design_inputs,
+)
 from ls_netontwerp_wizard import kader_20
 from ls_netontwerp_wizard.bag_current_rules import (
     NEW_BUILD_FIELD, has_residential_usage, is_bag_object, is_new_build_flag,
@@ -132,17 +135,20 @@ def clean_text(s):
 
 def parse_doorlaat(s):
     if not s: return (0, 0.0)
-    s_lower = s.lower()
-    
-    m = re.search(r"^\s*(\d)\s*[x×]\s*(\d{1,3})", s_lower)
-    if m: return (int(m.group(1)), float(m.group(2)))
-    
-    m = re.search(r"(\d)\s*fase.*?(\d{1,3})", s_lower)
-    if m: return (int(m.group(1)), float(m.group(2)))
-    
-    m = re.search(r"(\d{1,3})\s*a\b", s_lower)
-    if m: return (3, float(m.group(1)))
-    
+    s_lower = str(s).lower()
+    # Read the complete rating: 3x1000 A must never become 3x100 A.
+    # A decimal separator is retained as well, not silently truncated.
+    rating = r"(\d+(?:[.,]\d+)?)"
+
+    m = re.search(r"^\s*(\d)\s*[x×]\s*" + rating, s_lower)
+    if m: return (int(m.group(1)), float(m.group(2).replace(",", ".")))
+
+    m = re.search(r"(\d)\s*fase.*?" + rating, s_lower)
+    if m: return (int(m.group(1)), float(m.group(2).replace(",", ".")))
+
+    m = re.search(rating + r"\s*a\b", s_lower)
+    if m: return (3, float(m.group(1).replace(",", ".")))
+
     return (0, 0.0)
 
 def normalize_gas(gas_str):
@@ -215,8 +221,11 @@ def parse_bouwjaar(val):
     except: 
         return 0
 
-def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None):
+def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, ld_gas_type, config, fid, feedback, use_1fase_exc, default_appartement_zonder_doorlaat=True, kader20_type=None, kader20_future=None, number_of_phases=None, phase=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
+        amp_fallback = lambda nominal: amp_to_ontwerp(
+            nominal, config.get("AMP_GLOBAL", [])
+        )
         if (
             is_bag_object(doorlaat)
             and has_residential_usage(gebruiksdoel)
@@ -229,15 +238,16 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             current_phases, current_amp,
         )
         future = kader20_future
-        if category not in (1, 4, 8, 9) and not future:
-            future = kader_20.default_small_business_future(
-                current_phases, current_amp
+        if category not in (1, 4, 8, 9):
+            future, _basis_origin = kader_20.business_future_basis(
+                current_phases, current_amp, future, amp_fallback=amp_fallback
             )
             if not future:
                 if feedback is not None:
                     feedback.pushWarning(
-                        f"Kader 2.0 aansluiting {fid}: toekomstige zakelijke "
-                        "aansluitwaarde ontbreekt; herstel deze vóór clusteren."
+                        f"Kader 2.0 aansluiting {fid}: er is geen ondersteunde "
+                        "huidige zakelijke aansluitwaarde en geen expliciete "
+                        "toekomstige basis; herstel deze vóór clusteren."
                     )
                 return 0.0
         phases, amp = parse_doorlaat(
@@ -250,6 +260,11 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
+            amp_fallback=amp_fallback,
+            street_phase_hint=kader_20.street_phase_hint(
+                doorlaat, number_of_phases, phase
+            ),
+            street_missing_rating=kader_20.is_missing_street_rating(doorlaat),
         )
         if warning and feedback is not None:
             feedback.pushWarning(
@@ -391,8 +406,11 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
     return final_val
 
 
-def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None):
+def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_type, opwek_table, config, normal_val, use_1fase_exc, bouwjaar_raw=0, kader20_type=None, kader20_future=None, number_of_phases=None, phase=None):
     if config.get("FRAMEWORK_VERSION") == "2.0":
+        amp_fallback = lambda nominal: amp_to_ontwerp(
+            nominal, config.get("AMP_GLOBAL", [])
+        )
         if (
             is_bag_object(doorlaat)
             and has_residential_usage(gebruiksdoel)
@@ -405,9 +423,9 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             current_phases, current_amp,
         )
         future = kader20_future
-        if category not in (1, 4, 8, 9) and not future:
-            future = kader_20.default_small_business_future(
-                current_phases, current_amp
+        if category not in (1, 4, 8, 9):
+            future, _basis_origin = kader_20.business_future_basis(
+                current_phases, current_amp, future, amp_fallback=amp_fallback
             )
             if not future:
                 return 0.0
@@ -421,6 +439,11 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             new_build_year=config["DEFAULTS"].get("bouwjaar_grens", 2022),
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
+            amp_fallback=amp_fallback,
+            street_phase_hint=kader_20.street_phase_hint(
+                doorlaat, number_of_phases, phase
+            ),
+            street_missing_rating=kader_20.is_missing_street_rating(doorlaat),
         )
         return float(value)
     if is_bag_object(doorlaat):
@@ -785,6 +808,17 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         for f in text_output_fields:
             if fields.lookupField(f) < 0:
                 fields.append(QgsField(f, QVariant.String))
+        choices_snapshot = current_choices_snapshot(choice_layer)
+        persist_choices = bool(choices_snapshot) or any(
+            fields.lookupField(name) >= 0 for name in CHOICE_FIELDS
+        )
+        if persist_choices:
+            # A new sink has no source-layer custom properties. Preserve the
+            # choices per feature so reopening or recalculating the result does
+            # not discard deliberate categories, presets or manual currents.
+            for name in CHOICE_FIELDS:
+                if fields.lookupField(name) < 0:
+                    fields.append(QgsField(name, QVariant.String))
         if framework == "2.0":
             # Keep these as editable fields in the review GeoPackage. Previously
             # they were only read if someone had already created them upstream.
@@ -797,11 +831,17 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         idx_door = fields.indexOf(name_door)
         idx_gebr = fields.indexOf(name_gebr)
         idx_gas = fields.indexOf(name_gas)
+        phase_field_indices = {
+            name: fields.lookupField(name) for name in ("number_of_phases", "phase")
+        }
         
         total = source_points.featureCount()
         count = 0
         inferred_business_future_count = 0
         automatic_minimum_business_count = 0
+        automatic_current_business_count = 0
+        automatic_current_unknown_gas_count = 0
+        kader20_amp_conversion = lambda nominal: amp_to_ontwerp(nominal, cfg_amp)
         
         req_panden = QgsFeatureRequest()
         req_panden.setSubsetOfAttributes([name_woning, name_bouwjaar], source_panden.fields())
@@ -814,6 +854,11 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             val_door = str(attrs[idx_door]) if idx_door >= 0 and attrs[idx_door] is not None else ""
             val_gebr = str(attrs[idx_gebr]) if idx_gebr >= 0 and attrs[idx_gebr] is not None else ""
             val_gas = str(attrs[idx_gas]) if idx_gas >= 0 and attrs[idx_gas] is not None else ""
+            phase_values = {
+                name: attrs[index] if 0 <= index < len(attrs) else None
+                for name, index in phase_field_indices.items()
+            }
+            editor_choice = current_choice_values(choice_layer, feat, choices_snapshot)
             
             geom = feat.geometry()
             val_woning = ""
@@ -860,6 +905,12 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                     if not val_bouwjaar and year_index >= 0:
                         val_bouwjaar = parse_bouwjaar(feat[year_index])
 
+            # Restore the calculation choices without overwriting original GEN
+            # use, electricity or gas fields in the output attributes.
+            val_door, val_gebr, val_woning = restored_design_inputs(
+                editor_choice, framework, val_door, val_gebr, val_woning
+            )
+
             # Nieuwe VBO's zijn planmatige nieuwbouw. Bewaar het echte pandjaar,
             # maar kies voor de berekening altijd de Type 3/2022+ woningtabellen.
             new_build_index = feat.fields().lookupField(NEW_BUILD_FIELD)
@@ -884,97 +935,139 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 raw_future = feat[future_index]
                 if raw_future is not None and str(raw_future).strip().casefold() not in ("", "null", "none"):
                     future_connection = str(raw_future).strip()
-            minimum_business_assigned = False
-            if framework == "2.0":
-                current_phases, current_amp = parse_doorlaat(val_door)
-                category_for_future = kader_20.classify_category(
-                    map_gebruiksdoel(val_gebr, val_woning, full_config_std),
-                    current_phases, current_amp,
-                )
-                if category_for_future not in (1, 4, 8, 9) and not future_connection:
-                    # Even a 1x25 A business connection uses the first 2.0
-                    # small-business row: future 3x25 A, 8.7 A before gas.
-                    future_connection = kader_20.default_small_business_future(
-                        current_phases, current_amp
-                    )
-                    if future_connection:
-                        minimum_business_assigned = True
-                        automatic_minimum_business_count += 1
-                    else:
-                        inferred_business_future_count += 1
-                        if inferred_business_future_count <= 10:
-                            feedback.pushWarning(
-                                f"Kader 2.0 aansluiting {feat.id()}: toekomstige "
-                                "zakelijke aansluitwaarde ontbreekt en huidige "
-                                "doorlaat is groter dan de 3x25A-minimumstaffel. "
-                                "Herstel deze in stap 2."
-                            )
-            res_std = calculate_ontwerpstroom(
-                val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
-                full_config_std, feat.id(), feedback, use_1fase_exc,
-                default_appartement_zonder_doorlaat, explicit_kader20,
-                future_connection,
-            )
-            res_kabel = calculate_ontwerpstroom(
-                val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
-                full_config_kabel, feat.id(), None, use_1fase_exc,
-                default_appartement_zonder_doorlaat, explicit_kader20,
-                future_connection,
-            )
-            res_opwek_std = calculate_opwek_ontwerpstroom(
-                val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek,
-                full_config_std, res_std, use_1fase_exc,
-                effective_bouwjaar, explicit_kader20, future_connection,
-            )
-            res_opwek_kabel = calculate_opwek_ontwerpstroom(
-                val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel,
-                full_config_kabel, res_kabel, use_1fase_exc,
-                effective_bouwjaar, explicit_kader20, future_connection,
-            )
-            kader_type = ""
-            if framework == "2.0":
-                current_phases, current_amp = parse_doorlaat(val_door)
-                cat = kader_20.classify_category(
-                    map_gebruiksdoel(val_gebr, val_woning, full_config_std),
-                    current_phases, current_amp,
-                )
-                if cat not in (1, 4, 8, 9) and not future_connection:
-                    kader_type = "Type 6/7 - toekomstige aansluitwaarde ontbreekt (herstellen)"
-                else:
-                    phases, amps = parse_doorlaat(
-                        future_connection
-                        if cat not in (1, 4, 8, 9) else val_door
-                    )
-                    _value, kader_type, _warning = kader_20.current(
-                        "trafo", cat, val_woning, effective_bouwjaar, phases, amps,
-                        explicit_type=explicit_kader20,
-                        new_build_year=full_config_std["DEFAULTS"]["bouwjaar_grens"],
-                        gas_category=normalize_gas(val_gas),
-                        current_phases=current_phases,
-                        current_amp=current_amp,
-                    )
-                    if minimum_business_assigned:
-                        kader_type += " (automatisch kleinzakelijk min. 3x25A)"
-                    if cat not in (1, 4, 8, 9) and not future_connection:
-                        kader_type += " (herstellen)"
+            if (framework == "2.0" and editor_choice.get("HerstelCat") == "Zakelijk"
+                    and not future_connection):
+                future_connection = business_choice_connection(editor_choice, framework)
 
-            # Explicit BAG choices survive a general recalculation. A residential
-            # table choice still follows the current pand unless manually overridden.
-            if is_bag_object(val_door):
-                def saved_text(name):
-                    return current_choice(choice_layer, feat, name)
-                keep_choice = saved_text("HerstelHandmatig") == "1" or (
-                    not has_residential_usage(val_gebr) and saved_text("HerstelCat") in
-                    ("Huishoudelijk", "Zakelijk", "Oplaadpunt", "Straatmeubilair")
+            # Manual values are authoritative for GEN and BAG alike. Automatic
+            # business presets are deliberately NOT snapshots: calculate them
+            # again from each feature's current gas and electricity service.
+            stored_components = []
+            if editor_choice.get("HerstelHandmatig") == "1":
+                for name in numeric_output_fields[:4]:
+                    index = feat.fields().lookupField(name)
+                    stored_components.append(feat[index] if index >= 0 else None)
+            preserved = manual_current_override(editor_choice, stored_components)
+            legacy_profile = False
+            if (preserved is None
+                    and editor_choice.get("HerstelCat") in ("Oplaadpunt", "Straatmeubilair")
+                    and editor_choice.get("HerstelType")
+                    and not editor_choice.get("HerstelAansluitwaarde")):
+                # Old editor versions saved these deliberate profiles only as
+                # a label plus their currents. Keep that choice until a new
+                # explicit preset is selected; never infer a new service size.
+                try:
+                    saved = tuple(float(feat[name]) for name in numeric_output_fields[:4])
+                    if all(math.isfinite(value) and value >= 0 for value in saved):
+                        preserved = saved
+                        legacy_profile = True
+                except (KeyError, ValueError, TypeError):
+                    pass
+            minimum_business_assigned = False
+            business_basis_origin = None
+            current_basis_unknown_gas = False
+            if preserved is not None:
+                res_std, res_kabel, res_opwek_std, res_opwek_kabel = preserved
+                kader_type = (
+                    f"Kader {framework} - eerder expliciet gekozen profiel behouden"
+                    if legacy_profile else f"Kader {framework} - handmatig ingevoerd"
                 )
-                if keep_choice:
-                    try:
-                        saved = [float(feat[name]) for name in numeric_output_fields[:4]]
-                        if all(math.isfinite(value) and value >= 0 for value in saved):
-                            res_std, res_kabel, res_opwek_std, res_opwek_kabel = saved
-                    except (KeyError, ValueError, TypeError):
-                        pass
-            
+            else:
+                if framework == "2.0":
+                    current_phases, current_amp = parse_doorlaat(val_door)
+                    category_for_future = kader_20.classify_category(
+                        map_gebruiksdoel(val_gebr, val_woning, full_config_std),
+                        current_phases, current_amp,
+                    )
+                    if category_for_future not in (1, 4, 8, 9):
+                        # Explicit future values win. Otherwise an existing
+                        # supported current service is a usable calculation
+                        # basis, without becoming a planned future connection.
+                        future_connection, business_basis_origin = kader_20.business_future_basis(
+                            current_phases, current_amp, future_connection,
+                            amp_fallback=kader20_amp_conversion,
+                        )
+                        if business_basis_origin == "minimum":
+                            minimum_business_assigned = True
+                            automatic_minimum_business_count += 1
+                        elif business_basis_origin == "current":
+                            automatic_current_business_count += 1
+                            current_basis_unknown_gas = clean_text(val_gas) in (
+                                "", "null", "none", "onbekend", "nvt", "n.v.t.", "n/a"
+                            )
+                            if current_basis_unknown_gas:
+                                automatic_current_unknown_gas_count += 1
+                        elif business_basis_origin == "undefined":
+                            inferred_business_future_count += 1
+                            if inferred_business_future_count <= 10:
+                                feedback.pushWarning(
+                                    f"Kader 2.0 aansluiting {feat.id()}: huidige "
+                                    "zakelijke aansluitwaarde heeft geen vaste "
+                                    "Kader-2.0-staffel en er is geen expliciete "
+                                    "toekomstige basis. Herstel deze in stap 2."
+                                )
+                res_std = calculate_ontwerpstroom(
+                    val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
+                    full_config_std, feat.id(), feedback, use_1fase_exc,
+                    default_appartement_zonder_doorlaat, explicit_kader20,
+                    future_connection, **phase_values,
+                )
+                res_kabel = calculate_ontwerpstroom(
+                    val_door, val_gebr, val_woning, effective_bouwjaar, val_gas,
+                    full_config_kabel, feat.id(), None, use_1fase_exc,
+                    default_appartement_zonder_doorlaat, explicit_kader20,
+                    future_connection, **phase_values,
+                )
+                res_opwek_std = calculate_opwek_ontwerpstroom(
+                    val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek,
+                    full_config_std, res_std, use_1fase_exc,
+                    effective_bouwjaar, explicit_kader20, future_connection,
+                    **phase_values,
+                )
+                res_opwek_kabel = calculate_opwek_ontwerpstroom(
+                    val_door, val_gebr, val_woning, val_gas, cfg_woon_opwek_kabel,
+                    full_config_kabel, res_kabel, use_1fase_exc,
+                    effective_bouwjaar, explicit_kader20, future_connection,
+                    **phase_values,
+                )
+                kader_type = ""
+                if framework == "2.0":
+                    current_phases, current_amp = parse_doorlaat(val_door)
+                    cat = kader_20.classify_category(
+                        map_gebruiksdoel(val_gebr, val_woning, full_config_std),
+                        current_phases, current_amp,
+                    )
+                    if cat not in (1, 4, 8, 9) and not future_connection:
+                        kader_type = "Type 6/7 - huidige aansluitwaarde niet ondersteund; toekomstbasis ontbreekt (herstellen)"
+                    else:
+                        phases, amps = parse_doorlaat(
+                            future_connection
+                            if cat not in (1, 4, 8, 9) else val_door
+                        )
+                        _value, kader_type, _warning = kader_20.current(
+                            "trafo", cat, val_woning, effective_bouwjaar, phases, amps,
+                            explicit_type=explicit_kader20,
+                            new_build_year=full_config_std["DEFAULTS"]["bouwjaar_grens"],
+                            gas_category=normalize_gas(val_gas),
+                            current_phases=current_phases,
+                            current_amp=current_amp,
+                            amp_fallback=kader20_amp_conversion,
+                            street_phase_hint=kader_20.street_phase_hint(
+                                val_door, **phase_values
+                            ),
+                            street_missing_rating=kader_20.is_missing_street_rating(val_door),
+                        )
+                        if minimum_business_assigned:
+                            kader_type += " (automatisch kleinzakelijk min. 3x25A)"
+                        elif business_basis_origin == "current":
+                            kader_type = kader_type.replace(
+                                "toekomstige aansluitwaarde",
+                                "huidige aansluitwaarde als automatische basis",
+                            )
+                            kader_type += " (toekomstige waarde niet opgegeven)"
+                            if current_basis_unknown_gas:
+                                kader_type += " (gasbron onbekend; standaardgroep toegepast, controleren)"
+
             new_feat = QgsFeature(fields)
             new_feat.setGeometry(feat.geometry())
             new_attrs = list(attrs)
@@ -994,8 +1087,12 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             ]
             for name, value in zip(numeric_output_fields + text_output_fields, calculated):
                 new_feat[name] = value
-            if framework == "2.0" and minimum_business_assigned:
+            if (framework == "2.0" and future_connection
+                    and business_basis_origin in ("explicit", "minimum")):
                 new_feat["Kader20ToekomstigeAansluitwaarde"] = future_connection
+            if persist_choices:
+                for name in CHOICE_FIELDS:
+                    new_feat[name] = editor_choice.get(name, "")
             sink.addFeature(new_feat, QgsFeatureSink.FastInsert)
             
             count += 1
@@ -1007,10 +1104,26 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                 f"Kader 2.0: {automatic_minimum_business_count} kleinzakelijke "
                 "aansluitingen automatisch op minimaal toekomstig 3x25A gezet."
             )
+        if automatic_current_business_count:
+            feedback.pushInfo(
+                f"Kader 2.0: {automatic_current_business_count} zakelijke "
+                "aansluitingen automatisch berekend uit de huidige ondersteunde "
+                "aansluitwaarde, met afzonderlijk gasadvies voor trafo en kabel. "
+                "Deze rekenbasis is niet als geplande toekomstige waarde opgeslagen."
+            )
+        if automatic_current_unknown_gas_count:
+            feedback.pushWarning(
+                f"Kader 2.0: bij {automatic_current_unknown_gas_count} automatisch "
+                "berekende zakelijke aansluitingen is de gasbron onbekend. "
+                "De bestaande standaardgroep G4/G6/Geen is gebruikt; controleer "
+                "de gasbron. Het oorspronkelijke gasveld is niet gewijzigd."
+            )
         if inferred_business_future_count:
             feedback.pushWarning(
                 f"Kader 2.0: {inferred_business_future_count} zakelijke/onzekere "
-                "aansluitingen zonder expliciete toekomstige aansluitwaarde. "
-                "Deze staan op 0 A en moeten vóór de clustering worden hersteld."
+                "aansluitingen hebben geen ondersteunde huidige aansluitwaarde "
+                "en geen expliciete toekomstige basis. Deze staan op 0 A en "
+                "moeten vóór de clustering worden hersteld."
             )
         return {self.OUTPUT: dest_id}
+

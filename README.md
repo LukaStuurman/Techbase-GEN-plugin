@@ -2,9 +2,11 @@
 
 Ontwikkeling in draft PR #29: [hergebruik, afzonderlijke nieuwe 150Al-richtingen en actuele vrijgavebeperkingen](PLANNED_150AL_VALIDATION.md). De Den Dungen-clustering in deze behoudmodus is nog niet volledig gevalideerd.
 
-## Laatste versie: 1.33.2
+## Laatste versie: 1.33.3
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.2/ls_netontwerp_wizard-1.33.2.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.2)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.3/ls_netontwerp_wizard-1.33.3.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.3)
+
+**Nieuw in 1.33.3:** uitgebreid automatisch ontwerpstroomherstel voor Kader 2.0, met eigen gaswaarden per aansluiting en afzonderlijke trafo-/kabelberekeningen. Straatmeubilair zonder doorlaat gebruikt zichtbaar het laagste 3×25 A-profiel (5,8 A trafo/kabel, 0 A opwek); de gecontroleerde lijst van 103 nulwaarden wordt volledig ingevuld. De herstelvensters zijn groter en verstelbaar. De clustereditor toont duidelijke meldingen zonder overlappende tekst. Scope heeft leesbare ontwerpstroomlabels en bestaande stations; beide overzichtslayouts tonen één legenda-item **Aansluitingen**. [Wijzigingen, controles en installatie](ls_netontwerp_wizard/RELEASE_NOTES.md).
 
 **Nieuw in 1.33.2:** Kader 2.0 gebruikt nu óók het aparte **gasadvies voor trafo en LS-kabel** uit de twee afbeeldingen naast `Ontwerpstroom_trafo`. Kleinzakelijk met een lagere/onbekende doorlaat krijgt automatisch **toekomstig 3×25 A** als minimumstaffel (8,7 A voor gasadvies); woningen blijven t/m **3×40 A** huishoudelijk. Het gas is weer te kiezen in de correctiepagina. Kader 3.2 en de vorige clusteringfixes zijn onveranderd. [Volledige gasstaffel en vergelijking](KADER_20_VS_32.md).
 

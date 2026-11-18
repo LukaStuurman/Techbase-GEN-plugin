@@ -3,8 +3,6 @@
 Labels follow Transformator and cable direction (1). Values use the active
 wizard matrices, including the separate transformer/cable gas tables.
 """
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor
 
 HOUSEHOLD_UNIT_CHOICES = (
     ("Vrijstaand", "vrijstaande woning"),
@@ -32,6 +30,7 @@ UNIT_CHOICES = {
         ("Aansluiting 1x6A", "straat6", "1 x 6 A"),
         ("Aansluiting 1x10A", "straat10", "1 x 10 A"),
         ("Aansluiting 3x25A", "straat25", "3 x 25 A"),
+        ("Aansluiting 3x35A", "straat35", "3 x 35 A"),
         ("Aansluiting 3x40A t/m 3x50A", "straat40_50", "3 x 50 A"),
         ("Aansluiting 3x63A t/m 3x80A", "straat63_80", "3 x 80 A"),
     ),
@@ -44,6 +43,9 @@ GAS_CHOICES = (
 
 
 def fill_gas_combo(combo):
+    from qgis.PyQt.QtCore import Qt
+    from qgis.PyQt.QtGui import QColor
+
     background = Qt.ItemDataRole.BackgroundRole if hasattr(Qt, "ItemDataRole") else Qt.BackgroundRole
     foreground = Qt.ItemDataRole.ForegroundRole if hasattr(Qt, "ItemDataRole") else Qt.ForegroundRole
     for label, stored, color in GAS_CHOICES:
@@ -60,7 +62,12 @@ def fill_unit_combo(combo, category, framework_version=None):
         if category == "Zakelijk" and str(framework_version) == "2.0":
             label = label.replace("Huidige aansluitwaarde:", "Toekomstige aansluitwaarde:")
             if key in {"100", "125", "200"}:
-                label += " — overig, kaderwaarde ontbreekt"
+                label += " — aanvulling Kader 3.2"
+        elif category == "Straatmeubilair" and str(framework_version) == "2.0":
+            if key in {"straat6", "straat10", "straat25"}:
+                label += " — laagste profiel (5,8 A)"
+            elif key == "straat35":
+                label += " — profiel 3x40–50 A (22 A)"
         combo.addItem(label, key)
     combo.addItem("Zelf invullen", None)
     default = {"Zakelijk": "lt35", "Straatmeubilair": "straat25", "Oplaadpunt": "laad25"}.get(category)
@@ -80,6 +87,26 @@ def unit_future_connection(category, key):
          if stored == key),
         None,
     )
+
+
+def unit_connection_from_choice(category, key=None, label=None):
+    """Recover only an explicitly stored preset, including old label-only edits.
+
+    Current GEN values are not inputs here: unknown connections are never
+    rounded or promoted into a preset. Both display prefixes were emitted
+    by the editor for the same named choices in different Kader versions.
+    """
+    text = " ".join(str(label or "").split()).casefold()
+    for original, stored_key, doorlaat in UNIT_CHOICES.get(category, ()):
+        if key is not None and str(key) == stored_key:
+            return doorlaat
+        labels = (
+            original,
+            original.replace("Huidige aansluitwaarde:", "Toekomstige aansluitwaarde:"),
+        )
+        if text and any(text == " ".join(value.split()).casefold() for value in labels):
+            return doorlaat
+    return None
 
 
 def current_context(host):
@@ -108,8 +135,8 @@ def unit_currents(context, category, key, gas_category="G4/G6/Geen", current_ser
     one_phase = bool(values.get("one_phase_exception", True))
     # Selecting a named business preset in Kader 2.0 is an explicit choice
     # of the FUTURE connection. Pass it as such to the shared calculator;
-    # simply using it as the current GEN 'doorlaat' would now correctly be
-    # rejected as an unspecified future rating (0 A).
+    # using it only as current GEN 'doorlaat' would lose that deliberate
+    # future choice when the current source connection changes later.
     future = (
         choice[2] if category == "Zakelijk"
         and str(values.get("design_framework")) == "2.0" else None
@@ -134,12 +161,21 @@ def unit_currents(context, category, key, gas_category="G4/G6/Geen", current_ser
 def category_note(category, key, framework=None):
     if category == "Zakelijk" and str(framework) == "2.0":
         if key in {"100", "125", "200"}:
-            return "Kader 2.0 Type 7: overig; de toekomstige ontwerpstroom is niet vastgelegd en vereist handmatige invoer"
+            return "Kader 2.0 Type 7: ontbrekende 2.0-waarde aangevuld met de staffels/formule van Kader 3.2, met apart huidig gasadvies per trafo/kabel"
         if key in {"160", "250"}:
             return "Kader 2.0 Type 7: grootverbruik LS op toekomstige aansluitwaarde, met apart huidig gasadvies per trafo/kabel"
         return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde, met apart huidig gasadvies per trafo/kabel"
+    if category == "Straatmeubilair" and str(framework) == "2.0":
+        if key in {"straat6", "straat10", "straat25"}:
+            return "Kader 2.0 Type 9: laagste 3x25 A-profiel, 5,8 A trafo/kabel en 0 A opwek; ook voor bekende eenfaseaansluitingen. Bij ontbrekende doorlaat of ampèrewaarde geldt dit profiel als standaardaanname; de bronwaarde blijft ongewijzigd."
+        if key == "straat35":
+            return "Kader 2.0 Type 9: 3x35 A gebruikt het profiel 3x40–50 A, 22 A trafo/kabel en 0 A opwek"
+        return "Kader 2.0 Type 9: straatmeubilair, 0 A opwek; ontbrekende driefasewaarden boven 3x80 A worden aangevuld met Kader 3.2"
+    if category == "Oplaadpunt" and str(framework) == "2.0":
+        return "Kader 2.0 Type 8: netbewust publiek laden, 0 A opwek; ontbrekende driefasewaarden boven 3x80 A worden aangevuld met Kader 3.2"
     if category == "Zakelijk":
         if key in {"100", "125", "160", "200", "250"}:
             return "Type 9: Grootverbruik LS (eigen richting >3x80A)"
         return "Type 8: Kleinzakelijk (niet-huishoudelijk t/m 3x80A)"
     return {"Oplaadpunt": "Type 10: Netbewust publiek laden", "Straatmeubilair": "Type 11: Straatmeubilair"}.get(category, "")
+
