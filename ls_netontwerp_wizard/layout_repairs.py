@@ -2,7 +2,7 @@
 from qgis.core import Qgis, QgsLayoutItemHtml, QgsLayoutItemLabel, QgsVectorLayer
 
 from .algorithms.laagspanning_clustering_lib.layout_style_utils import (
-    ensure_connection_labels, ensure_connections_legend,
+    ensure_connection_labels, ensure_scope_connection_labels, ensure_connections_legend,
 )
 from .algorithms.laagspanning_clustering_lib.scope_layout import (
     _include_station_extent, ensure_scope_station_labels, repair_scope_station_snapshot,
@@ -56,8 +56,8 @@ def repair_scope_layouts(project):
                             if layer.fields().lookupField("Ontwerp_A") >= 0
                             and (bool(layer.customProperty("LSNetontwerp/scope_snapshot", False)) == is_scope)), None)
         if connections is not None:
-            changed += ensure_connection_labels(connections, label_scale=1.0 if is_scope else .40,
-                                                around_point=is_scope)
+            changed += (ensure_scope_connection_labels(connections) if is_scope
+                        else ensure_connection_labels(connections, label_scale=.40))
             changed += ensure_connections_legend(layout.itemById("legenda"), connections)
         if is_scope and connections is not None:
             stations = next((layer for layer in point_layers if layer is not connections

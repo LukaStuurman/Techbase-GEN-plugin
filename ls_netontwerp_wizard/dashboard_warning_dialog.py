@@ -60,6 +60,7 @@ class LSNetontwerpDashboardDialog(_DashboardDialog):
             normalize_page(page, self, actions)
         close = next((button for button in self.main_page.findChildren(QPushButton) if button.text() == "Sluiten"), None)
         normalize_page(self.main_page, self, (close,) if close is not None else (), home=False)
+        self._move_progress_to_bottom()
         apply_theme(self)
         install_dialog_theme(self)
 

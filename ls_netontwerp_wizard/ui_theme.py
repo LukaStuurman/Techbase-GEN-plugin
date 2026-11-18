@@ -27,6 +27,7 @@ QGroupBox { background: #FFFFFF; border: 1px solid #DFE5EC; border-radius: 8px;
             margin-top: 0; padding: 10px; padding-top: 28px; font-weight: 600; }
 QGroupBox::title { subcontrol-origin: padding; subcontrol-position: top left;
                    left: 12px; top: 7px; padding: 0 5px; color: #243246; }
+QGroupBox[uiRole="progress"] { padding: 0; }
 QFrame[uiRole="card"] { background: #FFFFFF; border: 1px solid #DFE5EC; border-radius: 8px; }
 QPushButton { background: #FFFFFF; color: #334155; border: 1px solid #CBD5E1;
               border-radius: 6px; padding: 7px 12px; font-weight: 600; min-height: 18px; }
@@ -298,7 +299,11 @@ def normalize_page(page, host, actions=(), home=True):
             if widget is not None:
                 hidden = widget.isHidden()
                 widget.setParent(body)
-                content.addWidget(widget)
+                # Reuse the existing QWidgetItem. Creating a second item while
+                # the detached item is still alive leaves Qt's size-hint cache
+                # attached to the old item. Expanded cards can then overlap
+                # the next row even after updateGeometry()/invalidate().
+                content.addItem(item)
                 widget.setVisible(not hidden)
             elif item.layout() is not None:
                 content.addLayout(item.layout())

@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QLayout,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -139,6 +140,7 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
 
     def _compact_progress_area(self):
         self.progress_group.setTitle("")
+        self.progress_group.setProperty("uiRole", "progress")
         self.progress_group.setMaximumHeight(56)
         progress_layout = self.progress_group.layout()
         if progress_layout is not None:
@@ -165,16 +167,27 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         root = self.main_page.layout()
         if root is None:
             return
-        root.removeWidget(self.status_label)
-        root.removeWidget(self.progress_group)
+        widgets = (self.status_label, self.progress_group)
+        hidden = {widget: widget.isHidden() for widget in widgets}
+        for widget in widgets:
+            parent = widget.parentWidget()
+            if parent is not None and parent.layout() is not None:
+                parent.layout().removeWidget(widget)
 
-        old_button_box = self.run_button.parentWidget()
-        insert_at = root.indexOf(old_button_box)
-        if insert_at < 0:
-            insert_at = root.count()
+        if self.main_page.property("uiStructured"):
+            # The normalized page ends with its fixed action footer. Keep
+            # progress above that footer, outside the scrolling dashboard.
+            insert_at = max(0, root.count() - 1)
+        else:
+            old_button_box = self.run_button.parentWidget()
+            insert_at = root.indexOf(old_button_box)
+            if insert_at < 0:
+                insert_at = root.count()
 
         root.insertWidget(insert_at, self.status_label)
         root.insertWidget(insert_at + 1, self.progress_group)
+        for widget in widgets:
+            widget.setVisible(not hidden[widget])
 
     @staticmethod
     def _button_style(palette, secondary=False):
@@ -429,21 +442,28 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
                 ),
             ],
         )
-        self.cluster_advanced_toggle = QCheckBox('Geavanceerde clusterbewerkingen')
+        self.cluster_advanced_toggle = QCheckBox("Geavanceerde clusterbewerkingen")
         step4.layout().addWidget(self.cluster_advanced_toggle)
-        advanced_cluster_buttons = [button for button in step4.findChildren(QPushButton)
-                                   if not button.text().startswith('4a.')]
-        for button in advanced_cluster_buttons:button.hide()
+        advanced_cluster_buttons = [
+            button for button in step4.findChildren(QPushButton)
+            if not button.text().startswith("4a.")
+        ]
+        for button in advanced_cluster_buttons:
+            button.hide()
+
         def expand_cluster_actions(enabled):
-            for button in advanced_cluster_buttons:button.setVisible(enabled)
-            layout=step4.layout();layout.invalidate();layout.activate()
-            step4.setMinimumHeight(max(166,layout.minimumSize().height()))
-            step4.updateGeometry()
-            parent=step4.parentWidget()
+            for button in advanced_cluster_buttons:
+                button.setVisible(enabled)
+            # Let the width-dependent layout include wrapped hints and the
+            # checkbox; a fixed minimum from minimumSize() omits that height.
+            parent = step4
             while parent is not None and parent is not self:
                 if parent.layout() is not None:
-                    parent.layout().invalidate();parent.layout().activate()
-                parent.updateGeometry();parent=parent.parentWidget()
+                    parent.layout().invalidate()
+                parent.updateGeometry()
+                parent = parent.parentWidget()
+            if enabled:
+                QTimer.singleShot(0, self._reveal_cluster_actions)
         self.cluster_advanced_toggle.toggled.connect(expand_cluster_actions)
         step5 = self._make_step_card(
             5,
@@ -482,6 +502,15 @@ class LSNetontwerpDashboardDialog(LSNetontwerpDialog):
         self._dashboard_sync_timer.timeout.connect(self._sync_dashboard_buttons)
         self._dashboard_sync_timer.start()
         self._sync_dashboard_buttons()
+
+    def _reveal_cluster_actions(self):
+        """Keep the expansion checkbox reachable after the card has grown."""
+        if not self.cluster_advanced_toggle.isChecked():
+            return
+        for scroll in self.main_page.findChildren(QScrollArea):
+            if scroll.isAncestorOf(self.cluster_advanced_toggle):
+                scroll.ensureWidgetVisible(self.cluster_advanced_toggle, 0, 12)
+                break
 
     def _sync_dashboard_buttons(self):
         for mirror, source in self._dashboard_mirrors:
