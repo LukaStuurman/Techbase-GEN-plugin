@@ -173,6 +173,18 @@ def apply_theme(root, clear_legacy=True):
         if isinstance(layout, QFormLayout):
             layout.setVerticalSpacing(8)
             layout.setHorizontalSpacing(12)
+            # Respect a narrow window: long form rows may flow below labels.
+            wrap = QFormLayout.RowWrapPolicy if hasattr(QFormLayout, "RowWrapPolicy") else QFormLayout
+            growth = QFormLayout.FieldGrowthPolicy if hasattr(QFormLayout, "FieldGrowthPolicy") else QFormLayout
+            layout.setRowWrapPolicy(wrap.WrapLongRows)
+            layout.setFieldGrowthPolicy(growth.AllNonFixedFieldsGrow)
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                widget = item.widget() if item is not None else None
+                if isinstance(widget, QLabel) and len(widget.text()) > 110:
+                    widget.setWordWrap(True)
+                    policy = QSizePolicy.Policy if hasattr(QSizePolicy, "Policy") else QSizePolicy
+                    widget.setSizePolicy(policy.Ignored, policy.Preferred)
         layout.invalidate()
     for group in root.findChildren(QGroupBox):
         layout = group.layout()
