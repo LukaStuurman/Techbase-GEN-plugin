@@ -19,9 +19,12 @@ from qgis.core import (QgsProcessing,
                        QgsGeometry,
                        QgsWkbTypes,
                        QgsMessageLog,
+                       QgsProcessingException,
                        Qgis)
 import re
 import math
+import json
+from ls_netontwerp_wizard.design_rate_profiles import parse_k20_rates
 from ls_netontwerp_wizard.current_edit_metadata import (
     CHOICE_FIELDS, current_choice_values, current_choices_snapshot,
     business_choice_connection, manual_current_override, restored_design_inputs,
@@ -240,7 +243,8 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
         future = kader20_future
         if category not in (1, 4, 8, 9):
             future, _basis_origin = kader_20.business_future_basis(
-                current_phases, current_amp, future, amp_fallback=amp_fallback
+                current_phases, current_amp, future, amp_fallback=amp_fallback,
+                rate_tables=config.get("K20_TABLES"),
             )
             if not future:
                 if feedback is not None:
@@ -261,6 +265,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
             amp_fallback=amp_fallback,
+            rate_tables=config.get("K20_TABLES"),
             street_phase_hint=kader_20.street_phase_hint(
                 doorlaat, number_of_phases, phase
             ),
@@ -425,7 +430,8 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
         future = kader20_future
         if category not in (1, 4, 8, 9):
             future, _basis_origin = kader_20.business_future_basis(
-                current_phases, current_amp, future, amp_fallback=amp_fallback
+                current_phases, current_amp, future, amp_fallback=amp_fallback,
+                rate_tables=config.get("K20_TABLES"),
             )
             if not future:
                 return 0.0
@@ -440,6 +446,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             gas_category=normalize_gas(ld_gas_type),
             current_phases=current_phases, current_amp=current_amp,
             amp_fallback=amp_fallback,
+            rate_tables=config.get("K20_TABLES"),
             street_phase_hint=kader_20.street_phase_hint(
                 doorlaat, number_of_phases, phase
             ),
@@ -499,6 +506,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
     VAL_APPARTEMENT_ZONDER_DOORLAAT = 'VAL_APPARTEMENT_ZONDER_DOORLAAT'
     
     VAL_KADER = 'VAL_KADER'
+    VAL_K20_TABLES = 'VAL_K20_TABLES'
     MAT_WOONHUIS = 'MAT_WOONHUIS'
     MAT_WOONHUIS_2022 = 'MAT_WOONHUIS_2022' 
     MAT_WOONHUIS_KABEL = 'MAT_WOONHUIS_KABEL' 
@@ -555,6 +563,10 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             self.tr("Ontwerpstroomkader (2.0 heeft eigen Excel-tabellen)"),
             options=["Kader 3.0", "Kader 3.2", "Kader 2.0"],
             defaultValue=0,
+        ))
+        self.addParameter(QgsProcessingParameterString(
+            self.VAL_K20_TABLES, self.tr("Kader 2.0: bewerkbare tabellen als JSON"),
+            defaultValue="", optional=True,
         ))
         # Nieuwe Uitzondering Toggle
         self.addParameter(QgsProcessingParameterBoolean(self.VAL_1FASE_EXCEPTION, self.tr('Uitzondering 1-fase/2-fase woonhuizen (altijd tabelwaarde)'), defaultValue=True))
@@ -676,6 +688,11 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
         framework_index = self.parameterAsEnum(parameters, self.VAL_KADER, context)
         framework = {0: "3.0", 1: "3.2", 2: "2.0"}.get(framework_index, "3.0")
         feedback.pushInfo(f"Ontwerpstroom wordt berekend met Kader {framework}.")
+        raw_k20 = self.parameterAsString(parameters, self.VAL_K20_TABLES, context)
+        try:
+            k20_rates = parse_k20_rates(json.loads(raw_k20) if raw_k20 else {})
+        except (ValueError, TypeError) as exc:
+            raise QgsProcessingException(f"Kader 2.0-ontwerpstroomtabellen zijn ongeldig: {exc}") from exc
         use_1fase_exc = self.parameterAsBool(parameters, self.VAL_1FASE_EXCEPTION, context)
         default_appartement_zonder_doorlaat = self.parameterAsBool(
             parameters, self.VAL_APPARTEMENT_ZONDER_DOORLAAT, context
@@ -753,6 +770,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
             
         full_config_std = {
             'FRAMEWORK_VERSION': framework,
+            'K20_TABLES': k20_rates,
             'NET_LEVEL': 'trafo',
             'WOONHUIS': cfg_woon, 
             'WOONHUIS_2022': cfg_woon_2022, 
@@ -986,6 +1004,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                         future_connection, business_basis_origin = kader_20.business_future_basis(
                             current_phases, current_amp, future_connection,
                             amp_fallback=kader20_amp_conversion,
+                            rate_tables=k20_rates,
                         )
                         if business_basis_origin == "minimum":
                             minimum_business_assigned = True
@@ -1052,6 +1071,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                             current_phases=current_phases,
                             current_amp=current_amp,
                             amp_fallback=kader20_amp_conversion,
+                            rate_tables=k20_rates,
                             street_phase_hint=kader_20.street_phase_hint(
                                 val_door, **phase_values
                             ),
