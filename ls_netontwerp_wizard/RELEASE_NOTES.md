@@ -1,36 +1,40 @@
-# LS Netontwerp Wizard v1.33.5
+# LS Netontwerp Wizard v1.33.6
 
-Deze versie verbetert de responsiviteit van de QGIS-wizard en de zichtbaarheid van aangrenzende stationsgroepen op de Scope-kaart.
+## Ontwerpstroomtabellen per kader
 
-## Responsieve vensters
+- Onder **Geavanceerde opties → Ontwerpstroomtabellen** toont de plugin de tabellen die horen bij het bovenaan geselecteerde **Kader 2.0, 3.0 of 3.2**.
+- Ieder kader heeft een onafhankelijke set tabelwaarden. De eerder gebruikte keuze 3.1 wordt als de huidige 3.2 behandeld. De bewaarde 3.1/3.2-rekenwaarden blijven de standaard voor 3.2.
+- Per tabel kun je rijen aanpassen, toevoegen, kopiëren, verplaatsen of verwijderen en waarden uit een spreadsheet plakken. Met **Standaard herstellen** herstel je één tabel.
+- Met **Kader X opslaan** bewaar je alle tabellen van het gekozen kader lokaal en in het geopende werkproject. Met **Kader X standaard herstellen** zet je de oorspronkelijke waarden voor dat ene kader terug, na bevestiging. Andere kaders blijven intact.
+- Bij opnieuw openen worden eerder opgeslagen wijzigingen hersteld. Voor oudere werkprojecten met enkelvoudige tabellen is een migratieroute toegevoegd. Handmatig aanpaste waarden blijven gescheiden van de ingebouwde bronwaarden.
 
-- Het venster **Automatische clustering – instellingen** heeft geen horizontale scrollbar meer nodig. De inhoud volgt de beschikbare breedte, ook wanneer het venster smaller wordt.
-- Lange omschrijvingen, het advies bij **Behoud originele bestaande stations en kabelrichtingen**, en checkboxteksten lopen automatisch door op volgende regels. De bijbehorende labelhoogte wordt na een breedtewijziging opnieuw bepaald, zodat regels niet worden afgesneden.
-- De plangebiedkeuze en knop voor het toevoegen van een bestand staan bij beperkte ruimte onder elkaar. De vaste knoppenbalk verdeelt **Instellingen opslaan**, **Clustering starten**, **Berekend project herstellen** en **Sluiten** over één, twee of vier kolommen, afhankelijk van de ruimte.
-- De oorspronkelijke checkboxwaarden, aan/uit-afhankelijkheden, tooltips, signalen en opslagfunctionaliteit blijven behouden. Ook een klik op de tekst schakelt de betreffende optie in of uit.
-- In de gedeelde formulieropmaak kunnen lange velden en toelichtingen meeschalen en waar nodig onder het veldlabel doorlopen. Verticale scrolling blijft beschikbaar, terwijl de knoppen bereikbaar blijven.
+## Volledige Kader 2.0-tabellen
 
-## Contrast in de Scope-layout
+- **Wonen Type 1–4:** per woningtype afzonderlijk trafo- en kabelverbruik én afzonderlijke opwek.
+- **Zakelijk Type 6/7:** toekomstige aansluitwaarde, eigen ontwerpstroom voor trafo en kabel, inclusief bestaande kleine en zware aansluitprofielen.
+- **Gasadvies:** gascategorie en huidige elektrische aansluitwaarde, met onafhankelijk trafo- en kabeladvies (zoals 138 A tegenover 65 A). De oorspronkelijke afhankelijkheid van de huidige aansluiting kan als **-1 = huidige aansluiting volgen** worden vastgelegd.
+- **Straatmeubilair Type 9:** laagste 3×25 A-profiel bij ontbrekende doorlaat, en aparte regels voor precies 3×35 A versus 3×40–50 A.
+- **Publiek laden Type 8:** afzonderlijke stroomwaarden voor trafo en kabel.
+- **Stijgleidingen:** Type 3/4 en zakelijke Type 6-aansluitingen, als afzonderlijke hulprekenregels.
+- **Aanvullende ampèrestaffel:** de bestaande 3.2-omzetting voor zwaardere 2.0-aansluitingen zonder vaste originele staffel heeft een eigen bewerkbare tabel.
 
-- De kleuren van stationsgroepen worden niet uitsluitend op basis van willekeurige/stationgebonden kleuren of opgeslagen kleuren gekozen. De plugin vergelijkt de geografische nabijheid van de aansluitingen en stations en kiest voor naburige groepen een goed onderscheidbaar alternatief.
-- De kleurkeuze is reproduceerbaar: dezelfde invoer geeft dezelfde resultaten. Bestaande kleuren blijven behouden waar ze voldoende verschillen; alleen waar nodig verandert de kleur.
-- Ieder station, zijn aansluitingbollen en het bijbehorende kleurvakje in het stationsoverzicht gebruiken dezelfde groepskleur. **Geen station gekoppeld** blijft grijs.
-- Bestaande opgeslagen Scope-layouts uit eerdere versies worden eenmalig aangepast. Daarna blijven eigen stijlwijzigingen behouden; heropenen verandert het palette niet opnieuw.
-- De kleurcorrectie verandert **geen bronwaarden, ontwerpstromen, geometrieën, stationskoppelingen of kaartuitsnede**. Het clusteringoverzicht zelf behoudt zijn eigen ontwerpstijl en de bestaande legenda met één item **Aansluitingen**.
+### Berekening en invoer
 
-## Controles
+De Kader 2.0-tabellen worden bij de ontwerpstroomberekening en bij latere herberekeningen daadwerkelijk gebruikt. De oorspronkelijke Excel-constanten blijven intact als bron voor **Standaard herstellen**. Geldigheid van numerieke waarden, gascategorieën, overlappende bereiken en woningtypes wordt bij het opslaan gecontroleerd.
 
-- Python-syntaxcontrole geslaagd voor **141 bronbestanden**.
-- De bestaande regressies voor Kader 2.0, Kader 3.2, gasherstel, aansluitprofielen en kabel-/stationslogica zijn geslaagd.
-- De nieuwe zuivere regressies controleren de contrastkleurkeuze, groepen met gelijke oorspronkelijke kleuren, geografische nabijheid, lange clustertracés, volgorde-onafhankelijkheid en stations met beperkte informatie.
-- De echte offscreen **QGIS 3.40.15/PyQt5**-controle is geslaagd bij **520, 720, 980 en 1180 px** vensterbreedte: geen horizontale scrollbar, volledige waarschuwingstekst, passende knopbreedtes, klikbare checkboxtekst en consistente Scope-kleuren/tabelvakjes.
-- De bestaande native QGIS-test voor **tien wizardpagina's**, geavanceerde tabbladen, navigatie en beide editorstanden is eveneens geslaagd.
-- Zie [de geslaagde PR-controle](https://github.com/LukaStuurman/Techbase-GEN-plugin/actions/runs/44300233322) en [de wijzigingen in PR #32](https://github.com/LukaStuurman/Techbase-GEN-plugin/pull/32).
+**Let op:** het bewerken van tabellen verandert niet stilzwijgend een eerder berekende QGIS-laag. Voer een nieuwe ontwerpstroomberekening uit om bestaande aansluitingen te actualiseren. De Type 5-verwarmingstoeslag en afzonderlijke stijgleidingberekening hebben nog geen volledige automatische invoer in de normale GEN-workflow; tabellen voor stijgleidingen zijn voorbereid voor die aparte berekening.
 
-**Beperking:** deze controles zijn uitgevoerd met representatieve en synthetische gegevens; de Scope-kleurverdeling is niet tegen een volledige daadwerkelijke Den Dungen-layout visueel beoordeeld. QGIS 4 is niet native in deze testreeks uitgevoerd.
+## Validatie
+
+- De GitHub-regressietests [run 44322567060](https://github.com/LukaStuurman/Techbase-GEN-plugin/actions/runs/44322567060) zijn geslaagd.
+- **144 Python-bronbestanden** zijn syntactisch gecontroleerd.
+- Bestaande Kader 2.0/3.2-regressies, gasherstel, straatmeubilair, kabelgroepen en stationscontroles zijn geslaagd.
+- De aangepaste Kader 2.0-tabellen zijn met zuivere Python-regressies gecontroleerd op echte toepassing in de berekening, originele waarden, gasverschillen en afwijzen van ongeldige tabelcellen.
+- Echte offscreen **QGIS/PyQt**-tests zijn geslaagd voor drie onafhankelijke kaders, wijzigen, QSettings-opslag, heropenen, herstellen en verwerking van gewijzigde ontwerpstroomwaarden. Ook de wizardcontrole over tien pagina's en de bestaande UI-tests is geslaagd.
+- Er is geen afzonderlijke volledige handmatige eindgebruikerstest met een live Den Dungen-project uitgevoerd. QGIS 4 is in deze reeks niet native getest.
 
 ## Installatie
 
-Installeer het ZIP-bestand via **QGIS → Plugins → Plugins beheren en installeren → Installeren vanuit ZIP**. Herstart QGIS volledig en open je project. Herkenbare bestaande Scope-layouts krijgen daarna de eenmalige stijlcorrectie.
+Download de ZIP en installeer via **QGIS → Plugins → Plugins beheren en installeren → Installeren vanuit ZIP**. Herstart QGIS volledig. Open het instellingenvenster, kies je gewenste kader en bewerk tabellen onder **Geavanceerde opties → Ontwerpstroomtabellen**.
 
-[Vorige stabiele release v1.33.4](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.4) · [Eerdere releases](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases)
+[Vorige versie v1.33.5](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.5) · [Pull request #33](https://github.com/LukaStuurman/Techbase-GEN-plugin/pull/33)

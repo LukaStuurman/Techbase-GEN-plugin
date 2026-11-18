@@ -2,9 +2,11 @@
 
 Ontwikkeling in draft PR #29: [hergebruik, afzonderlijke nieuwe 150Al-richtingen en actuele vrijgavebeperkingen](PLANNED_150AL_VALIDATION.md). De Den Dungen-clustering in deze behoudmodus is nog niet volledig gevalideerd.
 
-## Laatste versie: 1.33.5
+## Laatste versie: 1.33.6
 
-[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.5/ls_netontwerp_wizard-1.33.5.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.5)
+[Download de QGIS-plugin](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/download/v1.33.6/ls_netontwerp_wizard-1.33.6.zip) · [Release](https://github.com/LukaStuurman/Techbase-GEN-plugin/releases/tag/v1.33.6)
+
+**Nieuw in 1.33.6:** Onder **Geavanceerde opties → Ontwerpstroomtabellen** wisselt de editor mee met je gekozen ontwerpstroomkader (**2.0, 3.0 of 3.2**). Ieder kader heeft afzonderlijke bewerkbare regels en eigen opslag. Per tabel en per kader kun je de oorspronkelijke waarden terugzetten. Kader 2.0 heeft nu aparte tabellen voor woningprofielen, trafo/kabel-verbruik en -opwek, zakelijk, gasadvies, straatmeubilair, laadpunten, stijgleidingen en de aanvullende ampèrestaffel. De gewijzigde waarden worden gebruikt bij de volgende ontwerpstroomberekening; oude projecten kunnen bestaande tabellen overnemen. [Details en validatie](ls_netontwerp_wizard/RELEASE_NOTES.md).
 
 **Nieuw in 1.33.5:** het venster **Automatische clustering – instellingen** past zich aan de breedte aan: langere waarschuwingen en checkboxteksten breken af, velden en knoppen worden herschikt, en horizontaal scrollen is niet meer nodig. De gedeelde formulieropmaak volgt smallere vensters beter. **Scope** kiest nu duidelijkere kleuren voor geografisch naburige stationsgroepen, terwijl stations, aansluitingbollen en tabelvakjes dezelfde groepskleur blijven gebruiken. Bestaande Scope-projecten krijgen een eenmalige stijlcorrectie zonder ontwerpgegevens te veranderen. [Details en validatie](ls_netontwerp_wizard/RELEASE_NOTES.md).
 
