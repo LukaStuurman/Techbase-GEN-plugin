@@ -13,6 +13,9 @@ Known one-phase street furniture uses the lowest street profile; 3x35 A
 uses the 3x40-50 A street profile by explicit user choice.
 An explicit one-phase source field is sufficient for that lowest profile
 when the service rating is missing; no amperage or future rating is inferred.
+By explicit user choice, street furniture with a missing/unknown rating or
+only a phase count also uses the lowest 3x25 A profile, labelled as an
+assumption. Invalid or unsupported stated ratings do not use this fallback.
 Other undefined values and Type 5 heating surcharges need separate input.
 """
 
@@ -134,32 +137,39 @@ def classify_category(category, phases, amps):
     return category
 
 
+def _street_phase_count(value, allow_bare=False):
+    text = str(value).strip().casefold() if value is not None else ""
+    match = re.fullmatch(r"([123])\s*(?:[-–]\s*)?(?:f|fase(?:n)?)", text)
+    if match:
+        return int(match.group(1))
+    if allow_bare and re.fullmatch(r"[123](?:\.0+)?", text):
+        return int(float(text))
+    return 0
+
+
+def is_missing_street_rating(doorlaat):
+    """Recognize missing ratings without treating invalid stated ratings as absent."""
+    service = str(doorlaat).strip().casefold() if doorlaat is not None else ""
+    return service in (
+        "", "null", "none", "onbekend", "unknown", "nvt", "n.v.t.", "n/a"
+    ) or bool(_street_phase_count(service))
+
+
 def street_phase_hint(doorlaat, number_of_phases=None, phase=None):
     """Return (phase count, source fields, warning) for a missing street rating.
 
     Only explicit phase counts are accepted. A phase conductor name such as
     L1, R or T is not an independent declaration of the connection's phase
-    count. Partial service text participates in conflict detection, so
-    '3 fase' plus number_of_phases='1 fase' cannot become a one-phase supply.
+    count. Partial service text participates in conflict detection; the
+    missing-rating profile never changes these source facts into one phase.
     Complete service ratings remain the caller's primary input.
     """
-    def phase_count(value, allow_bare=False):
-        text = str(value).strip().casefold() if value is not None else ""
-        match = re.fullmatch(r"([123])\s*(?:[-–]\s*)?(?:f|fase(?:n)?)", text)
-        if match:
-            return int(match.group(1))
-        if allow_bare and re.fullmatch(r"[123](?:\.0+)?", text):
-            return int(float(text))
-        return 0
-
-    service = str(doorlaat).strip().casefold() if doorlaat is not None else ""
-    service_phases = phase_count(service)
-    if service not in ("", "null", "none", "onbekend", "nvt", "n.v.t.", "n/a") and not service_phases:
+    if not is_missing_street_rating(doorlaat):
         return 0, "", ""
     candidates = [
-        (service_phases, "doorlaat"),
-        (phase_count(number_of_phases, allow_bare=True), "number_of_phases"),
-        (phase_count(phase), "phase"),
+        (_street_phase_count(doorlaat), "doorlaat"),
+        (_street_phase_count(number_of_phases, allow_bare=True), "number_of_phases"),
+        (_street_phase_count(phase), "phase"),
     ]
     known = [(count, source) for count, source in candidates if count]
     if not known:
@@ -323,7 +333,7 @@ def _value_business(phases, amp):
 def current(level, category, housing, build_year, phases, amp, *,
             generation=False, explicit_type=None, new_build_year=2022,
             gas_category=None, current_phases=None, current_amp=None,
-            amp_fallback=None, street_phase_hint=None):
+            amp_fallback=None, street_phase_hint=None, street_missing_rating=False):
     """Return (A, Kader type description, review warning).
 
     'level' is 'trafo' or 'kabel'; classification category is the existing
@@ -368,6 +378,17 @@ def current(level, category, housing, build_year, phases, amp, *,
     if category == 9:
         value = None
         label = "Type 9 - straatmeubilair"
+        if not phases and (amp is None or amp == 0) and street_missing_rating:
+            label += " (aanname: laagste 3x25A-profiel; doorlaatwaarde ontbreekt)"
+            warning = ""
+            if street_phase_hint:
+                hint_phases, hint_source, hint_warning = street_phase_hint
+                if hint_phases:
+                    label += f" ({hint_phases}-fase via {hint_source}; amperage onbekend)"
+                if hint_warning:
+                    label += " (tegenstrijdige fasevelden; controleren)"
+                    warning = hint_warning
+            return (0.0 if generation else 5.8), label, warning
         if not phases and (amp is None or amp == 0) and street_phase_hint:
             hint_phases, hint_source, hint_warning = street_phase_hint
             if hint_warning:

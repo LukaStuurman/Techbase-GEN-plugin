@@ -614,6 +614,7 @@ class WoningtypeSelectieHerberekenenAlgorithm(QgsProcessingAlgorithm):
                             street_phase_hint=module.kader_20.street_phase_hint(
                                 doorlaat, **phase_values
                             ),
+                            street_missing_rating=module.kader_20.is_missing_street_rating(doorlaat),
                         )
                         if auto_minimum:
                             type_label += " (automatisch kleinzakelijk min. 3x25A)"

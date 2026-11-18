@@ -264,6 +264,7 @@ def calculate_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, bouwjaar_raw, l
             street_phase_hint=kader_20.street_phase_hint(
                 doorlaat, number_of_phases, phase
             ),
+            street_missing_rating=kader_20.is_missing_street_rating(doorlaat),
         )
         if warning and feedback is not None:
             feedback.pushWarning(
@@ -442,6 +443,7 @@ def calculate_opwek_ontwerpstroom(doorlaat, gebruiksdoel, type_woning, ld_gas_ty
             street_phase_hint=kader_20.street_phase_hint(
                 doorlaat, number_of_phases, phase
             ),
+            street_missing_rating=kader_20.is_missing_street_rating(doorlaat),
         )
         return float(value)
     if is_bag_object(doorlaat):
@@ -1053,6 +1055,7 @@ class OntwerpstroomSpatial(QgsProcessingAlgorithm):
                             street_phase_hint=kader_20.street_phase_hint(
                                 val_door, **phase_values
                             ),
+                            street_missing_rating=kader_20.is_missing_street_rating(val_door),
                         )
                         if minimum_business_assigned:
                             kader_type += " (automatisch kleinzakelijk min. 3x25A)"

@@ -447,8 +447,8 @@ class GasRepairTests(unittest.TestCase):
             ("straatmeubilair", "3 x 55 A", 0.),
             ("straatmeubilair", "3 x 35.1 A", 0.),
             ("straatmeubilair", "1 x 0 A", 0.),
-            ("straatmeubilair", "Onbekend", 0.),
-            ("straatmeubilair", None, 0.),
+            ("straatmeubilair", "Onbekend", 5.8),
+            ("straatmeubilair", None, 5.8),
             ("oplaadpunt", "3 x 55 A", 0.),
         ]
         for category in ("straatmeubilair", "oplaadpunt"):
@@ -499,20 +499,26 @@ class GasRepairTests(unittest.TestCase):
         self.assertIn(f["Kader20ToekomstigeAansluitwaarde"], (None,""))
         self.assertEqual(f["G_Type"], "G4")
 
-    def test_street_phase_fields_resolve_only_unambiguous_one_phase_sources(self):
+    def test_street_missing_rating_preserves_phase_evidence_and_conflicts(self):
         cases = (
             ("Onbekend", "1 fase", None, 5.8),
             (None, None, "1F", 5.8),
-            ("Onbekend", "3 fase", None, 0.),
-            (None, None, "3F", 0.),
-            ("Onbekend", "1 fase", "3F", 0.),
-            ("3 fase", "1 fase", None, 0.),
+            ("Onbekend", "3 fase", None, 5.8),
+            (None, None, "3F", 5.8),
+            ("Onbekend", "1 fase", "3F", 5.8),
+            ("3 fase", "1 fase", None, 5.8),
             ("3 x 40 A", "1 fase", None, 22.),
+            ("3 x 35 A", "1 fase", "1F", 22.),
             ("1 x 10 A", "3 fase", "3F", 5.8),
-            ("Onbekend", None, "L1", 0.),
-            ("Onbekend", None, "R", 0.),
-            ("Onbekend", None, 1, 0.),
-            ("Onbekend", None, None, 0.),
+            ("Onbekend", None, "L1", 5.8),
+            ("Onbekend", None, "R", 5.8),
+            ("Onbekend", None, 1, 5.8),
+            ("Onbekend", None, None, 5.8),
+            (None, "Onbekend", "Onbekend", 5.8),
+            ("3 x 55 A", "1 fase", "1F", 0.),
+            ("1 x 0 A", "1 fase", "1F", 0.),
+            ("onleesbare aansluiting", "1 fase", "1F", 0.),
+            ("3 x ?? A", "1 fase", None, 0.),
         )
         layer = Layer([fixture(
             service=service, gas="G40", future=None,
@@ -529,8 +535,14 @@ class GasRepairTests(unittest.TestCase):
                     self.assertEqual(feature["phase"], phase)
                     self.assertEqual(feature["G_Type"], "G40")
                     self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
-        # A conductor code is not proof of the connection's phase count, and
-        # conflicting explicit counts must remain visible for review.
+                    if service in (None, "Onbekend", "3 fase"):
+                        label = str(feature["KaderType"]).casefold()
+                        self.assertIn("aanname", label)
+                        self.assertIn("3x25", label.replace(" ", ""))
+                    if (service,count,phase) in (("Onbekend","1 fase","3F"), ("3 fase","1 fase",None)):
+                        self.assertIn("tegenstrijdige fasevelden", str(feature["KaderType"]).casefold())
+        # Phase evidence stays separate from the missing-rating assumption.
+        # Conflicts remain visible even when the lowest design profile applies.
         for service, count, phase in (("Onbekend","1 fase","3F"), ("3 fase","1 fase",None)):
             hint = kader_20.street_phase_hint(service, count, phase)
             self.assertTrue(hint[2], (service,count,phase,hint))
@@ -545,6 +557,51 @@ class GasRepairTests(unittest.TestCase):
         result = self.process(other, "2.0")
         self.assertEqual([component_values(f) for f in result.getFeatures()],
                          [(0.,0.,0.,0.), (210.,65.,210.,65.)])
+
+    def test_street_missing_rating_assumption_follows_source_and_preserves_other_frameworks(self):
+        services = (None, "", "  ", "Onbekend", "NULL", "n.v.t.", "3 fase", "3F")
+        layer = Layer([fixture(service=service, gas=None, future=None,
+                               Gebruiksdoel="straatmeubilair") for service in services])
+        first = self.process(layer, "2.0")
+        second = self.process(first, "2.0")
+        for result in (first, second):
+            for feature, service in zip(result.getFeatures(), services):
+                self.assertEqual(component_values(feature), (5.8,5.8,0.,0.))
+                self.assertEqual(feature["service_connection_type_type"], service)
+                self.assertIsNone(feature["G_Type"])
+                self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+                self.assertIn("aanname", str(feature["KaderType"]).casefold())
+        # A later known rating replaces the assumption without a saved fake
+        # 3x25 current or future supply fixing the result to 5.8 A.
+        by_id = self.by_source_id(second)
+        by_id[1]["service_connection_type_type"] = "3 x 35 A"
+        by_id[2]["service_connection_type_type"] = "3 x 55 A"
+        resolved = self.by_source_id(self.process(second, "2.0"))
+        self.assertEqual(component_values(resolved[1]), (22.,22.,0.,0.))
+        self.assertEqual(component_values(resolved[2]), (0.,0.,0.,0.))
+        for fid in (1,2):
+            self.assertNotIn("aanname", str(resolved[fid]["KaderType"]).casefold())
+            self.assertIn(resolved[fid]["Kader20ToekomstigeAansluitwaarde"], (None,""))
+        # These are the existing 3.x results, independently read before this
+        # change. The 2.0 fallback must not alter their coefficients or charging.
+        unchanged = (
+            ("straatmeubilair",None,5.8), ("straatmeubilair","Onbekend",5.8),
+            ("straatmeubilair","3 fase",5.8), ("straatmeubilair","3 x 35 A",5.8),
+            ("straatmeubilair","3 x 55 A",51.), ("oplaadpunt",None,0.),
+            ("oplaadpunt","Onbekend",0.), ("oplaadpunt","3 fase",0.),
+        )
+        for framework in ("3.0","3.2","3.1"):
+            with self.subTest(framework=framework):
+                original = Layer([fixture(service=service, gas="G40", future=None,
+                                          Gebruiksdoel=category, number_of_phases="3 fase", phase="3F")
+                                  for category,service,_ in unchanged])
+                result = self.process(original, framework)
+                self.assertEqual([component_values(f) for f in result.getFeatures()],
+                                 [(value,value,0.,0.) for _,_,value in unchanged])
+                for feature,(_,service,_) in zip(result.getFeatures(),unchanged):
+                    self.assertEqual(feature["service_connection_type_type"], service)
+                    self.assertIn(feature["Kader20ToekomstigeAansluitwaarde"], (None,""))
+                    self.assertNotIn("aanname", str(feature["KaderType"]).casefold())
 
     def test_housing_selection_recalculation_passes_street_phase_fields(self):
         # A street point can intersect a selected building. Exercise that
@@ -604,7 +661,7 @@ class GasRepairTests(unittest.TestCase):
             result = algorithm.processAlgorithm(parameters, None, Feedback())
             self.assertEqual(result["AANTAL_AANSLUITINGEN"], 2)
             self.assertEqual([component_values(f) for f in points.getFeatures()],
-                             [(5.8,5.8,0.,0.), (0.,0.,0.,0.)])
+                             [(5.8,5.8,0.,0.), (5.8,5.8,0.,0.)])
             self.assertIn("number_of_phases", points.getFeature(1)["KaderType"])
             for feature, count in zip(points.getFeatures(), ("1 fase","3 fase")):
                 self.assertEqual(feature["service_connection_type_type"], "Onbekend")

@@ -167,7 +167,7 @@ def category_note(category, key, framework=None):
         return "Kader 2.0 Type 6: kleinzakelijk op toekomstige aansluitwaarde, met apart huidig gasadvies per trafo/kabel"
     if category == "Straatmeubilair" and str(framework) == "2.0":
         if key in {"straat6", "straat10", "straat25"}:
-            return "Kader 2.0 Type 9: laagste profiel, 5,8 A trafo/kabel en 0 A opwek; ook voor bekende eenfaseaansluitingen"
+            return "Kader 2.0 Type 9: laagste 3x25 A-profiel, 5,8 A trafo/kabel en 0 A opwek; ook voor bekende eenfaseaansluitingen. Bij ontbrekende doorlaat of ampèrewaarde geldt dit profiel als standaardaanname; de bronwaarde blijft ongewijzigd."
         if key == "straat35":
             return "Kader 2.0 Type 9: 3x35 A gebruikt het profiel 3x40–50 A, 22 A trafo/kabel en 0 A opwek"
         return "Kader 2.0 Type 9: straatmeubilair, 0 A opwek; ontbrekende driefasewaarden boven 3x80 A worden aangevuld met Kader 3.2"
