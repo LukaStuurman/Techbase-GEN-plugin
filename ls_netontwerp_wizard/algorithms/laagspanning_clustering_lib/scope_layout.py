@@ -1,6 +1,8 @@
 """Persistent, independent view of the current station assignments."""
 import hashlib
+import html
 import json
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,8 +16,10 @@ from qgis.core import (Qgis, QgsCategorizedSymbolRenderer, QgsCoordinateTransfor
 
 try:
     from .layout_style_utils import configure_layout_style, ensure_scope_connection_labels, ensure_connections_legend
+    from ...scope_contrast_colors import choose_scope_colors
 except ImportError:
     from layout_style_utils import configure_layout_style, ensure_scope_connection_labels, ensure_connections_legend
+    from scope_contrast_colors import choose_scope_colors
 
 
 def text(value):
@@ -176,6 +180,100 @@ def repair_scope_station_snapshot(project, layout, points, stations):
     return True
 
 
+
+SCOPE_COLOR_VERSION = "LSNetontwerp/scope_contrast_colors"
+
+
+def _scope_marker_colors(points):
+    renderer = points.renderer()
+    if not isinstance(renderer, QgsCategorizedSymbolRenderer):
+        return {}
+    return {text(category.value()): category.symbol().color().name()
+            for category in renderer.categories()
+            if text(category.value()) and category.symbol() is not None}
+
+
+def _point_coords(layer, geometry, project, target_crs):
+    if geometry is None or geometry.isEmpty():
+        return None
+    try:
+        shape = QgsGeometry(geometry)
+        if layer.crs() != target_crs:
+            shape.transform(QgsCoordinateTransform(layer.crs(), target_crs, project))
+        point = shape.asMultiPoint()[0] if shape.isMultipart() else shape.asPoint()
+        return float(point.x()), float(point.y())
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _recolor_scope_table(table, colors):
+    """Update only the generated swatches, not user-edited columns or formulas."""
+    if not isinstance(table, QgsLayoutItemLabel):
+        return False
+    original = table.text()
+    if '<th>Station</th><th>Aantal</th><th>Ontwerp A</th>' not in original:
+        return False
+    pattern = re.compile(r'(<td bgcolor=")[^"]+(">&nbsp;</td><td>)([^<]*)(</td>)')
+    def substitute(match):
+        station = html.unescape(match.group(3))
+        value = "#94a3b8" if station == "Geen station gekoppeld" else colors.get(station)
+        if value is None:
+            return match.group(0)
+        return match.group(1) + value + match.group(2) + match.group(3) + match.group(4)
+    changed = pattern.sub(substitute, original)
+    if changed != original:
+        table.setText(changed)
+        return True
+    return False
+
+
+def ensure_scope_color_contrast(project, points, stations, table=None):
+    """Color frozen Scope groups by proximity, once per generated snapshot.
+
+    Existing 1.33.4 snapshots are migrated without touching geometries, actual
+    station assignments or the layout extent. Later user recoloring is retained.
+    """
+    current = _scope_marker_colors(points)
+    if not current:
+        return False, {}
+    if points.customProperty(SCOPE_COLOR_VERSION, "") == "1":
+        return False, current
+    locations = {station: [] for station in current}
+    for layer in (points, stations):
+        for feature in layer.getFeatures():
+            station = text(feature["Station"])
+            if not station:
+                continue
+            coordinate = _point_coords(layer, feature.geometry(), project, points.crs())
+            if coordinate is not None:
+                locations.setdefault(station, []).append(coordinate)
+    colors = choose_scope_colors(locations, current)
+    renderer = points.renderer().clone()
+    for index, category in enumerate(renderer.categories()):
+        station = text(category.value())
+        if station in colors:
+            symbol = category.symbol().clone()
+            symbol.setColor(QColor(colors[station]))
+            renderer.updateCategorySymbol(index, symbol)
+    points.setRenderer(renderer)
+    station_renderer = stations.renderer().clone()
+    station_symbol = station_renderer.symbol().clone() if hasattr(station_renderer, "symbol") and station_renderer.symbol() else None
+    if station_symbol is not None and station_symbol.symbolLayerCount():
+        cases = ["WHEN \"Station\" = '" + station.replace("'", "''") +
+                 "' THEN '" + colors[station] + "'" for station in sorted(colors)]
+        station_symbol.symbolLayer(0).setDataDefinedProperty(
+            QgsSymbolLayer.Property.FillColor,
+            QgsProperty.fromExpression("CASE " + " ".join(cases) + " ELSE '#94a3b8' END"))
+        station_renderer.setSymbol(station_symbol)
+        stations.setRenderer(station_renderer)
+    _recolor_scope_table(table, colors)
+    points.setCustomProperty(SCOPE_COLOR_VERSION, "1")
+    stations.setCustomProperty(SCOPE_COLOR_VERSION, "1")
+    points.triggerRepaint()
+    stations.triggerRepaint()
+    return True, colors
+
+
 def snapshot(project, memory, path, name, first):
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName, options.layerName = "GPKG", name
@@ -298,6 +396,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
     stations.renderer().setSymbol(symbol)
     ensure_scope_station_labels(stations)
     configure_layout_style(stations, symbol_scale=.7)
+    _, scope_colors = ensure_scope_color_contrast(project, points, stations)
     group = project.layerTreeRoot().addGroup("Scope - bestaande situatie")
     group.addLayer(stations)
     group.addLayer(points)
@@ -339,7 +438,7 @@ def add_scope_layout(project, layout, loaded, output_dir, cluster_rgb):
         condition = f'coalesce("Station", \'\') = \'{escaped}\''
         count = f"aggregate('{points.id()}', 'count', $id, {condition})"
         load = f"aggregate('{points.id()}', 'sum', \"Ontwerp_A\", {condition})"
-        fill = color(station).name() if station else "#94a3b8"
+        fill = (scope_colors.get(station, color(station).name()) if station else "#94a3b8")
         lines.append(f'<tr><td bgcolor="{fill}">&nbsp;</td><td>{html.escape(station or "Geen station gekoppeld")}</td>'
             f'<td>[% {count} %]</td><td>[% format_number({load}, 1) %]</td></tr>')
     table.setText('<table width="100%" border="1" cellspacing="0" cellpadding="0" style="font-family:Arial;font-size:6pt">'
