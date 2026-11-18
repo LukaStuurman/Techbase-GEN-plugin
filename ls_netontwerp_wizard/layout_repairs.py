@@ -6,6 +6,7 @@ from .algorithms.laagspanning_clustering_lib.layout_style_utils import (
 )
 from .algorithms.laagspanning_clustering_lib.scope_layout import (
     _include_station_extent, ensure_scope_station_labels, repair_scope_station_snapshot,
+    ensure_scope_color_contrast,
 )
 
 
@@ -66,6 +67,9 @@ def repair_scope_layouts(project):
             if stations is not None:
                 changed += ensure_scope_station_labels(stations)
                 changed += repair_scope_station_snapshot(project, layout, connections, stations)
+                palette_changed, _ = ensure_scope_color_contrast(
+                    project, connections, stations, layout.itemById("scope_stationsoverzicht"))
+                changed += int(palette_changed)
                 if (layout.customProperty("LSNetontwerp/scope_station_extent_repaired", "") != "1"
                         or layout.customProperty("LSNetontwerp/scope_station_extent_pending", False)):
                     _include_station_extent(map_item, stations)

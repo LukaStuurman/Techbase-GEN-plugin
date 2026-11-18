@@ -4,8 +4,9 @@ import math
 from pathlib import Path
 import uuid
 
-from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
+from qgis.PyQt.QtCore import QEvent, Qt
+from qgis.PyQt.QtWidgets import (QBoxLayout, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 from qgis.core import (QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject,
     QgsVectorFileWriter, QgsVectorLayer, QgsWkbTypes)
 from .workflow import WorkflowRunner
@@ -81,6 +82,115 @@ def save_options(state, values, plan=None, selected_only=False):
     return WorkflowRunner._write_state(data)
 
 
+
+def _qt_constant(parent, name):
+    return getattr(getattr(parent, "MouseButton", parent), name)
+
+
+class _CheckDescription(QLabel):
+    """A wrapping, clickable label belonging to an unchanged QCheckBox."""
+
+    def __init__(self, checkbox):
+        super().__init__(checkbox.text())
+        self.checkbox = checkbox
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if hasattr(Qt, "CursorShape")
+                       else Qt.PointingHandCursor)
+        self.setEnabled(checkbox.isEnabled())
+        checkbox.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        enabled_change = QEvent.Type.EnabledChange if hasattr(QEvent, "Type") else QEvent.EnabledChange
+        if watched is self.checkbox and event.type() == enabled_change:
+            self.setEnabled(self.checkbox.isEnabled())
+        return super().eventFilter(watched, event)
+
+    def mouseReleaseEvent(self, event):
+        if self.isEnabled() and event.button() == _qt_constant(Qt, "LeftButton"):
+            self.checkbox.click()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+def _wrapped_checkbox(form, checkbox):
+    """Let a long option wrap without hiding or replacing its stateful checkbox."""
+    label = _CheckDescription(checkbox)
+    original = checkbox.text()
+    checkbox.setText("")
+    checkbox.setAccessibleName(original)
+    label.setBuddy(checkbox)
+    label.setToolTip(checkbox.toolTip())
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(7)
+    row.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignTop if hasattr(Qt, "AlignmentFlag") else Qt.AlignTop)
+    row.addWidget(label, 1)
+    form.addRow(row)
+    return label
+
+
+def _note(text):
+    note = QLabel(text)
+    note.setWordWrap(True)
+    note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    return note
+
+
+class _ResponsivePlanRow(QWidget):
+    def __init__(self, combo, choose):
+        super().__init__()
+        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight if hasattr(QBoxLayout, "Direction") else QBoxLayout.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+        self._layout.addWidget(combo, 1)
+        self._layout.addWidget(choose)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._stacked = False
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        stacked = self.width() < 450
+        if stacked != self._stacked:
+            self._stacked = stacked
+            direction = ("TopToBottom" if stacked else "LeftToRight")
+            enum = QBoxLayout.Direction if hasattr(QBoxLayout, "Direction") else QBoxLayout
+            self._layout.setDirection(getattr(enum, direction))
+            self.updateGeometry()
+
+
+class _ResponsiveFooter(QWidget):
+    """The action buttons stay usable in one, two or four columns."""
+    def __init__(self, buttons):
+        super().__init__()
+        self._buttons = list(buttons)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(8)
+        self._columns = 0
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._reflow(960)
+
+    def _reflow(self, width):
+        columns = 4 if width >= 830 else (2 if width >= 390 else 1)
+        if columns == self._columns:
+            return
+        self._columns = columns
+        for button in self._buttons:
+            self._grid.removeWidget(button)
+        for index, button in enumerate(self._buttons):
+            self._grid.addWidget(button, index // columns, index % columns)
+        for col in range(4):
+            self._grid.setColumnStretch(col, 1 if col < columns else 0)
+        self._grid.invalidate()
+        self.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow(self.width())
+
+
 class ClusteringOptionsDialog(QDialog):
     def __init__(self, host):
         super().__init__(host)
@@ -134,27 +244,22 @@ class ClusteringOptionsDialog(QDialog):
                 QgsProject.instance().addMapLayer(saved)
                 self.plan_combo.addItem(saved.name(), saved.id())
                 self.plan_combo.setCurrentIndex(self.plan_combo.count() - 1)
-        row = QHBoxLayout()
-        row.addWidget(self.plan_combo, 1)
         load = QPushButton("Plangebied uit bestand toevoegen")
         load.clicked.connect(self.load_plan)
-        row.addWidget(load)
-        form.addRow("Plangebied", row)
+        form.addRow("Plangebied", _ResponsivePlanRow(self.plan_combo, load))
         self.selected_only = QCheckBox("Alleen geselecteerde vlakken van het plangebied gebruiken")
         self.only_plan = QCheckBox("Alleen aansluitingen en stations binnen het plangebied clusteren")
         self.only_plan.setChecked(bool(self.values.get("only_plan")))
         self.plan_combo.currentIndexChanged.connect(lambda: self.only_plan.setChecked(self.plan_combo.currentData() is not None))
-        form.addRow(self.selected_only)
-        form.addRow(self.only_plan)
+        _wrapped_checkbox(form, self.selected_only)
+        _wrapped_checkbox(form, self.only_plan)
         self.allow_external_routes = QCheckBox("Kabels buiten het plangebied gebruiken om aansluitingen binnen het plangebied te bereiken")
         self.allow_external_routes.setChecked(bool(self.values.get("allow_external_routes", False)))
         self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None)
         self.plan_combo.currentIndexChanged.connect(lambda: self.allow_external_routes.setEnabled(self.plan_combo.currentData() is not None))
         self.allow_external_routes.setToolTip("De volledige kabelroute telt mee voor de maximale routelengte. Clustergebieden en nieuwe stations blijven binnen het plangebied.")
-        form.addRow(self.allow_external_routes)
-        note = QLabel("Een gekozen plangebied wordt bij opslaan in het werkproject vastgelegd. Je kunt een eerder zonder plangebied gemaakte invoer daarmee alsnog begrenzen.")
-        note.setWordWrap(True)
-        form.addRow(note)
+        _wrapped_checkbox(form, self.allow_external_routes)
+        form.addRow(_note("Een gekozen plangebied wordt bij opslaan in het werkproject vastgelegd. Je kunt een eerder zonder plangebied gemaakte invoer daarmee alsnog begrenzen."))
         root.addWidget(group)
         group = QGroupBox("Capaciteiten en grenzen")
         form = QFormLayout(group)
@@ -177,7 +282,7 @@ class ClusteringOptionsDialog(QDialog):
         self.count.setValue(self.values["manual_station_count"])
         self.count.setEnabled(not self.automatic.isChecked())
         self.automatic.toggled.connect(lambda checked: self.count.setEnabled(not checked))
-        form.addRow(self.automatic)
+        _wrapped_checkbox(form, self.automatic)
         self.preserve_existing = QCheckBox(
             "Behoud originele bestaande stations en kabelrichtingen (-00/-01/-02/...)"
         )
@@ -194,20 +299,16 @@ class ClusteringOptionsDialog(QDialog):
             "behouden. Afgevallen aansluitingen gaan uitsluitend naar nieuwe stations. "
             "Vereist echte GEN-kabellijnen met Type en Kabel Subgroep."
         )
-        form.addRow(self.preserve_existing)
-        form.addRow(
-            QLabel(
-                "Bestaande-richtingenmodus: de werkelijke gG-afzekering moet "
-                "worden gecontroleerd; zonder bevestigde gG is het "
-                "kabelchecker-resultaat alleen een maximaal haalbaar advies. "
-                "Vrijgegeven kabelpunten zonder fysiek gescheiden nieuwe route "
-                "leveren een controlefout op, nooit een fictieve verbinding."
-            )
-        )
+        _wrapped_checkbox(form, self.preserve_existing)
+        form.addRow(_note(
+            "Bestaande-richtingenmodus: de werkelijke gG-afzekering moet "
+            "worden gecontroleerd; zonder bevestigde gG is het "
+            "kabelchecker-resultaat alleen een maximaal haalbaar advies. "
+            "Vrijgegeven kabelpunten zonder fysiek gescheiden nieuwe route "
+            "leveren een controlefout op, nooit een fictieve verbinding."
+        ))
         form.addRow("Handmatig aantal nieuwe stations", self.count)
-        note = QLabel("Kabelroute en trafocapaciteit zijn harde grenzen. Voorkeursbenutting stuurt de stationskeuze. Capaciteiten van bestaande stations pas je aan bij 2c. Stations aanpassen.")
-        note.setWordWrap(True)
-        form.addRow(note)
+        form.addRow(_note("Kabelroute en trafocapaciteit zijn harde grenzen. Voorkeursbenutting stuurt de stationskeuze. Capaciteiten van bestaande stations pas je aan bij 2c. Stations aanpassen."))
         root.addWidget(group)
         group = QGroupBox("Netwerk")
         form = QFormLayout(group)
@@ -218,12 +319,11 @@ class ClusteringOptionsDialog(QDialog):
         self.shapes = QCheckBox("Ook losse shapefiles schrijven")
         self.shapes.setChecked(self.values["write_shapefiles"])
         for widget in (self.node, self.flat, self.shapes):
-            form.addRow(widget)
+            _wrapped_checkbox(form, widget)
         root.addWidget(group)
         self.status = QLabel("")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        footer = QHBoxLayout()
         save = QPushButton("Instellingen opslaan")
         save.clicked.connect(self.save)
         start = QPushButton("Clustering starten")
@@ -233,17 +333,35 @@ class ClusteringOptionsDialog(QDialog):
         recover = QPushButton("Berekend project herstellen")
         recover.clicked.connect(self.recover)
         recover.setEnabled((Path(host.prepared_state["clustering_dir"]) / "clustering_ontwerp.gpkg").exists())
-        for button in (save, start, recover, close):
-            footer.addWidget(button)
-        outer.addLayout(footer)
+        outer.addWidget(_ResponsiveFooter((save, start, recover, close)))
         for label in self.findChildren(QLabel):
             if label.wordWrap():
                 label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        for form in self.findChildren(QFormLayout):
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self._forms = self.findChildren(QFormLayout)
+        for form in self._forms:
+            policy = QFormLayout.FieldGrowthPolicy if hasattr(QFormLayout, "FieldGrowthPolicy") else QFormLayout
+            form.setFieldGrowthPolicy(policy.AllNonFixedFieldsGrow)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff if hasattr(Qt, "ScrollBarPolicy") else Qt.ScrollBarAlwaysOff)
         apply_theme(self)
+        self._update_responsive_forms()
+
         role(start, "primary")
         role(save, "secondary")
+
+    def _update_responsive_forms(self):
+        # A narrow window gets one field per row; wide windows keep compact labels.
+        if not hasattr(self, "_forms"):
+            return
+        policy = QFormLayout.RowWrapPolicy if hasattr(QFormLayout, "RowWrapPolicy") else QFormLayout
+        mode = policy.WrapAllRows if self.width() < 790 else policy.WrapLongRows
+        for form in self._forms:
+            if form.rowWrapPolicy() != mode:
+                form.setRowWrapPolicy(mode)
+                form.invalidate()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_responsive_forms()
 
     def load_plan(self):
         path, _ = QFileDialog.getOpenFileName(self, "Plangebied toevoegen", "", "Vectorlagen (*.gpkg *.shp *.geojson *.json);;Alle bestanden (*)")
